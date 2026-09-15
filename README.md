@@ -18,7 +18,8 @@ framework, which I forked and customized into something I actually use every day
 - Real data pipelines (SEC EDGAR, search, enrichment)
 - A hardware fleet sourced and financed by flipping deals
 
-...all on roughly $500 of self-sourced hardware.
+...all on a ~$1,600 machine I built myself — a $497 barebones mini-PC, $399 of storage,
+and $699 of RAM that's now worth more than I paid.
 
 ## The philosophy
 

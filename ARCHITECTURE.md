@@ -49,9 +49,21 @@ depends on a deal pipeline that depends on a hardware node. Model reality as a g
 
 ## Hardware
 
-Self-sourced, financed by flipping deals. Roughly $500 of used hardware runs the whole
-thing — because renting the cloud for 8 agents is a monthly bill, and owning the box is
-a one-time cost you can resell.
+Self-sourced, financed by flipping deals. A ~$1,600 machine (barebones + storage + RAM
+that's appreciated) runs the whole thing — because renting the cloud for 8 agents is a
+monthly bill, and owning the box is a one-time cost you can resell.
+
+## The inference strategy — decompose, don't brute-force
+
+Don't run one big "smart" model on everything. Break every workflow into narrow tasks,
+and run each on a small (7B-14B) model fine-tuned with QLoRA for that specific task.
+
+A small model can't be 95% as smart generally — but it can be 95% effective at a
+*narrow* task: extraction, classification, routing, structured output. Decomposition is
+what makes small models competitive — each narrow task fits a specialized model, run
+locally, at a fraction of the cost of a frontier API.
+
+Result: near-frontier quality on owned hardware, fully private, no per-token bill.
 
 ## The generalizable lessons
 
@@ -60,3 +72,4 @@ a one-time cost you can resell.
 3. Keep simple tasks simple, complex tasks complex — and never mix them.
 4. Model the system as a graph, not a tree.
 5. Own the hardware; rent nothing you can resell.
+6. Decompose workflows so small QLoRA-tuned models can run them — don't brute-force with one big model.

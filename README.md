@@ -16,7 +16,9 @@ framework, which I forked and customized into something I actually use every day
 - A PostgreSQL-backed knowledge architecture ("second brain") with confidence scoring,
   expiry, and verification — so the memory doesn't rot
 - Real data pipelines (SEC EDGAR, search, enrichment)
-- A hardware fleet sourced and financed by flipping deals
+- DealsDesk, the procurement engine — sources low-cost Xeon/Epyc servers for AI
+  inference, lines up regular suppliers for RAM and storage, tracks builds and
+  inventory, and flips undervalued hardware to fund the whole operation
 
 ...all on a ~$1,600 machine I built myself — a $497 barebones mini-PC, $399 of storage,
 and $699 of RAM that's now worth more than I paid.

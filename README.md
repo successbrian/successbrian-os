@@ -13,6 +13,8 @@ framework, which I forked and customized into something I actually use every day
 ## What it runs
 
 - 8 agents + 16 specialized workers, orchestrated end to end
+- A headless operator agent that assembles and continuously tunes a specialized
+  worker fleet for the specific ecosystem (`worker_builder.py` is the runnable pattern)
 - A PostgreSQL-backed knowledge architecture ("second brain") with confidence scoring,
   expiry, and verification — so the memory doesn't rot
 - Real data pipelines (SEC EDGAR, search, enrichment)

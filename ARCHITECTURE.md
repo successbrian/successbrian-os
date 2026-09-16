@@ -65,6 +65,28 @@ locally, at a fraction of the cost of a frontier API.
 
 Result: near-frontier quality on owned hardware, fully private, no per-token bill.
 
+## The worker-builder — an agent that assembles and tunes its own workforce
+
+The newest layer. Instead of shipping a fixed team of agents, the OS runs a
+headless operator that:
+
+1. Watches what the ecosystem actually needs.
+2. Builds a specialized worker for each need — on its own, no instruction.
+3. Continuously fine-tunes each worker so it gets better for *that specific*
+   environment.
+
+Two things separate this from "another multi-agent framework":
+
+- **Decouple conversation from execution.** The operator is never chatted with,
+  so it ships *lean* — no chat, gateway, or connection code. All of that lives in
+  the one front-end agent the user talks to. The worker stays cheap and swappable.
+- **Ship a builder, not a workforce.** A fixed fleet is a generic team nobody
+  configured for themselves. A builder grows a team around *your* actual needs
+  and keeps sharpening it.
+
+`worker_builder.py` is the runnable version of the pattern (assemble → tune →
+improve); the production workers are real agents + fine-tuned models, kept private.
+
 ## The generalizable lessons
 
 1. Memory decays unless you give it confidence, expiry, and verification.
@@ -73,3 +95,5 @@ Result: near-frontier quality on owned hardware, fully private, no per-token bil
 4. Model the system as a graph, not a tree.
 5. Own the hardware; rent nothing you can resell.
 6. Decompose workflows so small QLoRA-tuned models can run them — don't brute-force with one big model.
+7. Decouple the conversation layer from the execution layer — the worker ships lean.
+8. Ship a builder, not a workforce — let the team assemble and sharpen around the user's needs.

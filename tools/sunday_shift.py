@@ -79,6 +79,15 @@ Brian's asleep until 6:30 PM. Here's the crew's cut:
 - **Penny** (port 11438): quick tasks — dedup check on inbox, triage new
   items since last Sunday.
 
+## Fleet crew (as nodes come online — "when Brian sleeps the ecosystem cranks")
+- **X79 nodes**: batch content generation — blog posts, sales pages, scripts,
+  email sequences. Overnight content factory at full crank.
+- **k11-bravo**: QLoRA adapter training runs, small-model experiments.
+- **Aoostar nodes**: GLM 5.3 inference tasks, overflow batch work.
+- **k11-alpha**: AnythingLLM nightly maintenance (dedup, embeddings, hygiene)
+  — or hand off to X79s once they're online so alpha stays responsive.
+- Each node reports utilization + output to the inbox by 6 PM.
+
 ## Spencer
 - Orchestrates, runs decision_sync/capacity/ecosystem_state, writes the
   wake-up summary for Brian.

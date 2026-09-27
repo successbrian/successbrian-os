@@ -29,6 +29,45 @@
 
 ---
 
+## SuccessBrian OS API gateway
+
+The three service APIs below are fronted by a single gateway. Clients (Spencer,
+future agents, bridges) authenticate **as themselves** with their own credentials —
+no shared tokens, and Spencer can log right in.
+
+### Identity model
+
+- Each client gets a named API key: `spencer`, `gemini-bridge`, etc.
+- Keys are long-lived secrets issued by Altair and delivered out-of-band via Brian.
+  Never committed to any repo. Server stores only a hash of each key.
+
+### Logging in
+
+- `POST /api/v1/auth/login` with body `{"api_key": "<key>"}` →
+  `{"ok": true, "data": {"token": "<short-lived token>", "expires_in": 3600, "client": "spencer"}}`
+- All other calls use `Authorization: Bearer <token>` (the short-lived token).
+- `GET /api/v1/auth/whoami` → `{"ok": true, "data": {"client": "spencer", "scopes": [...]}}`.
+  Use it to verify a login works.
+
+### Scopes (v1)
+
+- `digest:read`, `library:read`, `status:read` — granted to every client by default.
+- Write/admin scopes (`library:write`, `admin:*`) are Altair-only for now.
+
+### Key rotation
+
+- `POST /api/v1/auth/rotate` (authenticated with the current key) → new key;
+  the old key stays valid for a 24h overlap. Altair notifies the client owner
+  out-of-band (via Brian).
+
+### Routing
+
+- The gateway routes `/api/v1/digest/*`, `/api/v1/library/*`, `/api/v1/status/*`
+  to the service implementations. One base URL, one auth scheme; everything else
+  is unchanged from the sections below.
+
+---
+
 ## API 1 — Research digest
 
 Exposes Altair's daily discovery output (new tools, papers, repos, market intel —

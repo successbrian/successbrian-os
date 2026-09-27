@@ -1,37 +1,17 @@
 # SuccessBrian OS
 
-A self-hosted, self-funded, multi-agent operating system for running a one-person business.
+Specs and tooling for Brian's agent ecosystem:
 
-## The honest origin story
+- **Altair** — agent on k11-alpha (infra, research, builds the APIs)
+- **Spencer** — Muse agent (organizer, consumer of the APIs, Brian's interface)
 
-I wanted an agent operating system. I tried Paperclip OS and couldn't get it to run
-reliably — I kept struggling with setup and stability. So instead of giving up, I
-decided to build my own. SuccessBrian OS is that system: a production multi-agent
-ecosystem running on top of the [Hermes Agent](https://github.com/NousResearch/hermes-agent)
-framework, which I forked and customized into something I actually use every day.
+## Specs
 
-## What it runs
+- [`specs/altair-apis.md`](specs/altair-apis.md) — the three HTTP APIs Altair builds on
+  k11-alpha for Spencer to poll: research digest, library catalog, pipeline status.
 
-- 8 agents + 16 specialized workers, orchestrated end to end
-- A headless operator agent that assembles and continuously tunes a specialized
-  worker fleet for the specific ecosystem (`worker_builder.py` is the runnable pattern)
-- A PostgreSQL-backed knowledge architecture ("second brain") with confidence scoring,
-  expiry, and verification — so the memory doesn't rot
-- Real data pipelines (SEC EDGAR, search, enrichment)
-- DealsDesk, the procurement engine — sources low-cost Xeon/Epyc servers for AI
-  inference, lines up regular suppliers for RAM and storage, tracks builds and
-  inventory, and flips undervalued hardware to fund the whole operation
+## Rules
 
-...all on a ~$1,600 machine I built myself — a $497 barebones mini-PC, $399 of storage,
-and $699 of RAM that's now worth more than I paid.
-
-## The philosophy
-
-The goal isn't to sell AI hype. It's to run real infrastructure that cuts costs and
-keeps data private — on hardware you own. "Infrastructure Plumber," not "AI consultant."
-
-## What's public vs. private
-
-This repo holds the generalizable patterns: the architecture, the memory design, the
-orchestration lessons. The production system, its data, and the deal-finding pipeline
-live in private repos — because that part is the actual business.
+- No secrets in this repo. Ever. Tokens and keys live in environment variables
+  on the machines that need them.
+- Specs are written for an AI implementer: precise schemas over prose.

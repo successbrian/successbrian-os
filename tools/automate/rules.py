@@ -49,6 +49,19 @@ def _inbox_note(name: str, body: str) -> str:
     return str(path)
 
 
+def _nudge_live(slug: str) -> bool:
+    """True if a nudge with this slug is already in today's inbox.
+
+    Overdue nudges fire once per shift per item — re-writing the same
+    nudge every 15-minute heartbeat (2026-09-27: two identical
+    nudge-deepseek-brief notes 15 min apart) is noise with no new
+    information. The conductor's shift-log flags keep the overdue
+    visible; the rule stays quiet once the nudge is live.
+    """
+    today = _now().strftime("%Y%m%d")
+    return any((INBOX / "inbox").glob(f"{today}-*-{slug}.md"))
+
+
 # --- Rule 1: push unpushed inbox commits -------------------------------------
 def _inbox_check():
     s = inbox_status()
@@ -86,8 +99,9 @@ def _brief_check():
     now = _now()
     past_due = now.hour >= 17  # due 5pm
     crew = crew_reports()
-    return (past_due and not crew["deepseek_brief"]), {
-        "now": now.isoformat(), "crew": crew}
+    already_nudged = _nudge_live("nudge-deepseek-brief")
+    return (past_due and not crew["deepseek_brief"] and not already_nudged), {
+        "now": now.isoformat(), "crew": crew, "already_nudged": already_nudged}
 
 
 def _brief_confidence(ctx: dict) -> float:
@@ -117,7 +131,9 @@ def _crew_check():
     crew = crew_reports()
     missing = [k for k, v in crew.items()
                if not v and k != "deepseek_brief"]
-    return (past_due and bool(missing)), {"missing": missing, "crew": crew}
+    already_nudged = _nudge_live("nudge-crew-reports")
+    return (past_due and bool(missing) and not already_nudged), {
+        "missing": missing, "crew": crew, "already_nudged": already_nudged}
 
 
 def _crew_confidence(ctx: dict) -> float:

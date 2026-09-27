@@ -5,8 +5,8 @@
 
 ## Background
 
-- **k11-alpha** (`100.118.53.47` on Brian's Tailscale network) hosts: AnythingLLM (`:3000`),
-  the Altair agent, and the PostgreSQL contacts database (~2.2M records).
+- **k11-alpha** (`<K11_TAILNET_IP>` on Brian's Tailscale network) hosts: AnythingLLM (HTTP, tailnet-only),
+  the Altair agent, and the PostgreSQL contacts database.
 - **Spencer** (this agent) reaches k11-alpha through the Tailscale tunnel as an HTTP client.
   Spencer **cannot receive inbound connections or webhooks** — every data flow is Spencer
   polling k11-alpha. Design accordingly: no callbacks, no push.
@@ -14,7 +14,11 @@
 
 ## Global conventions
 
-- Base URL: `http://100.118.53.47:8471/api/v1` (port configurable via env, see below)
+> Placeholders in `<ANGLE_BRACKETS>` (e.g. `<K11_TAILNET_IP>`) refer to values
+> on the private Tailscale network. Substitute your own — nothing machine-specific
+> is committed to this repo.
+
+- Base URL: `http://<K11_TAILNET_IP>:8471/api/v1` (port configurable via env, see below)
 - Auth: `Authorization: Bearer <token>` on every request. `401` without/invalid token.
 - Response envelope:
   - Success: `{"ok": true, "data": {...}}`
@@ -80,8 +84,8 @@ Machine health for the whole ecosystem, so problems get caught before Brian trip
   "status": "ok",
   "checked_at": "2026-09-27T12:00:00Z",
   "checks": [
-    {"name": "postgres", "status": "ok", "detail": "2,214,008 rows", "checked_at": "..."},
-    {"name": "anythingllm", "status": "ok", "detail": "HTTP 200 on :3000", "checked_at": "..."},
+    {"name": "postgres", "status": "ok", "detail": "<row count>", "checked_at": "..."},
+    {"name": "anythingllm", "status": "ok", "detail": "HTTP 200 on AnythingLLM", "checked_at": "..."},
     {"name": "enrichment_pipeline", "status": "warn", "detail": "last run 26h ago", "checked_at": "..."},
     {"name": "crons", "status": "ok", "detail": "digest.py ok 06:32", "checked_at": "..."},
     {"name": "disk", "status": "ok", "detail": "/ at 61%", "checked_at": "..."}
@@ -91,7 +95,7 @@ Machine health for the whole ecosystem, so problems get caught before Brian trip
 
 - `status` per check ∈ `ok` | `warn` | `crit`; overall = worst of checks
   (`warn` → `degraded`, `crit` → `down`).
-- Checks to implement v1: `postgres` (connect + row count), `anythingllm` (HTTP :3000),
+- Checks to implement v1: `postgres` (connect + row count), `anythingllm` (HTTP, AnythingLLM port),
   `enrichment_pipeline` (heartbeat file / last-run timestamp), `crons` (digest.py last
   success), `disk` (`/` usage; warn > 85%, crit > 93%).
 
@@ -101,7 +105,7 @@ Machine health for the whole ecosystem, so problems get caught before Brian trip
 
 - Python + FastAPI, one service file.
 - `systemd` unit `altair-apis.service`, enabled, restarts on failure.
-- Bind address/port from env: `BIND` (default `100.118.53.47`), `PORT` (default `8471`).
+- Bind address/port from env: `BIND` (default `<K11_TAILNET_IP>`), `PORT` (default 8471, example).
   Bind the tailnet IP, not `0.0.0.0`.
 - Bearer token from env `ALTAIR_API_TOKEN` (long random string; share with Spencer out of band).
 - Log to journald. Keep dependencies minimal.

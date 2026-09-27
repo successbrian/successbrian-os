@@ -3,14 +3,19 @@
 Sunday shift: plan, strategize, clean up, help out.
 
 Runs every Sunday 3:00 PM CDT while Brian sleeps (until 6:30 PM).
-Produces a summary for him to read when he wakes up.
+
+HIGH PRIORITY — the whole shift exists for one thing: getting Altair ready
+for the 7:30 PM weekly report and conversation with Brian. Every task below
+feeds that briefing. Cleanup and maintenance are secondary.
 
 Steps:
-  1. Sync decisions -> digest + conflict check
-  2. Regenerate capacity report
-  3. Regenerate ecosystem state snapshot
-  4. Clean staging dirs (keep latest, quarantine old)
-  5. Write Sunday summary to the altair-brain inbox for Brian
+  1. Sync decisions -> digest + conflict check (feeds briefing questions)
+  2. Regenerate capacity report (feeds briefing recommendations)
+  3. Regenerate ecosystem state snapshot (Lyra's input)
+  4. Drop crew assignments — DeepSeek 150B's strategic brief FIRST so Altair
+     has it in time to prepare
+  5. Clean staging dirs (keep latest, quarantine old)
+  6. Write Sunday summary to the altair-brain inbox for Brian
 """
 
 import subprocess
@@ -70,10 +75,12 @@ Brian's asleep until 6:30 PM. Here's the crew's cut:
 - Check fleet utilization against capacity report (staging/capacity-report-latest.md).
 - Flag anything that needs Brian's call vs what you can reschedule yourself.
 
-## Model crew (via Altair)
-- **DeepSeek 150B** (port 8084): heavy analysis — read the week's decisions
-  digest and write a strategic brief: what's converging, what's conflicting,
-  what should Brian prioritize next week. Serialized requests only (429 risk).
+## Model crew (via Altair) — ORDER MATTERS, DeepSeek first
+- **DeepSeek 150B** (port 8084) — HIGHEST PRIORITY: the strategic brief is the
+  backbone of Altair's 7:30 briefing. Read the week's decisions digest and
+  write: what's converging, what's conflicting, what Brian should prioritize
+  next week, and the 3-5 questions that most need his judgment. Due by 5 PM
+  so Altair has time to absorb it. Serialized requests only (429 risk).
 - **Morpheus** (port 11437): medium tasks — summarize AnythingLLM library
   growth, flag stale workspaces.
 - **Penny** (port 11438): quick tasks — dedup check on inbox, triage new

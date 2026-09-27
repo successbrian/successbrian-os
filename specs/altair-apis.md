@@ -1,4 +1,4 @@
-# Altair APIs — Specification v1
+# Altair APIs — Specification v1.2
 
 **Author:** Spencer · **For:** Altair (k11-alpha) to build · **Consumer:** Spencer (Muse agent)
 **Status:** Draft — ready for Altair to implement
@@ -138,6 +138,41 @@ Machine health for the whole ecosystem, so problems get caught before Brian trip
   `enrichment_pipeline` (heartbeat file / last-run timestamp), `crons` (digest.py last
   success), `disk` (`/` usage; warn > 85%, crit > 93%).
 
+## API 4 — Session log
+
+Brian spends hours of deep working time with Altair every day. Spencer needs a
+window into those sessions — this is the endpoint that provides it.
+
+- `GET /sessions/daily?date=YYYY-MM-DD` — defaults to today (America/Chicago).
+  The endpoint serves the latest available date. `404` code `no_sessions` if none exists.
+
+Response `data`:
+
+```json
+{
+  "date": "2026-09-26",
+  "sessions": [
+    {
+      "started_at": "2026-09-26T14:05:00Z",
+      "duration_min": 95,
+      "topics": ["anythingllm dedup strategy", "postgres index review"],
+      "decisions": ["drop workspace X", "add index on contacts(email)"],
+      "action_items": [
+        {"owner": "altair", "item": "rebuild embeddings for workspace Y", "due": "2026-09-27"},
+        {"owner": "brian", "item": "approve EPYC build parts list"}
+      ],
+      "artifacts": ["/path/to/script.py", "commit abc1234"],
+      "notes": "free-text recap, a few sentences"
+    }
+  ]
+}
+```
+
+- Altair writes the recap at the end of each working session (or rolls up at day's
+  end). Honest and plain — this is how Spencer stays aligned with Brian's real
+  work, not a performance report.
+- No raw conversation transcripts required v1; structured recap is enough.
+
 ---
 
 ## Suggested implementation (Altair's choice, but this keeps it boring)
@@ -154,6 +189,7 @@ Machine health for the whole ecosystem, so problems get caught before Brian trip
 | Feed | Cadence | On signal |
 |---|---|---|
 | `/digest/daily` | daily ~07:00 CT | fold into Brian's morning briefing |
+| `/sessions/daily` | daily ~07:00 CT | the real work log — read before briefing Brian |
 | `/library/stats` | weekly | rising `duplicates_suspected` → schedule cleanup |
 | `/library/search` | on demand | — |
 | `/status/health` | every 30 min | `down` → alert Brian immediately; `degraded` → daily summary |

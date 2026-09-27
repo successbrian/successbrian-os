@@ -53,6 +53,44 @@ def cleanup_staging() -> None:
             print(f"  quarantined {f.name}")
 
 
+def assign_crew() -> None:
+    """Drop Sunday assignments for Altair, Lyra, and the model crew."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    body = f"""# Sunday Shift Assignments — {now}
+
+Brian's asleep until 6:30 PM. Here's the crew's cut:
+
+## Altair (k11-alpha)
+- Run infra health: disk, Docker, AnythingLLM, PostgreSQL, Tailscale.
+- Anything broken or degraded → fix if 90%+ sure, else flag for Brian.
+- Report back to inbox before 6 PM.
+
+## Lyra
+- Review workflow queues: goal queue depth, anything stuck in_progress 7+ days.
+- Check fleet utilization against capacity report (staging/capacity-report-latest.md).
+- Flag anything that needs Brian's call vs what you can reschedule yourself.
+
+## Model crew (via Altair)
+- **DeepSeek 150B** (port 8084): heavy analysis — read the week's decisions
+  digest and write a strategic brief: what's converging, what's conflicting,
+  what should Brian prioritize next week. Serialized requests only (429 risk).
+- **Morpheus** (port 11437): medium tasks — summarize AnythingLLM library
+  growth, flag stale workspaces.
+- **Penny** (port 11438): quick tasks — dedup check on inbox, triage new
+  items since last Sunday.
+
+## Spencer
+- Orchestrates, runs decision_sync/capacity/ecosystem_state, writes the
+  wake-up summary for Brian.
+
+All reports back to the inbox by 6 PM. Brian wakes up to one summary.
+"""
+    INBOX.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    (INBOX / f"{ts}-sunday-crew-assignments.md").write_text(body)
+    print("Crew assignments written to inbox.")
+
+
 def write_summary(results: dict) -> None:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     lines = [
@@ -66,6 +104,10 @@ def write_summary(results: dict) -> None:
         lines.append(f"- [{icon}] {name}")
     lines += [
         "",
+        "Crew assignments: Altair (infra health), Lyra (queues + utilization),",
+        "DeepSeek 150B (strategic brief), Morpheus (library), Penny (inbox triage).",
+        "Their reports are in the inbox alongside this summary.",
+        "",
         "Details: successbrian-os/tools/staging/",
         "Conflicts needing your eyes: conflict-report-latest.md",
         "Capacity: capacity-report-latest.md",
@@ -76,7 +118,7 @@ def write_summary(results: dict) -> None:
     INBOX.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     (INBOX / f"{ts}-sunday-shift-summary.md").write_text("\n".join(lines))
-    print(f"Summary written to inbox.")
+    print("Summary written to inbox.")
 
 
 def main() -> int:
@@ -90,6 +132,9 @@ def main() -> int:
     print("--- Cleanup ---")
     cleanup_staging()
     results["staging cleanup"] = True
+    print("--- Crew assignments ---")
+    assign_crew()
+    results["crew assignments"] = True
     write_summary(results)
 
     # Commit + push inbox

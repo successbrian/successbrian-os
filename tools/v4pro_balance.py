@@ -1,105 +1,117 @@
 #!/usr/bin/env python3
 """
-V4 Pro balance checker for SuccessBrian OS.
+V4 Pro availability checker for SuccessBrian OS.
 
 PURPOSE:
-    Check the DeepSeek API credit balance and flip the v4pro credit flag
-    automatically — no more manual `--v4pro available|exhausted`.
+    Check whether the DeepSeek V4 Pro rental key is live and flip the
+    v4pro credit flag automatically — no manual flag, no human top-up.
 
 WHY:
+    Brian RENTS DeepSeek API access from InstantlyClaw.com — the API key
+    belongs to them, not to Brian (standing order recorded in Altair's
+    session dumps, Aug 2026). Topping up is the owner's job, not Brian's.
     The model router (tools/model_tiers.py) gates the cloud top tier on
-    credits. A human flipping a flag is a chore that gets forgotten; an
-    hourly balance check keeps routing honest: credits land -> hard tasks
-    flow to V4 Pro, credits dry up -> everything falls back to local.
+    this flag, so an hourly live check keeps routing honest: rental refilled
+    -> hard tasks flow to V4 Pro; rental dry -> everything stays local.
+
+    Verified 2026-09-27: the rental key answers DeepSeek's own
+    GET /user/balance with {"is_available": false, "total_balance": "-0.00"}
+    — exhausted, which is why Altair's profile currently defaults to the
+    local Morpheus model. When InstantlyClaw refills, this check sees it.
 
 CALLED BY:
-    - tools/automate/rules.py (v4pro_balance_check rule, throttled to hourly)
+    - tools/automate/rules.py (v4pro_balance_check rule, throttled hourly)
     - Humans: python3 tools/v4pro_balance.py
 
 AUTH:
-    DeepSeek API key via the custom.deepseek connector (Secure Vault).
-    Set up with the [Add a custom connector] card; the deepseek-balance
-    skill (~/workspace/skills/deepseek-balance/) carries the credential
-    mechanics. Falls back to DEEPSEEK_API_KEY env var.
+    The rental key lives in k11-alpha's ~/.hermes/.env (DEEPSEEK_API_KEY).
+    The HTTPS check runs ON k11-alpha via kssh, so the key never leaves
+    that machine and is never stored on this VM, in files, or in memory
+    notes. Only the parsed balance result crosses back.
 
 NOTES:
     Endpoint: GET https://api.deepseek.com/user/balance (documented in
-    DeepSeek's API reference). Balances are strings; "available" means
-    total USD > MIN_USD (default $1.00 — enough for real work, not dust).
+    DeepSeek's API reference; free call, spends no quota).
+    "Available" means is_available=true AND total USD > MIN_USD
+    (default $1.00 — dust doesn't count as a usable rental).
 """
 
 import json
 import os
+import subprocess
 import sys
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from model_tiers import set_v4pro  # noqa: E402
 
-BALANCE_URL = "https://api.deepseek.com/user/balance"
 MIN_USD = float(os.environ.get("V4PRO_MIN_USD", "1.00"))
 STATE = Path(__file__).parent / "automate" / "state" / "v4pro-balance.json"
+KSSH = Path.home() / "workspace" / "bin" / "kssh"
 
-
-def get_api_key() -> str | None:
-    # 1. Skill helper (connector-backed) if the skill is scaffolded.
-    skill_helper = (Path.home() / "workspace" / "skills" /
-                    "deepseek-balance" / "bin" / "get_key.py")
-    if skill_helper.exists():
-        import subprocess
-        try:
-            out = subprocess.run(
-                [sys.executable, str(skill_helper)],
-                capture_output=True, text=True, timeout=30)
-            key = out.stdout.strip()
-            if key:
-                return key
-        except Exception:  # noqa: BLE001
-            pass
-    # 2. Env var fallback.
-    return os.environ.get("DEEPSEEK_API_KEY") or None
-
-
-def fetch_balance(api_key: str) -> dict:
+# Runs on k11-alpha; prints only the parsed result, never the key.
+REMOTE_PROBE = """
+import json, urllib.request
+key = None
+with open('/home/successbrian/.hermes/.env') as f:
+    for line in f:
+        s = line.strip()
+        if s.startswith('DEEPSEEK_API_KEY='):
+            key = s.split('=', 1)[1].strip().strip('"').strip(chr(39))
+            break
+print(json.dumps({'key_present': bool(key)}))
+if key:
     req = urllib.request.Request(
-        BALANCE_URL,
-        headers={"Authorization": f"Bearer {api_key}",
-                 "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        if resp.status != 200:
-            raise RuntimeError(f"balance API returned HTTP {resp.status}")
-        return json.loads(resp.read().decode())
+        'https://api.deepseek.com/user/balance',
+        headers={'Authorization': 'Bearer ' + key, 'Accept': 'application/json'})
+    b = json.loads(urllib.request.urlopen(req, timeout=20).read().decode())
+    print(json.dumps({'ok': True,
+                      'is_available': b.get('is_available', False),
+                      'balances': b.get('balance_infos', [])}))
+"""
 
 
-def parse_usd(data: dict) -> float:
-    total = 0.0
-    for info in data.get("balance_infos", []):
-        if info.get("currency") == "USD":
-            try:
-                total += float(info.get("total_balance") or 0)
-            except (TypeError, ValueError):
-                pass
-    return total
+def probe() -> dict:
+    import base64
+    payload = base64.b64encode(REMOTE_PROBE.encode()).decode()
+    try:
+        out = subprocess.run(
+            [str(KSSH), f"echo {payload} | base64 -d | python3"],
+            capture_output=True, text=True, timeout=60)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"kssh failed: {e}"[:200]}
+    lines = [ln for ln in out.stdout.splitlines() if ln.startswith("{")]
+    if len(lines) < 2:
+        return {"ok": False,
+                "error": f"probe failed: {out.stderr[:150]}" or "no output"}
+    try:
+        presence = json.loads(lines[0])
+        result = json.loads(lines[1])
+    except Exception:  # noqa: BLE001
+        return {"ok": False, "error": "unparseable probe output"}
+    if not presence.get("key_present"):
+        return {"ok": False, "error": "rental key missing from k11-alpha .env"}
+    return result
 
 
 def check() -> dict:
-    key = get_api_key()
-    if not key:
-        return {"ok": False, "error": "no DeepSeek API key available"}
-    try:
-        data = fetch_balance(key)
-    except Exception as e:  # noqa: BLE001
-        return {"ok": False, "error": str(e)[:200]}
-    if not data.get("is_available", True):
-        return {"ok": False, "error": "balance not available"}
-    usd = parse_usd(data)
-    available = usd > MIN_USD
+    data = probe()
+    if not data.get("ok"):
+        return data
+    usd = 0.0
+    for info in data.get("balances", []):
+        if info.get("currency") == "USD":
+            try:
+                usd += float(info.get("total_balance") or 0)
+            except (TypeError, ValueError):
+                pass
+    available = bool(data.get("is_available")) and usd > MIN_USD
     flag = set_v4pro(available, by="v4pro_balance.py")
     STATE.parent.mkdir(parents=True, exist_ok=True)
     STATE.write_text(json.dumps({
-        "usd": usd, "available": available,
+        "usd": usd, "is_available": data.get("is_available"),
+        "available": available,
         "checked_at": datetime.now(timezone.utc).isoformat(),
     }, indent=2))
     return {"ok": True, "usd": round(usd, 2), "available": available,

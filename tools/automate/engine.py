@@ -93,16 +93,16 @@ def run_rules(rules: list[Rule], dry_run: bool = False) -> dict:
             except Exception as e:  # noqa: BLE001
                 result, acted = f"action failed: {e}", False
             log_action(rule.name, ctx, conf, result, acted, dry_run)
-            sb_record(
-                topic=f"automation: {rule.name}",
-                content=f"{'Would act' if dry_run else 'Acted'} "
-                        f"(confidence {conf:.2f}): {result}",
-                category="fact",
-                confidence="high" if acted else "medium",
-                source="automation-engine",
-                verification="direct execution" if acted else "dry-run",
-                tags=["automation"] + rule.tags,
-            )
+            if not dry_run:
+                sb_record(
+                    topic=f"automation: {rule.name}",
+                    content=f"Acted (confidence {conf:.2f}): {result}",
+                    category="fact",
+                    confidence="high",
+                    source="automation-engine",
+                    verification="direct execution",
+                    tags=["automation"] + rule.tags,
+                )
             summary["acted"].append((rule.name, result))
         elif conf >= AUTONOMY_THRESHOLD and not rule.reversible:
             log_action(rule.name, ctx, conf,

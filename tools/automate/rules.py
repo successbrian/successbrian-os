@@ -238,7 +238,50 @@ def _v4pro_act(ctx: dict, dry_run: bool) -> str:
     return "stood down: hard tasks back to local 150B (flag flipped)"
 
 
+# --- Rule 7: v4pro balance check (hourly, keeps the credit flag honest) -----
+_V4PRO_BAL_STATE = Path(__file__).parent / "state" / "v4pro-balance.json"
+
+
+def _bal_check():
+    last = 0.0
+    if _V4PRO_BAL_STATE.exists():
+        try:
+            ts = json.loads(_V4PRO_BAL_STATE.read_text()).get("checked_at")
+            last = datetime.fromisoformat(ts).timestamp()
+        except Exception:  # noqa: BLE001
+            pass
+    import time
+    if time.time() - last < 3600:
+        return False, {"throttled": True}
+    return True, {}
+
+
+def _bal_confidence(ctx: dict) -> float:
+    return 0.97  # API response is ground truth
+
+
+def _bal_act(ctx: dict, dry_run: bool) -> str:
+    if dry_run:
+        return "would query DeepSeek balance API"
+    import subprocess as _sp
+    r = _sp.run([sys.executable, str(Path(__file__).parent.parent /
+                                      "v4pro_balance.py")],
+                capture_output=True, text=True, timeout=60)
+    try:
+        result = json.loads(r.stdout)
+    except Exception:  # noqa: BLE001
+        raise RuntimeError(f"balance check failed: {r.stderr[:200]}")
+    if not result.get("ok"):
+        # No key yet (or API down) — not a failure of the ecosystem.
+        # Record once to the brain so we stop wondering, then stay quiet.
+        return f"skipped: {result.get('error')}"
+    return (f"balance ${result['usd']:.2f} -> "
+            f"v4pro {'AVAILABLE' if result['available'] else 'exhausted'}")
+
+
 RULES: list[Rule] = [
+    Rule("v4pro_balance_check", _bal_check, _bal_confidence,
+         _bal_act, reversible=True, tags=["routing", "v4pro"]),
     Rule("v4pro_routing", _v4pro_check, _v4pro_confidence,
          _v4pro_act, reversible=True, tags=["routing", "v4pro"]),    Rule("deepseek_brief_overdue", _brief_check, _brief_confidence,
          _brief_act, reversible=True, tags=["sunday-shift", "crew"]),

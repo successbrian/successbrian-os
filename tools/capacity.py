@@ -17,6 +17,7 @@ Capacity dimensions (v1):
 
 Demand sources (v1, hard-coded estimates — refine as real data arrives):
   - 100-blog network: articles/day target -> tok/s needed
+  - 100-blog network: web serving — 25 sites/node, static vs WP open
   - AnythingLLM nightly maintenance: CPU-hours/night
   - Goal queue depth: pending compute-heavy goals
 
@@ -147,6 +148,30 @@ def analyze_storage() -> dict:
     }
 
 
+def analyze_web_serving() -> dict:
+    # 100 blogs / 4 nodes = 25 sites per node.
+    # Static sites (Hugo -> nginx): trivial load, ~25 static sites is nothing
+    #   for 16 Ivy Bridge cores. Even 100 on one node would be fine.
+    # WordPress: 25x PHP-FPM pools + 25x MySQL DBs per node is HEAVY —
+    #   memory and I/O pressure on 64GB DDR3, and 100 WP installs to maintain
+    #   is an ops burden Brian can't carry alone.
+    sites_per_node = 25
+    verdict = "watch"
+    rec = ("Architecture decision needed: static-site generator (Hugo/Jekyll "
+           "-> nginx) vs WordPress. Static: 25 sites/node is trivial, near-zero "
+           "maintenance, perfect for SEO content blogs. WordPress: 25 PHP pools "
+           "+ 25 DBs per node strains 64GB DDR3 and creates 100 installs to "
+           "patch. Recommendation: static unless a specific blog needs WP "
+           "features. This is a question for Brian.")
+    return {
+        "dimension": "web_serving",
+        "sites_per_node": sites_per_node,
+        "stack_options": "static (Hugo->nginx) vs WordPress",
+        "verdict": verdict,
+        "recommendation": rec,
+    }
+
+
 def analyze_build_bandwidth() -> dict:
     # Brian's scarcest resource is his own time (CREW2 + Idemia shifts).
     # Count planned-but-not-live systems as build queue.
@@ -209,7 +234,7 @@ def main() -> int:
                     help="Drop report in altair-brain inbox for Brian.")
     args = ap.parse_args()
 
-    results = [analyze_inference(), analyze_storage(),
+    results = [analyze_inference(), analyze_storage(), analyze_web_serving(),
                analyze_build_bandwidth()]
     report = render_report(results)
 

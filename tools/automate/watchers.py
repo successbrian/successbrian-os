@@ -28,7 +28,7 @@ from pathlib import Path
 
 from automate.engine import kssh
 
-INBOX = Path("/tmp/altair-brain-inbox")
+INBOX = Path.home() / "workspace" / "altair-brain"
 
 
 def pg_query(sql: str) -> list[list[str]]:

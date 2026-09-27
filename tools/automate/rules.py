@@ -34,7 +34,7 @@ from automate.watchers import (
     alpha_disk, crew_reports, inbox_status, pg_scalar, shift_window_active,
 )
 
-INBOX = Path("/tmp/altair-brain-inbox")
+INBOX = Path.home() / "workspace" / "altair-brain"
 CT = ZoneInfo("America/Chicago")
 
 

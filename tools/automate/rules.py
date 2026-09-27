@@ -271,6 +271,11 @@ def _bal_act(ctx: dict, dry_run: bool) -> str:
         result = json.loads(r.stdout)
     except Exception:  # noqa: BLE001
         raise RuntimeError(f"balance check failed: {r.stderr[:200]}")
+    # Stamp the check so the hourly throttle in _bal_check engages.
+    _V4PRO_BAL_STATE.parent.mkdir(parents=True, exist_ok=True)
+    _V4PRO_BAL_STATE.write_text(
+        json.dumps({"checked_at": _now().isoformat(),
+                    "result": result.get("error") or result.get("usd")}))
     if not result.get("ok"):
         # No key yet (or API down) — not a failure of the ecosystem.
         # Record once to the brain so we stop wondering, then stay quiet.

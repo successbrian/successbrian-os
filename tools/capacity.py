@@ -1,27 +1,25 @@
 """
 Capacity recommendations for SuccessBrian OS.
 
-The ecosystem watches its own capacity vs demand and tells Brian what to
-buy, build, or repurpose — before he hits the wall.
+PURPOSE:
+    Watch ecosystem capacity vs demand and tell Brian what to buy, build,
+    or repurpose — before he hits the wall.
 
-Usage:
-    python3 capacity.py --dry-run    # preview, touch nothing
-    python3 capacity.py              # generate report to staging/
-    python3 capacity.py --to-altair  # also drop report in altair-brain inbox
+WHY:
+    Brian is building a 100-blog network plus local AI inference on a
+    hardware budget. The scarcest resources are GPU time, NVMe streaming
+    bandwidth, and Brian's own build hours (two jobs). Guessing wrong means
+    buying hardware he doesn't need or stalling content on a bottleneck.
+    This tool turns "do we have enough?" into a number.
 
-Capacity dimensions (v1):
-  1. Inference  — tok/s available vs content generation demand
-  2. Storage    — NVMe/SATA/HDD provisioned vs model library + data growth
-  3. Build      — Brian's time is the scarcest resource (two jobs); flag
-                  when planned work exceeds realistic build bandwidth
+CALLED BY:
+    - tools/sunday_shift.py (weekly, feeds the 7:30 briefing)
+    - tools/ecosystem_state.py (capacity section of the state snapshot)
 
-Demand sources (v1, hard-coded estimates — refine as real data arrives):
-  - 100-blog network: articles/day target -> tok/s needed
-  - 100-blog network: web serving — 25 sites/node, static vs WP open
-  - AnythingLLM nightly maintenance: CPU-hours/night
-  - Goal queue depth: pending compute-heavy goals
-
-Fleet sources: build plans + brian_decisions + known live systems.
+NOTES:
+    Demand figures are still hard-coded estimates (articles/day, tok/s).
+    Verdicts are directional, not measured. Refine as real throughput data
+    arrives from the fleet. See KNOWN ISSUES in the weekly review.
 """
 
 import argparse

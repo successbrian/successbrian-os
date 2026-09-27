@@ -1,7 +1,23 @@
 """Live state watchers for the automation engine.
 
-Replaces hard-coded assumptions with measured reality. Each watcher returns
-structured state; rules consume it. All reads are side-effect free.
+PURPOSE:
+    Replace hard-coded assumptions with measured reality. Each watcher
+    returns structured state; rules consume it. All reads are side-effect
+    free.
+
+WHY:
+    capacity.py and ecosystem_state.py still carry hard-coded fleet data and
+    unverified estimates, which makes their verdicts untrustworthy. These
+    watchers are the migration path: every hard-coded number gets a watcher,
+    and the old tools get rewired onto live data one section at a time.
+
+CALLED BY:
+    - tools/automate/rules.py (rule check functions)
+    - tools/automate/run.py --snapshot (debugging)
+
+NOTES:
+    pg_query reads ecosystem_central on k11-alpha via kssh. queue_depths
+    returns -1 (not 0) when a table is missing — unknown is not zero.
 """
 from __future__ import annotations
 

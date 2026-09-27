@@ -1,7 +1,24 @@
-"""First production rules for the automation engine.
+"""Production rules for the automation engine.
 
-Sunday-shift focused. Each rule declares its own confidence honestly —
-the engine enforces the 90% bar, not the rule author.
+PURPOSE:
+    The first set of codified 90% decisions: inbox pushes, crew deadline
+    nudges, disk pressure cleanup, alert triage, and V4 Pro credit routing.
+
+WHY:
+    These were the highest-frequency judgment calls in the Sunday shift —
+    the same decisions, made the same way, every week. Codifying them frees
+    the heartbeat workers for judgment that actually needs judgment.
+
+CALLED BY:
+    - tools/automate/engine.py run_rules()
+
+NOTES:
+    Each rule declares its own confidence honestly; the ENGINE enforces the
+    90% bar, not the rule author. The alert_spike rule deliberately returns
+    0.60 — we can see the count but not the cause, so it must route to
+    research, never act. disk_pressure only touches /tmp files older than 7
+    days; it never deletes anything else. Nudge rules run BEFORE
+    inbox_unpushed so their notes get pushed in the same pass.
 """
 from __future__ import annotations
 

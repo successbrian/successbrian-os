@@ -1,16 +1,26 @@
 """
 Decision Sync for SuccessBrian OS.
 
-Propagates Brian's decisions from altair.brian_decisions (PostgreSQL, the
-system of record) to AnythingLLM (the searchable view), and flags conflicts
-between decisions and build plans.
+PURPOSE:
+    Propagate Brian's decisions from altair.brian_decisions (PostgreSQL, the
+    system of record) to AnythingLLM (the searchable view), and flag
+    conflicts between decisions and build plans.
 
-Usage:
-    python sync.py --dry-run        # show what would change, touch nothing
-    python sync.py                  # generate docs to staging dir
-    python sync.py --push           # also push to AnythingLLM (needs ANYTHINGLLM_API_KEY)
+WHY:
+    Decisions made in conversation evaporate. PostgreSQL is authoritative but
+    not searchable by the agents; AnythingLLM is searchable but not
+    authoritative. This bridge keeps them in sync, and the conflict check
+    catches the dangerous case: a decision that contradicts what we're
+    building (e.g. the false "buy 7 more M40s" record).
 
-Brian's rules: quarantine never delete, dry-run by default.
+CALLED BY:
+    - tools/sunday_shift.py (step 1, weekly)
+
+NOTES:
+    Conflict checks are still hard-coded — they don't scale to new plan
+    tables. AnythingLLM upload needs ANYTHINGLLM_API_KEY and is untested
+    against the real workspace. Erroneous decisions propagate downstream
+    unless corrected at the source; see the X79-20260927-03 correction.
 """
 
 import argparse

@@ -2,18 +2,28 @@
 """
 Model tier routing for SuccessBrian OS.
 
-The stack (per Brian):
-  penny (7B local)  -> small, fast jobs. Always available.
-  150B (local)      -> workhorse. Always available, serialized queue.
-  v4pro (cloud)     -> top tier. ONLY when credits are available.
+PURPOSE:
+    Answer "which model should take this task?" One source of truth for the
+    stack: Penny 7B (small/fast) -> DeepSeek 150B local (workhorse) ->
+    DeepSeek V4 Pro cloud (top tier, hard tasks only when credits allow).
 
-The v4pro credit flag is the source of truth until we have an API check:
-    python3 tools/model_tiers.py --v4pro available    # credits landed
-    python3 tools/model_tiers.py --v4pro exhausted    # credits dry
-    python3 tools/model_tiers.py --status             # show all tiers
+WHY:
+    Brian's local-first principle: don't count tokens, optimize wall-clock
+    and owned hardware. But hard tasks still sometimes need the cloud tier.
+    Without a routing decision point, every worker guesses — burning V4 Pro
+    credits on easy jobs or starving hard jobs on the slow 150B (~0.66 tok/s).
+    This makes the choice explicit and checkable.
 
-Workers consult get_tiers() before assigning work: hard tasks go to v4pro
-when it's available, otherwise they stay local (150B serialized).
+CALLED BY:
+    - tools/automate/rules.py (v4pro_routing rule)
+    - Night shift / heartbeat workers before assigning work
+    - Humans: --v4pro available|exhausted flips the credit flag
+
+NOTES:
+    The v4pro credit flag (tools/automate/state/model-tiers.json) is manual
+    until we have an API check — Brian or Spencer flips it when credits land
+    or dry up. Local tier probes run from k11-alpha via kssh because this VM
+    can't reach the tailnet directly.
 """
 import argparse
 import json

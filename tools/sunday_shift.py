@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
 """
-Sunday shift: plan, strategize, clean up, help out.
+Sunday shift orchestrator for SuccessBrian OS.
 
-Runs every Sunday 3:00 PM CDT while Brian sleeps (until 6:30 PM).
+PURPOSE:
+    Run the full Sunday 3:00 PM shift pipeline: decision sync, capacity
+    report, ecosystem snapshot, crew assignments, staging cleanup, and the
+    inbox summary that feeds Altair's 7:30 briefing.
 
-HIGH PRIORITY — the whole shift exists for one thing: getting Altair ready
-for the 7:30 PM weekly report and conversation with Brian. Every task below
-feeds that briefing. Cleanup and maintenance are secondary.
+WHY:
+    The whole shift exists for one thing: getting Altair ready for the 7:30
+    PM weekly conversation with Brian. Every step feeds that briefing.
+    Orchestrating it as code (instead of a checklist in a cron body) means
+    the sequence is tested, repeatable, and improvable.
 
-Steps:
-  1. Sync decisions -> digest + conflict check (feeds briefing questions)
-  2. Regenerate capacity report (feeds briefing recommendations)
-  3. Regenerate ecosystem state snapshot (Lyra's input)
-  4. Drop crew assignments — DeepSeek 150B's strategic brief FIRST so Altair
-     has it in time to prepare
-  5. Clean staging dirs (keep latest, quarantine old)
-  6. Write Sunday summary to the altair-brain inbox for Brian
+CALLED BY:
+    - sunday-shift cron (weekly, Sundays 3:00 PM CDT)
+
+NOTES:
+    This writes assignments but does not invoke the crew — their
+    participation is tracked by the 15-min heartbeat, not guaranteed here.
+    The summary is written immediately after orchestration, before late crew
+    work lands; the heartbeat appends as reports arrive.
 """
 
 import subprocess

@@ -1,18 +1,24 @@
 """
 Ecosystem State for SuccessBrian OS.
 
-One snapshot of everything Lyra needs to see: fleet, decisions, capacity,
-build plans, and stubs for live data she'll feed back in.
+PURPOSE:
+    One snapshot of everything Lyra needs to see: fleet, decisions,
+    capacity, build plans, and live data as it comes online. Machine-readable
+    JSON for Lyra, human-readable markdown for Brian.
 
-Usage:
-    python3 ecosystem_state.py --dry-run   # preview, touch nothing
-    python3 ecosystem_state.py             # write ecosystem-state.json + .md
+WHY:
+    Brian's directive: "successbrian-os needs all the inputs so Lyra can
+    easily see it all." Lyra is the health monitor and workflow organizer —
+    she can't organize what she can't see. This is her input feed.
 
-Output: tools/staging/ecosystem-state.json (machine-readable, Lyra's input)
-        tools/staging/ecosystem-state.md   (human-readable summary)
+CALLED BY:
+    - tools/sunday_shift.py (weekly)
 
-Lyra reads the JSON. Brian reads the markdown. Altair feeds live data
-into the stubbed sections as those systems come online.
+NOTES:
+    Fleet list is still hard-coded; live_health, blog_placement, and
+    anythingllm sections are stubs until those systems feed real data.
+    "Five nodes" includes grouped/planned systems. Treat "healthy" verdicts
+    as provisional until watchers.py replaces the hard-coded fleet.
 """
 
 import argparse

@@ -2,8 +2,19 @@
 """
 Automation runner for SuccessBrian OS.
 
-Evaluates every rule, acts at >=90% confidence, queues or researches below.
-Dry-run by default; pass --live to actually act.
+PURPOSE:
+    CLI entry point for the automation engine: evaluate rules, act at
+    >=90% confidence, report what happened.
+
+WHY:
+    Heartbeats, night shifts, and humans all need the same invocation.
+    Dry-run is the default so exploration is safe; --live is the explicit
+    "I mean it" flag.
+
+CALLED BY:
+    - Sunday heartbeat (STEP 0, --live)
+    - Night shift check-ins (--live)
+    - Humans: --dry-run to preview, --snapshot to inspect live state
 
 Usage:
     python3 tools/automate/run.py --dry-run   # preview (default)

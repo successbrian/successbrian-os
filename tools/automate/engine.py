@@ -1,18 +1,27 @@
 """successbrian-os automation engine.
 
-The 90% rule, as code. A Rule is:
-  - check()  -> (triggered: bool, context: dict)   ... is this relevant now?
-  - confidence(ctx) -> float                       ... 0.0-1.0, how sure are we?
-  - act(ctx, dry_run) -> str                       ... do it, return what happened
+PURPOSE:
+    The 90% rule, as code. Rules declare check -> confidence -> action; the
+    engine acts at >=90% confidence (reversible), queues irreversible
+    high-confidence actions for approval, and routes low-confidence triggers
+    to research via the second brain.
 
-Engine policy (per Brian):
-  - confidence >= 0.90 and reversible -> ACT autonomously
-  - confidence >= 0.90 but irreversible -> queue for approval, do not act
-  - confidence < 0.90 -> do NOT act; record to second brain as needs_research
-    (the heartbeat worker picks those up for subagent research)
+WHY:
+    Brian's standing rule ("90%+ correct, do it; below 90%, ask") was prose in
+    cron bodies — unenforceable and invisible. Codifying it means every
+    automated decision carries its confidence, every action is logged, and
+    outcomes feed back into the second brain so rules gain or lose trust over
+    time. This is the paperclipOS idea made executable: the OS acts on its
+    own within bounds Brian set.
 
-Every action is logged and its outcome recorded to the second brain, so
-rules gain or lose trust over time.
+CALLED BY:
+    - tools/automate/run.py (CLI; --live from heartbeats and night shift)
+    - Heartbeat workers run it first each wake-up
+
+NOTES:
+    AUTONOMY_THRESHOLD = 0.90 is Brian's bar, not a tuning parameter — don't
+    change it without his say-so. Dry-run is the default; --live is required
+    to act. Action log: tools/staging/automation-actions.jsonl.
 """
 from __future__ import annotations
 

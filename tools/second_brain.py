@@ -1,17 +1,28 @@
 #!/usr/bin/env python3
 """
-second_brain.py — write learnings to the agent second brain.
+Second-brain writer for SuccessBrian OS.
 
-The second brain lives in ecosystem_central.second_brain on k11-alpha.
-Schema: topic, category, content, confidence (low|medium|high|expired),
-        source, verification, expires_at, tags[].
+PURPOSE:
+    Record durable learnings to the agent second brain
+    (ecosystem_central.second_brain on k11-alpha): every fact carries
+    confidence, expiry, and verification so stale knowledge can't silently
+    poison agent reasoning.
 
-Durable facts only — operational noise stays in the shift log.
-Usage:
-    python3 second_brain.py --topic "..." --content "..." \
-        --category learning --confidence medium --tags a,b,c \
-        --source "sunday-shift-checkin" --verification "..." \
-        --expires-days 90
+WHY:
+    Agents accumulate knowledge fast and it rots fast. The Sunday shift,
+    night shift, and automation engine all learn things (what worked, what
+    broke, crew behavior patterns). Without a structured store those lessons
+    evaporate between runs. This is the write path; the schema lives in
+    successbrian/second-brain-for-agents.
+
+CALLED BY:
+    - Sunday/night shift workers, heartbeat check-ins, automation engine
+    - Humans: python3 second_brain.py --topic ... --content ... --tags ...
+
+NOTES:
+    Durable facts ONLY. Operational noise (who reported what at 3:15) stays
+    in the shift log — the schema README is explicit about this. Confidence:
+    high = directly observed, medium = inferred/research-backed, low = hunch.
 """
 import argparse
 import subprocess

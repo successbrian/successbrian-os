@@ -1,0 +1,264 @@
+{
+  "generated_at": "2026-09-27T20:00:11.113633+00:00",
+  "source": "successbrian-os/tools/ecosystem_state.py",
+  "fleet": [
+    {
+      "name": "k11-alpha",
+      "status": "live",
+      "batch_tok_s": 0,
+      "note": "Altair/Morpheus/Penny/DeepSeek 150B. Interactive + goal loop."
+    },
+    {
+      "name": "k11-bravo",
+      "status": "in_pieces",
+      "batch_tok_s": 0,
+      "note": "96GB RAM in wrapping. Future QLoRA training for small models."
+    },
+    {
+      "name": "x79-node-1..4",
+      "status": "planned",
+      "batch_tok_s": 40,
+      "note": "Dual M40 per node (48GB VRAM), 2x striped NVMe for Colibri, M.2 + threads for web/scraping. Content factory."
+    },
+    {
+      "name": "epyc-rome",
+      "status": "evaluating",
+      "batch_tok_s": 0,
+      "note": "$48 chip at Core 4. 256GB build for dual 150B + QLoRA."
+    },
+    {
+      "name": "aoostar-glm-1..2",
+      "status": "planned",
+      "batch_tok_s": 0,
+      "note": "GLM 5.3 on triple-striped NVMe. Not batch content nodes."
+    }
+  ],
+  "decisions": {
+    "count": 16,
+    "latest": "INFRA-20260916",
+    "by_topic": {
+      "INFRA": 1,
+      "X79": 13,
+      "k11": 1,
+      "no": 1
+    },
+    "topics": {
+      "INFRA": [
+        {
+          "decision_id": "INFRA-20260916",
+          "question": "Fleet-wide psql fix: Should we fix all ~50 scripts using bare psql -U without -h/-p flags, or is there a centralized env fix approach? PGPORT=6432 from PID 1 breaks socket fallback across the fleet.",
+          "answer": "",
+          "answered_at": ""
+        }
+      ],
+      "X79": [
+        {
+          "decision_id": "X79-20260927-13",
+          "question": "Is blog hosting limited to the four X79 nodes?",
+          "answer": "Fleet-wide hosting fabric. Blogs are distributed across all capable nodes (X79s, K11s, EPYC, etc.). Blog-to-node placement becomes a scheduling problem \u2014 Lyra's domain as health monitor and workflow o",
+          "answered_at": "2026-09-27 14:47"
+        },
+        {
+          "decision_id": "X79-20260927-12",
+          "question": "When and how do we launch the CMS publicly?",
+          "answer": "Public from day one. Framed as a beta: old DDR3 hardware that primarily runs AI inference, and oh by the way also serves as many blog domains as we can throw at it. The pitch is efficiency \u2014 every wat",
+          "answered_at": "2026-09-27 14:45"
+        },
+        {
+          "decision_id": "X79-20260927-11",
+          "question": "Do we open-source the custom CMS?",
+          "answer": "Yes \u2014 the CMS core goes public on GitHub. Private stays private: blog content, keyword/SEO strategies, affiliate configurations, API keys, and ranking tactics. Open: license choice (GPL vs MIT vs AGPL",
+          "answered_at": "2026-09-27 14:43"
+        },
+        {
+          "decision_id": "X79-20260927-09",
+          "question": "How do we handle WordPress plugin functionality?",
+          "answer": "Cherry-pick, don't compat. For each plugin we want (SEO, schema, sitemaps, affiliate, etc.), read its approach and reimplement the functionality natively in our CMS. No WordPress core fork, no plugin ",
+          "answered_at": "2026-09-27 14:42"
+        },
+        {
+          "decision_id": "X79-20260927-10",
+          "question": "How are the four X79 nodes organized?",
+          "answer": "Identical hardware, specialized software profiles. Each node runs the plugin set its assigned blogs need. Keeps per-node memory footprint lean (no unused plugin code loaded) and isolates plugin issues",
+          "answered_at": "2026-09-27 14:42"
+        },
+        {
+          "decision_id": "X79-20260927-08",
+          "question": "What CMS architecture serves the SEO blog network?",
+          "answer": "Custom multi-tenant CMS: one system, one database, many domains (domain-scoped content). Database-driven, SEO/marketing-first, WordPress-plugin compatible. This is a significant software build \u2014 Altai",
+          "answered_at": "2026-09-27 14:40"
+        },
+        {
+          "decision_id": "X79-20260927-07",
+          "question": "Do the X79 nodes serve the SEO blog network directly?",
+          "answer": "Yes. Each X79 node is a production web host for ~25 blogs (100 blogs / 4 nodes). This makes uptime, SSL, deployment pipeline, and backups first-class requirements \u2014 not just batch throughput. The M.2 ",
+          "answered_at": "2026-09-27 14:38"
+        },
+        {
+          "decision_id": "X79-20260927-06",
+          "question": "What is the hardware sourcing principle going forward?",
+          "answer": "No more mystery hardware. Future buys are known-quantity only (K11s, EPYC from Core 4, anything with a real manual). The X79s get documented as a community use case for existing owners \u2014 \"here's what ",
+          "answered_at": "2026-09-27 14:30"
+        },
+        {
+          "decision_id": "X79-20260927-01",
+          "question": "What is the final X79 node architecture?",
+          "answer": "Four identical dual-role nodes. Per node: 2x GPU for inference + 2x Gen 2 NVMe striped (RAID 0) for a Colibri-streamed model + 1x motherboard M.2 NVMe (single, boot) + remaining CPU threads for web ho",
+          "answered_at": "2026-09-27 14:30"
+        },
+        {
+          "decision_id": "X79-20260927-02",
+          "question": "What is the X79 storage layout?",
+          "answer": "Boot from single motherboard M.2 NVMe (simple, reliable, I/O isolation). 2x Gen 2 NVMe striped via PCIe adapters as model volume (~4GB/s, 4TB). SATA SSD for databases/active scrape data, SATA HDD for ",
+          "answered_at": "2026-09-27 14:30"
+        },
+        {
+          "decision_id": "X79-20260927-03",
+          "question": "Is the Tesla M40 still the right GPU for the X79 nodes?",
+          "answer": "M40 stays. 2x per node (48GB VRAM), power-limited to 150W each via nvidia-smi (decode is VRAM-bandwidth bound, ~10 tok/s holds at 150W; only prefill slows). Buy 7 more M40s (~$125 each) for uniformity",
+          "answered_at": "2026-09-27 14:30"
+        },
+        {
+          "decision_id": "X79-20260927-04",
+          "question": "Where does Shakespeare (70B) live permanently?",
+          "answer": "Shakespeare's permanent home is the dual-M40 X79 node. \"Always home for Shakespeare.\" 70B Q4_K_M (~40GB) fits in 48GB with headroom for context. ~8-12 tok/s at 150W power limit.",
+          "answered_at": "2026-09-27 14:30"
+        },
+        {
+          "decision_id": "X79-20260927-05",
+          "question": "What workload do the X79 nodes serve?",
+          "answer": "Batch content factory: blog posts, web page sales content, video scripts, email sequences. Nobody waits interactively \u2014 throughput over hours matters, not latency. ~10 tok/s = ~100+ articles per node ",
+          "answered_at": "2026-09-27 14:30"
+        }
+      ],
+      "k11": [
+        {
+          "decision_id": "k11-inference-only",
+          "question": "Where do K11-Alpha non-inference workloads and Node Zero services relocate?",
+          "answer": "K11-Alpha is being dedicated to AI inference as soon as possible \u2014 its RAM/CPU are reserved for the local model fleet. All non-inference workloads currently on K11-Alpha must be cleared off and reloca",
+          "answered_at": "2026-09-15 21:00"
+        }
+      ],
+      "no": [
+        {
+          "decision_id": "no-batch-delete",
+          "question": "May Altair batch-delete or batch-modify skills, files, configs, DB objects, or services without reading each item and checking references first?",
+          "answer": "NO. Never batch-delete or batch-modify without reading each item and checking what references it. Always quarantine to ~/.hermes/skill-trash/ instead of hard delete. Any deletion of more than one item",
+          "answered_at": "2026-09-15 19:14"
+        }
+      ]
+    }
+  },
+  "build_plans": {
+    "x79_cluster_build_plan": [
+      {
+        "component": "CPU Xeon E5-2650 v2",
+        "qty_needed": "8",
+        "qty_on_hand": "8",
+        "qty_to_buy": "0",
+        "status": "complete"
+      },
+      {
+        "component": "Motherboard X79 Dual LGA2011",
+        "qty_needed": "4",
+        "qty_on_hand": "4",
+        "qty_to_buy": "0",
+        "status": "complete"
+      },
+      {
+        "component": "GPU Cooling Kit Tesla M40",
+        "qty_needed": "8",
+        "qty_on_hand": "0",
+        "qty_to_buy": "8",
+        "status": "needed"
+      },
+      {
+        "component": "GPU Power Cable Riser to EPS",
+        "qty_needed": "4",
+        "qty_on_hand": "0",
+        "qty_to_buy": "4",
+        "status": "needed"
+      },
+      {
+        "component": "Chassis 4U Rackmount Server",
+        "qty_needed": "4",
+        "qty_on_hand": "0",
+        "qty_to_buy": "4",
+        "status": "needed"
+      },
+      {
+        "component": "PSU 1200W 80+ Gold Server",
+        "qty_needed": "4",
+        "qty_on_hand": "0",
+        "qty_to_buy": "4",
+        "status": "needed"
+      },
+      {
+        "component": "2TB M.2 NVMe SSD",
+        "qty_needed": "4",
+        "qty_on_hand": "0",
+        "qty_to_buy": "4",
+        "status": "needed"
+      },
+      {
+        "component": "RAM 16GB DDR3 ECC RDIMM",
+        "qty_needed": "16",
+        "qty_on_hand": "0",
+        "qty_to_buy": "16",
+        "status": "needed"
+      },
+      {
+        "component": "GPU Tesla M40 24GB",
+        "qty_needed": "8",
+        "qty_on_hand": "1",
+        "qty_to_buy": "7",
+        "status": "needed"
+      }
+    ]
+  },
+  "capacity": {
+    "inference": {
+      "dimension": "inference",
+      "available_tok_s": 40,
+      "needed_tok_s": 18.8,
+      "headroom_tok_s": 21.2,
+      "verdict": "healthy",
+      "recommendation": "Capacity covers demand with 50%+ headroom. No action needed."
+    },
+    "storage": {
+      "dimension": "storage",
+      "nvme_tb_planned": 24,
+      "model_hot_gb": 220,
+      "verdict": "healthy",
+      "recommendation": "24TB NVMe planned vs ~220GB hot models. Ample. SATA tier sizes still open (see X79 Q3 for Brian)."
+    }
+  },
+  "live_health": {
+    "status": "not_yet_available",
+    "note": "Lyra will populate per-node CPU/RAM/disk/GPU utilization.",
+    "schema": {
+      "node": "str",
+      "cpu_pct": "float",
+      "ram_pct": "float",
+      "disk_pct": "float",
+      "gpu_util_pct": "float",
+      "vram_used_gb": "float",
+      "temp_c": "float",
+      "last_seen": "iso8601"
+    }
+  },
+  "blog_placement": {
+    "status": "not_yet_available",
+    "note": "CMS will populate blog->node assignments.",
+    "schema": {
+      "domain": "str",
+      "node": "str",
+      "plugin_profile": "str",
+      "monthly_visits": "int"
+    }
+  },
+  "anythingllm": {
+    "status": "api_key_pending",
+    "note": "Library stats once AnythingLLM API access lands."
+  }
+}

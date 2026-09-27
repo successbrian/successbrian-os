@@ -1,6 +1,6 @@
 # Ecosystem Capacity Report
 
-**Generated:** 2026-09-27 19:36 UTC
+**Generated:** 2026-09-27 20:00 UTC
 
 The ecosystem's read on capacity vs demand. Verdicts: `healthy` / `tight` / `gap` / `watch`.
 
@@ -48,6 +48,17 @@ The ecosystem's read on capacity vs demand. Verdicts: `healthy` / `tight` / `gap
 - model_hot_gb: 220
 
 **Recommendation:** 24TB NVMe planned vs ~220GB hot models. Ample. SATA tier sizes still open (see X79 Q3 for Brian).
+
+---
+
+### [WATCH] web_serving
+
+**Verdict:** watch
+
+- sites_per_node: 25
+- stack_options: static (Hugo->nginx) vs WordPress
+
+**Recommendation:** Architecture decision needed: static-site generator (Hugo/Jekyll -> nginx) vs WordPress. Static: 25 sites/node is trivial, near-zero maintenance, perfect for SEO content blogs. WordPress: 25 PHP pools + 25 DBs per node strains 64GB DDR3 and creates 100 installs to patch. Recommendation: static unless a specific blog needs WP features. This is a question for Brian.
 
 ---
 

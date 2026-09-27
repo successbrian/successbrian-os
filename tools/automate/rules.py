@@ -6,6 +6,8 @@ the engine enforces the 90% bar, not the rule author.
 from __future__ import annotations
 
 import subprocess
+import sys
+import json
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -165,8 +167,63 @@ def _alert_act(ctx: dict, dry_run: bool) -> str:  # never called (>=0.90 gate)
     return "n/a"
 
 
+# --- Rule 6: v4pro credits available -> route hard tasks to cloud ------------
+_V4PRO_STATE = Path(__file__).parent / "state" / "v4pro-announced.json"
+
+
+def _v4pro_check():
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from model_tiers import get_tiers
+    tiers = get_tiers()
+    available = tiers["v4pro_cloud"]["available"]
+    last = False
+    if _V4PRO_STATE.exists():
+        try:
+            last = json.loads(_V4PRO_STATE.read_text()).get("announced", False)
+        except Exception:  # noqa: BLE001
+            pass
+    # Fire only on the false->true edge (announce once per credit window),
+    # or on true->false (stand down).
+    if available and not last:
+        return True, {"transition": "credits_available", "tiers": tiers}
+    if not available and last:
+        return True, {"transition": "credits_exhausted", "tiers": tiers}
+    return False, {}
+
+
+def _v4pro_confidence(ctx: dict) -> float:
+    return 0.96  # flag + port probes, directly observed
+
+
+def _v4pro_act(ctx: dict, dry_run: bool) -> str:
+    import json as _json
+    transition = ctx["transition"]
+    _V4PRO_STATE.parent.mkdir(parents=True, exist_ok=True)
+    if dry_run:
+        return f"would announce v4pro transition: {transition}"
+    _V4PRO_STATE.write_text(_json.dumps({
+        "announced": transition == "credits_available",
+        "at": _now().isoformat(),
+    }))
+    if transition == "credits_available":
+        body = (
+            "# V4 Pro credits available — route hard tasks to cloud (automation)\n\n"
+            f"Time: {_now().strftime('%Y-%m-%d %H:%M')}.\n"
+            "DeepSeek V4 Pro (cloud top tier) has credits. Until they run dry:\n"
+            "- Hard tasks (strategy, hard coding, cross-system reasoning) go "
+            "to V4 Pro via AnythingLLM deep research, NOT the local 150B.\n"
+            "- 150B stays on medium work; Penny keeps the small fast jobs.\n"
+            "When credits exhaust, flip the flag: "
+            "`python3 tools/model_tiers.py --v4pro exhausted`.\n"
+        )
+        path = _inbox_note("v4pro-credits-available", body)
+        return f"announced, note: {Path(path).name}"
+    return "stood down: hard tasks back to local 150B (flag flipped)"
+
+
 RULES: list[Rule] = [
-    Rule("deepseek_brief_overdue", _brief_check, _brief_confidence,
+    Rule("v4pro_routing", _v4pro_check, _v4pro_confidence,
+         _v4pro_act, reversible=True, tags=["routing", "v4pro"]),    Rule("deepseek_brief_overdue", _brief_check, _brief_confidence,
          _brief_act, reversible=True, tags=["sunday-shift", "crew"]),
     Rule("crew_reports_overdue", _crew_check, _crew_confidence,
          _crew_act, reversible=True, tags=["sunday-shift", "crew"]),

@@ -16,6 +16,10 @@ CALLED BY:
     - Night shift check-ins (--live)
     - Humans: --dry-run to preview, --snapshot to inspect live state
 
+NOTES:
+    Dry-run is the default and --live is the explicit opt-in — keep it
+    that way. Heartbeat workers pass --live only after their own checks.
+
 Usage:
     python3 tools/automate/run.py --dry-run   # preview (default)
     python3 tools/automate/run.py --live       # act for real

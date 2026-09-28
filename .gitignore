@@ -1,2 +1,5 @@
 # marketer watch: transcripts are working data, refetched on demand
 tools/marketer_watch_transcripts/
+
+# altair routines: state.db is runtime state on k11, never committed
+tools/altair_routines/state.db

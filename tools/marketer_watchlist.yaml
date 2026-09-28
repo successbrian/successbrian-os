@@ -1,0 +1,66 @@
+# Marketer watchlist — YouTube channels Brian follows.
+#
+# WHY THIS FILE EXISTS:
+#   Brian follows affiliate marketers to keep up with launches and tactics, but
+#   their email/newsletter volume clutters his inbox. The watcher
+#   (tools/marketer_watch.py) polls these public channels behind the scenes and
+#   distills each new video into a neutral second-brain observation. Brian reads
+#   the digest instead of the firehose. Incoming volume never implies importance.
+#
+# ADDING A MARKETER (2 steps):
+#   1. Find their YouTube channel ID. Open their channel page in a browser,
+#      view source, search for:  "externalId":"UC...
+#      (the 24-char ID starting with UC). For /user/NAME or /@handle URLs this
+#      works the same way. NEVER guess an ID — verify it: the channel page
+#      title must show the marketer's name.
+#   2. Add an entry below (copy the template), then verify it parses:
+#        python3 tools/marketer_watch.py --check --dry-run
+#      Then seed the baseline so old videos don't flood the log:
+#        python3 tools/marketer_watch.py --baseline
+#
+# RSS NOTE (2026-09-27): YouTube's public feeds/videos.xml endpoint returned
+# 404 for valid channel IDs from multiple egresses — treated as deprecated.
+# The watcher polls the channel /videos page HTML instead. youtube_rss_url is
+# kept in the schema (null) in case the endpoint ever comes back.
+#
+# EXTENDING LATER: blogs/newsletters get their own keys here later
+# (e.g. blog_feed_url, newsletter_source) with matching pollers in
+# marketer_watch.py. YouTube is the v1 source.
+
+# Videos whose titles match any keyword (case-insensitive) get their transcript
+# pulled via the youtube-content skill on k11 for a deeper summary by the
+# driver (cron worker). Keep this list tight — transcribing everything is
+# wasteful. Tune freely.
+enrich_keywords:
+  - launch
+  - strategy
+  - reveals
+  - case study
+  - step by step
+  - blueprint
+
+watchers:
+  - name: Tim Verdouw
+    slug: tim-verdouw
+    note: Affiliate marketer on YouTube (youtube.com/user/TimVerdouw) and timverdouw.com. AI tool reviews and launch coverage.
+    youtube_channel_id: UC1CUuE0DMkL_4OyFausPbpg
+    youtube_channel_url: https://www.youtube.com/channel/UC1CUuE0DMkL_4OyFausPbpg
+    youtube_rss_url: null
+    added: 2026-09-28
+
+  - name: Todd Gross
+    slug: todd-gross
+    note: Veteran marketer/vendor (Synthesys, Vidko, Done On Command). Product reviews, vendor interviews, AI tool demos.
+    youtube_channel_id: UCMED0zHXL5jf6ZgUybKBa3Q
+    youtube_channel_url: https://www.youtube.com/@toddgross
+    youtube_rss_url: null
+    added: 2026-09-28
+
+# TEMPLATE (copy, fill in, delete these comment lines):
+#   - name: Jane Marketer
+#     slug: jane-marketer
+#     note: What they do and why Brian follows them.
+#     youtube_channel_id: UCxxxxxxxxxxxxxxxxxxxxxx
+#     youtube_channel_url: https://www.youtube.com/@janehandle
+#     youtube_rss_url: null
+#     added: YYYY-MM-DD

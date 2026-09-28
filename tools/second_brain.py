@@ -33,9 +33,16 @@ KSSH = Path.home() / "workspace" / "bin" / "kssh"
 
 
 def pg_exec(sql: str) -> str:
+    # WHY base64: kssh runs the command through a remote shell, so SQL text
+    # containing &, $, backticks, quotes, or newlines would be interpreted by
+    # bash (2026-09-28: video titles with "&" broke inserts). Base64 moves the
+    # SQL through the shell opaquely; the decoded text is only ever seen by
+    # psql inside double quotes, where metacharacters are literal.
+    import base64
+    b64 = base64.b64encode(sql.encode("utf-8")).decode("ascii")
     out = subprocess.run(
-        [str(KSSH), f"psql -h localhost -U successbrian -d ecosystem_central "
-                    f"-t -A -c \"{sql}\""],
+        [str(KSSH), "psql -h localhost -U successbrian -d ecosystem_central "
+                    f"-t -A -c \"$(echo {b64} | base64 -d)\""],
         capture_output=True, text=True, timeout=60,
     )
     if out.returncode != 0:

@@ -25,6 +25,7 @@ from __future__ import annotations
 import glob
 import os
 import subprocess
+import sys
 from dataclasses import dataclass, field
 
 NOT_INSTRUMENTED = "NOT INSTRUMENTED — no data source wired for this domain yet."
@@ -81,6 +82,32 @@ def pull_recent_decisions(hours: int = 24, limit: int = 12) -> str:
     return "\n".join(f"- {l}" for l in lines) or "No recent decisions recorded."
 
 
+def pull_marketer_watch_offers() -> str:
+    """Offers pushed by the affiliate marketers Brian watches (last 30 days).
+
+    Brian 2026-09-28: watching top affiliate earners should reveal the best
+    offers for HIM to promote — the signal is "what offers they're pushing,"
+    aggregated so multi-marketer pushes rank highest. Sources the local
+    marketer-watch seen db via tools/marketer_watch.py --offers (not psql);
+    offers enter the db during enrichment (--enrich-summary --offer) or via
+    backfill (--set-offer). Loud on failure, never silent.
+    """
+    script = os.path.expanduser(
+        "~/workspace/successbrian-os/tools/marketer_watch.py")
+    try:
+        proc = subprocess.run(
+            [sys.executable, script, "--offers"],
+            capture_output=True, timeout=60,
+        )
+        out = proc.stdout.decode(errors="replace").strip()
+        if proc.returncode != 0:
+            err = proc.stderr.decode(errors="replace").strip()
+            return f"PULLER ERROR (marketer_watch --offers rc={proc.returncode}): {err}"
+        return out or "No marketer-watch offer data returned."
+    except Exception as e:  # noqa: BLE001 - a broken puller must not kill the session
+        return f"PULLER ERROR (marketer_watch --offers): {e}"
+
+
 def stub_puller(domain: str):
     """Generic fallback: marks the domain as not instrumented."""
 
@@ -102,6 +129,7 @@ PULLERS: dict[str, callable] = {
     "hiro_fm": stub_puller("hiro_fm"),
     "mlm": stub_puller("mlm"),
     "affiliate": stub_puller("affiliate"),
+    "marketer_watch_offers": pull_marketer_watch_offers,
     "systemeio": stub_puller("systemeio"),
     "leads": stub_puller("leads"),
     "trading": stub_puller("trading"),

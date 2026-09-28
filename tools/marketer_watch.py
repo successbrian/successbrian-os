@@ -42,6 +42,32 @@ NOTES:
       transcribing everything is wasteful. Do NOT touch the lead-gen scripts
       (crypto_youtube_discovery.py, find_youtube_prospects.py,
       youtube_scrape.py) — different job.
+    - OFFER TRACKING (per Brian 2026-09-28): the signal isn't just "what they
+      published" — it's "what offers they're pushing." Watching top affiliate
+      earners reveals which offers Brian himself might promote. When the
+      driver writes an enrichment summary it also identifies the promoted
+      offer (--enrich-summary ... --offer "Product ($price, launch date)");
+      the offer is stored in the seen db (offer/offer_slug columns) and the
+      second-brain record carries it as a `Promoted offer:` line plus an
+      `offer:<slug>` tag. --offers aggregates across the watchlist: which
+      offers are pushed by MULTIPLE marketers in the last 30 days — the
+      strongest promotion signal. --set-offer backfills an offer onto an
+      already-seen video without re-logging to second brain (the new
+      second-brain record from a re-run would duplicate).
+    - BRIEF WIRING (2026-09-28): board/harness/brief.py has a real
+      pull_marketer_watch_offers() puller (registered as
+      "marketer_watch_offers") that shells out to this script's --offers;
+      board/config/brian.yaml gives the Chief Affiliate Marketing Officer
+      brief_keys [affiliate, marketer_watch_offers]. Generic harness
+      untouched — this is Brian's bent puller, the designed extension point.
+    - HOW THE DRIVER IDENTIFIES AN OFFER: read the transcript's call to
+      action, "link in description" mentions, launch-price announcements,
+      and bonus-stack language. The display string should be the product
+      name plus launch facts, e.g. "UnfoldVideo ($27 launch, Sep 5 2026)".
+      If the video reviews a tool without a clear offer, or promotes
+      nothing (strategy talk, interviews), pass no --offer — the record
+      says "Promoted offer: none identifiable." Never guess a price or
+      date that isn't in the transcript/title.
 """
 
 import argparse
@@ -53,7 +79,7 @@ import sqlite3
 import subprocess
 import sys
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WATCHLIST = os.path.join(HERE, "marketer_watchlist.yaml")
@@ -174,7 +200,26 @@ def db():
         first_seen_at TEXT NOT NULL,
         logged INTEGER NOT NULL DEFAULT 0
     )""")
+    _ensure_offer_cols(con)
     return con
+
+
+def _ensure_offer_cols(con):
+    """Add offer/offer_slug columns to pre-existing seen db (2026-09-28)."""
+    cols = {r[1] for r in con.execute("PRAGMA table_info(seen_videos)")}
+    if "offer" not in cols:
+        con.execute("ALTER TABLE seen_videos ADD COLUMN offer TEXT")
+    if "offer_slug" not in cols:
+        con.execute("ALTER TABLE seen_videos ADD COLUMN offer_slug TEXT")
+    con.commit()
+
+
+def offer_slug(offer_display):
+    """Product key from a display string: 'UnfoldVideo ($27 launch, Sep 5 2026)'
+    -> 'unfoldvideo'. Parenthetical launch facts stay in the display string."""
+    base = re.sub(r"\s*\(.*?\)", "", offer_display or "").strip().lower()
+    slug = re.sub(r"[^a-z0-9]+", "", base)
+    return slug or None
 
 
 def seen_ids(con, slug):
@@ -265,39 +310,147 @@ def fetch_transcript(video_id, timeout=90):
     return out_path
 
 
-def cmd_enrich_summary(video_id, summary_file):
-    """Record an agent-written deep-dive summary for an enriched video."""
+def cmd_enrich_summary(video_id, summary_file, offer=None):
+    """Record an agent-written deep-dive summary for an enriched video.
+
+    offer: optional display string like "UnfoldVideo ($27 launch, Sep 5
+    2026)" identified by the driver from the transcript/title/description.
+    Stored in the seen db and recorded on the second-brain record as a
+    `Promoted offer:` line plus an `offer:<slug>` tag. None (default) means
+    no identifiable offer — recorded explicitly as such, never guessed.
+    """
     con = db()
     row = con.execute(
         "SELECT slug, title FROM seen_videos WHERE video_id=?",
         (video_id,)).fetchone()
-    con.close()
     if not row:
+        con.close()
         print(f"error: unknown video_id {video_id} (not in seen db)",
               file=sys.stderr)
         return 2
     slug, title = row
+    oslug = offer_slug(offer) if offer else None
     watchers = {w["slug"]: w for w in load_watchlist()}
     name = watchers.get(slug, {}).get("name", slug)
     with open(summary_file) as f:
         summary = f.read().strip()
     if not summary:
+        con.close()
         print("error: summary file is empty", file=sys.stderr)
         return 2
     topic = f"{name}: {title[:100]} — deep dive"
+    offer_line = (f"Promoted offer: {offer}" if offer
+                  else "Promoted offer: none identifiable from "
+                       "transcript/title/description.")
     content = (f"https://www.youtube.com/watch?v={video_id}\n"
+               f"{offer_line}\n"
                f"Transcript-based summary (transcript pulled via the "
                f"youtube-content skill on k11-alpha):\n{summary}")
+    tags = f"marketer-watch,{slug},enriched"
+    if oslug:
+        tags += f",offer:{oslug}"
+        con.execute("UPDATE seen_videos SET offer=?, offer_slug=? "
+                    "WHERE video_id=?", (offer, oslug, video_id))
+        con.commit()
+    con.close()
     cmd = [sys.executable, SECOND_BRAIN,
            "--topic", topic, "--content", content,
            "--category", "observation", "--confidence", "medium",
            "--source", "marketer-watch",
-           "--tags", f"marketer-watch,{slug},enriched"]
+           "--tags", tags]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         print(f"LOG FAILED: {r.stderr.strip()}", file=sys.stderr)
         return 1
     print(r.stdout.strip())
+    if oslug:
+        print(f"offer tracked: {offer} (tag offer:{oslug})")
+    return 0
+
+
+def cmd_set_offer(video_id, offer):
+    """Backfill/attach an offer to an already-seen video (no second-brain
+    re-log — the enriched record already exists; this feeds --offers only)."""
+    con = db()
+    row = con.execute(
+        "SELECT slug, title, offer FROM seen_videos WHERE video_id=?",
+        (video_id,)).fetchone()
+    if not row:
+        con.close()
+        print(f"error: unknown video_id {video_id} (not in seen db)",
+              file=sys.stderr)
+        return 2
+    oslug = offer_slug(offer)
+    if not oslug:
+        con.close()
+        print("error: could not derive an offer slug from that string",
+              file=sys.stderr)
+        return 2
+    con.execute("UPDATE seen_videos SET offer=?, offer_slug=? WHERE video_id=?",
+                (offer, oslug, video_id))
+    con.commit()
+    con.close()
+    print(f"offer set on {video_id}: {offer} (tag offer:{oslug})")
+    return 0
+
+
+def cmd_offers(days=30):
+    """Aggregate promoted offers across the watchlist over the last N days.
+
+    The "what the top earners are pushing" signal: offers promoted by
+    MULTIPLE watched marketers rank highest. Reads the local seen db
+    (populated by --enrich-summary/--set-offer). Plain-text table on stdout;
+    exit 0 with a "no offers" line when empty (never a silent empty run).
+    """
+    con = db()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(
+        timespec="seconds")
+    rows = con.execute(
+        """SELECT offer, offer_slug, slug, title, video_id, first_seen_at
+           FROM seen_videos
+           WHERE offer_slug IS NOT NULL AND first_seen_at >= ?
+           ORDER BY first_seen_at""", (cutoff,)).fetchall()
+    con.close()
+    watchers = {w["slug"]: w.get("name", w["slug"]) for w in load_watchlist()}
+
+    agg = {}
+    for offer, oslug, mslug, title, vid, seen in rows:
+        e = agg.setdefault(oslug, {"name": offer, "marketers": set(),
+                                   "first": seen, "last": seen, "n": 0})
+        e["marketers"].add(mslug)
+        e["n"] += 1
+        e["first"] = min(e["first"], seen)
+        e["last"] = max(e["last"], seen)
+
+    print(f"Promoted offers tracked by marketer-watch (last {days} days)")
+    print("=" * 72)
+    if not agg:
+        print("No offers tracked yet. Offers are captured during enrichment "
+              "(--enrich-summary --offer) or backfilled (--set-offer).")
+        return 0
+
+    ranked = sorted(agg.items(),
+                    key=lambda kv: (len(kv[1]["marketers"]), kv[1]["n"]),
+                    reverse=True)
+    print(f"{'OFFER':30} {'MARKETERS':9} {'VIDEOS':6} "
+          f"{'FIRST SEEN':10}  {'LAST SEEN':10}")
+    print("-" * 72)
+    for oslug, e in ranked:
+        ms = ",".join(sorted(e["marketers"]))
+        print(f"{e['name'][:30]:30} {len(e['marketers']):<9} {e['n']:<6} "
+              f"{e['first'][:10]:10}  {e['last'][:10]:10}")
+    print("-" * 72)
+    multi = [(oslug, e) for oslug, e in ranked if len(e["marketers"]) > 1]
+    if multi:
+        print("Pushed by MULTIPLE marketers (strongest signal):")
+        for oslug, e in multi:
+            names = ", ".join(watchers.get(m, m)
+                              for m in sorted(e["marketers"]))
+            print(f"  - {e['name']} [{oslug}]: {names} "
+                  f"({e['n']} videos)")
+    else:
+        print("No offer is currently pushed by more than one watched "
+              "marketer.")
     return 0
 
 
@@ -395,9 +548,23 @@ def main():
     ap.add_argument("--channel-id", help="YouTube channel ID for --add")
     ap.add_argument("--enrich-summary", metavar="VIDEO_ID",
                     help="record an agent-written deep-dive summary for a video "
-                         "(needs --summary-file)")
+                         "(needs --summary-file; optional --offer to track "
+                         "the promoted offer)")
     ap.add_argument("--summary-file", metavar="PATH",
                     help="path to the summary text for --enrich-summary")
+    ap.add_argument("--offer", metavar="OFFER",
+                    help="promoted offer display string for --enrich-summary "
+                         'or --set-offer, e.g. "UnfoldVideo ($27 launch, '
+                         'Sep 5 2026)". Identified by the driver from '
+                         "transcript/title/description — never guessed.")
+    ap.add_argument("--set-offer", metavar="VIDEO_ID",
+                    help="backfill/attach an offer to an already-seen video "
+                         "(needs --offer; feeds --offers, no re-logging)")
+    ap.add_argument("--offers", action="store_true",
+                    help="aggregate promoted offers across the watchlist "
+                         "(multi-marketer pushes rank highest)")
+    ap.add_argument("--days", type=int, default=30,
+                    help="lookback window for --offers (default 30)")
     args = ap.parse_args()
 
     if args.list:
@@ -408,7 +575,15 @@ def main():
         if not args.summary_file:
             print("error: --enrich-summary needs --summary-file", file=sys.stderr)
             return 2
-        return cmd_enrich_summary(args.enrich_summary, args.summary_file)
+        return cmd_enrich_summary(args.enrich_summary, args.summary_file,
+                                  offer=args.offer)
+    elif args.set_offer:
+        if not args.offer:
+            print("error: --set-offer needs --offer", file=sys.stderr)
+            return 2
+        return cmd_set_offer(args.set_offer, args.offer)
+    elif args.offers:
+        return cmd_offers(days=args.days)
     elif args.check or args.baseline:
         _, keywords = load_config()
         return cmd_check(dry_run=args.dry_run, baseline=args.baseline,

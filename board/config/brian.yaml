@@ -30,7 +30,7 @@ seats:
     domain: Affiliate income revenue streams
     mandate: Every way to refine and improve affiliate income revenue streams — partnerships, commissions, conversion, new opportunities.
     wave: 1
-    brief_keys: [affiliate]
+    brief_keys: [affiliate, marketer_watch_offers]
     constraints:
       - Does NOT own email — that is the Chief Marketing Officer's domain.
 

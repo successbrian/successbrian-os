@@ -23,13 +23,9 @@ NOTES:
 """
 
 import argparse
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent / "decision_sync"))
-from sync import get_decisions, get_build_plan, kssh, pg_query  # noqa: E402
 
 
 STAGING = Path(__file__).parent / "staging"
@@ -39,23 +35,28 @@ STAGING = Path(__file__).parent / "staging"
 # Topic: keep this in sync with brian_decisions as the fleet changes.
 # ---------------------------------------------------------------------------
 
+# Numbers below are ESTIMATES unless tagged "measured". Per CODE-STANDARDS,
+# guesses must be labeled as guesses — update a tag when real data lands.
 FLEET = [
     {
         "name": "k11-alpha",
         "status": "live",
         "batch_tok_s": 0,      # interactive node, not batch
+        "batch_tok_s_source": "by_design",
         "note": "Altair/Morpheus/Penny/DeepSeek 150B. Interactive + goal loop.",
     },
     {
         "name": "k11-bravo",
         "status": "in_pieces",
         "batch_tok_s": 0,
+        "batch_tok_s_source": "by_design",
         "note": "96GB RAM in wrapping. Future QLoRA training for small models.",
     },
     {
         "name": "x79-node-1..4",
         "status": "planned",
         "batch_tok_s": 40,     # 4 nodes x ~10 tok/s Shakespeare-class
+        "batch_tok_s_source": "estimate_unverified",
         "note": "Dual M40 per node (48GB VRAM), 2x striped NVMe for Colibri, "
                 "M.2 + threads for web/scraping. Content factory.",
     },
@@ -63,12 +64,14 @@ FLEET = [
         "name": "epyc-rome",
         "status": "evaluating",
         "batch_tok_s": 0,
+        "batch_tok_s_source": "by_design",
         "note": "$48 chip at Core 4. 256GB build for dual 150B + QLoRA.",
     },
     {
         "name": "aoostar-glm-1..2",
         "status": "planned",
         "batch_tok_s": 0,
+        "batch_tok_s_source": "by_design",
         "note": "GLM 5.3 on triple-striped NVMe. Not batch content nodes.",
     },
 ]
@@ -86,10 +89,12 @@ DEMAND = {
         "tokens_per_article": 2700,
         "batch_window_hours": 8,
         "tok_s_needed": 200 * 2700 / (8 * 3600),  # ~18.75
+        "source": "estimate_unverified",
         "note": "100 blogs x 2 articles/day, 8h overnight batch window.",
     },
     "anythingllm_maintenance": {
         "cpu_hours_per_night": 4,
+        "source": "estimate_unverified",
         "note": "Dedup, embeddings, hygiene. Offload target: X79s.",
     },
 }
@@ -141,6 +146,7 @@ def analyze_storage() -> dict:
         "dimension": "storage",
         "nvme_tb_planned": nvme_tb,
         "model_hot_gb": model_hot_gb,
+        "figures_source": "estimate_unverified",
         "verdict": verdict,
         "recommendation": rec,
     }
@@ -203,7 +209,9 @@ def render_report(results: list[dict]) -> str:
         "",
     ]
     for f in FLEET:
-        lines += [f"- **{f['name']}** ({f['status']}): {f['note']}", ""]
+        src = f.get("batch_tok_s_source")
+        tag = f" [throughput: {src}]" if src and src != "by_design" else ""
+        lines += [f"- **{f['name']}** ({f['status']}){tag}: {f['note']}", ""]
     lines += ["## Demand", ""]
     for key, d in DEMAND.items():
         lines += [f"- **{key}**: {d['note']}", ""]
@@ -250,7 +258,9 @@ def main() -> int:
               f"{r['recommendation'][:80]}...")
 
     if args.to_altair:
-        dest = Path("/tmp/altair-brain-inbox/inbox")
+        # /tmp/altair-brain-inbox is dead on this VM (fixed 2026-09-27):
+        # the durable clone lives at ~/workspace/altair-brain.
+        dest = Path.home() / "workspace" / "altair-brain" / "inbox"
         if dest.exists():
             ts = datetime.now().strftime("%Y%m%d-%H%M%S")
             (dest / f"{ts}-capacity-report.md").write_text(

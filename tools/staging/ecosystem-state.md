@@ -1,6 +1,6 @@
 # Ecosystem State
 
-**Generated:** 2026-09-27T20:00:11.113633+00:00
+**Generated:** 2026-09-28T02:07:05.219147+00:00
 
 ---
 
@@ -26,8 +26,16 @@
 
 ## Pending Inputs
 
-- **live_health**: not_yet_available — Lyra will populate per-node CPU/RAM/disk/GPU utilization.
-
 - **blog_placement**: not_yet_available — CMS will populate blog->node assignments.
 
 - **anythingllm**: api_key_pending — Library stats once AnythingLLM API access lands.
+
+## Node Health
+
+- **x79-node-1..4**: not_yet_available — Nodes not built yet.
+
+- **k11-bravo**: not_yet_available — Node not online yet.
+
+- **epyc-rome**: not_yet_available — Node not online yet.
+
+- **k11-alpha**: measured — Disk + queue depths measured read-only via kssh. CPU/RAM/GPU counters not yet wired.

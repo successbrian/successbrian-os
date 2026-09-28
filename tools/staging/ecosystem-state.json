@@ -1,35 +1,40 @@
 {
-  "generated_at": "2026-09-27T20:00:11.113633+00:00",
+  "generated_at": "2026-09-28T02:07:05.219147+00:00",
   "source": "successbrian-os/tools/ecosystem_state.py",
   "fleet": [
     {
       "name": "k11-alpha",
       "status": "live",
       "batch_tok_s": 0,
+      "batch_tok_s_source": "by_design",
       "note": "Altair/Morpheus/Penny/DeepSeek 150B. Interactive + goal loop."
     },
     {
       "name": "k11-bravo",
       "status": "in_pieces",
       "batch_tok_s": 0,
+      "batch_tok_s_source": "by_design",
       "note": "96GB RAM in wrapping. Future QLoRA training for small models."
     },
     {
       "name": "x79-node-1..4",
       "status": "planned",
       "batch_tok_s": 40,
+      "batch_tok_s_source": "estimate_unverified",
       "note": "Dual M40 per node (48GB VRAM), 2x striped NVMe for Colibri, M.2 + threads for web/scraping. Content factory."
     },
     {
       "name": "epyc-rome",
       "status": "evaluating",
       "batch_tok_s": 0,
+      "batch_tok_s_source": "by_design",
       "note": "$48 chip at Core 4. 256GB build for dual 150B + QLoRA."
     },
     {
       "name": "aoostar-glm-1..2",
       "status": "planned",
       "batch_tok_s": 0,
+      "batch_tok_s_source": "by_design",
       "note": "GLM 5.3 on triple-striped NVMe. Not batch content nodes."
     }
   ],
@@ -229,22 +234,68 @@
       "dimension": "storage",
       "nvme_tb_planned": 24,
       "model_hot_gb": 220,
+      "figures_source": "estimate_unverified",
       "verdict": "healthy",
       "recommendation": "24TB NVMe planned vs ~220GB hot models. Ample. SATA tier sizes still open (see X79 Q3 for Brian)."
     }
   },
   "live_health": {
-    "status": "not_yet_available",
-    "note": "Lyra will populate per-node CPU/RAM/disk/GPU utilization.",
-    "schema": {
-      "node": "str",
-      "cpu_pct": "float",
-      "ram_pct": "float",
-      "disk_pct": "float",
-      "gpu_util_pct": "float",
-      "vram_used_gb": "float",
-      "temp_c": "float",
-      "last_seen": "iso8601"
+    "x79-node-1..4": {
+      "status": "not_yet_available",
+      "note": "Nodes not built yet.",
+      "schema": {
+        "node": "str",
+        "cpu_pct": "float",
+        "ram_pct": "float",
+        "disk_pct": "float",
+        "gpu_util_pct": "float",
+        "vram_used_gb": "float",
+        "temp_c": "float",
+        "last_seen": "iso8601"
+      }
+    },
+    "k11-bravo": {
+      "status": "not_yet_available",
+      "note": "Node not online yet.",
+      "schema": {
+        "node": "str",
+        "cpu_pct": "float",
+        "ram_pct": "float",
+        "disk_pct": "float",
+        "gpu_util_pct": "float",
+        "vram_used_gb": "float",
+        "temp_c": "float",
+        "last_seen": "iso8601"
+      }
+    },
+    "epyc-rome": {
+      "status": "not_yet_available",
+      "note": "Node not online yet.",
+      "schema": {
+        "node": "str",
+        "cpu_pct": "float",
+        "ram_pct": "float",
+        "disk_pct": "float",
+        "gpu_util_pct": "float",
+        "vram_used_gb": "float",
+        "temp_c": "float",
+        "last_seen": "iso8601"
+      }
+    },
+    "k11-alpha": {
+      "status": "measured",
+      "measured_at": "2026-09-28T02:07:11.286991+00:00",
+      "disk_pct": {
+        "/": 68
+      },
+      "queues": {
+        "agent_questions_queue": 76,
+        "approval_queue": 0,
+        "ai_task_queue": 951,
+        "alerts_unresolved": -1,
+        "action_items_open": 22
+      },
+      "note": "Disk + queue depths measured read-only via kssh. CPU/RAM/GPU counters not yet wired."
     }
   },
   "blog_placement": {

@@ -110,7 +110,7 @@ def shift_window_active() -> dict:
     from zoneinfo import ZoneInfo
     now = datetime.now(ZoneInfo("America/Chicago"))
     active = (now.weekday() == 6 and
-              (now.hour > 15 or (now.hour == 15 and now.minute >= 0)) and
+              now.hour >= 15 and
               (now.hour < 19 or (now.hour == 19 and now.minute < 30)))
     return {"active": active, "now": now.isoformat()}
 

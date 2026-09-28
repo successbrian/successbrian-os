@@ -44,7 +44,9 @@ def _now() -> datetime:
 
 def _inbox_note(name: str, body: str) -> str:
     ts = _now().strftime("%Y%m%d-%H%M%S")
-    path = INBOX / "inbox" / f"{ts}-{name}.md"
+    inbox_dir = INBOX / "inbox"
+    inbox_dir.mkdir(parents=True, exist_ok=True)  # fresh checkouts lack it
+    path = inbox_dir / f"{ts}-{name}.md"
     path.write_text(body)
     return str(path)
 
@@ -172,8 +174,10 @@ def _disk_confidence(ctx: dict) -> float:
 
 def _disk_act(ctx: dict, dry_run: bool) -> str:
     # Only ever touches /tmp files older than 7 days. Nothing else.
-    cmd = ("find /tmp -maxdepth 2 -type f -mtime +7 "
-           "-not -path '*/altair-brain-inbox/*' -delete -print | wc -l")
+    # (Old exclusion for */altair-brain-inbox/* removed 2026-09-28: that path
+    # exists on neither this VM nor k11-alpha; the inbox lives in the durable
+    # ~/workspace/altair-brain clone, not /tmp.)
+    cmd = ("find /tmp -maxdepth 2 -type f -mtime +7 -delete -print | wc -l")
     if dry_run:
         return f"would clean /tmp files older than 7d on hot mounts {ctx['hot']}"
     out = kssh(cmd)

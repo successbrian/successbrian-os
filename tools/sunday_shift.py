@@ -23,17 +23,24 @@ NOTES:
     work lands; the heartbeat appends as reports arrive.
 """
 
+import argparse
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
-TOOLS = Path.home() / "workspace" / "successbrian-os" / "tools"
-INBOX = Path("/tmp/altair-brain-inbox/inbox")
+from common import INBOX, git_push
+
+TOOLS = Path(__file__).parent
+
+DRY_RUN = False
 
 
 def run(cmd: list[str], desc: str) -> bool:
     print(f"--- {desc} ---")
+    if DRY_RUN:
+        print(f"(dry run: would run {' '.join(cmd)})")
+        return True
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
                            cwd=TOOLS)
@@ -108,7 +115,11 @@ All reports back to the inbox by 6 PM. Brian wakes up to one summary.
 """
     INBOX.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    (INBOX / f"{ts}-sunday-crew-assignments.md").write_text(body)
+    path = INBOX / f"{ts}-sunday-crew-assignments.md"
+    if DRY_RUN:
+        print(f"(dry run: would write {path})")
+        return
+    path.write_text(body)
     print("Crew assignments written to inbox.")
 
 
@@ -138,11 +149,22 @@ def write_summary(results: dict) -> None:
     ]
     INBOX.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    (INBOX / f"{ts}-sunday-shift-summary.md").write_text("\n".join(lines))
+    path = INBOX / f"{ts}-sunday-shift-summary.md"
+    if DRY_RUN:
+        print(f"(dry run: would write {path})")
+        return
+    path.write_text("\n".join(lines))
     print("Summary written to inbox.")
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(description="Sunday shift orchestrator.")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="Print what would run; skip writes and the push.")
+    args = ap.parse_args()
+    global DRY_RUN
+    DRY_RUN = args.dry_run
+
     results = {}
     results["decision sync"] = run(
         [sys.executable, "decision_sync/sync.py"], "Decision sync")
@@ -151,22 +173,28 @@ def main() -> int:
     results["ecosystem state"] = run(
         [sys.executable, "ecosystem_state.py"], "Ecosystem state")
     print("--- Cleanup ---")
-    cleanup_staging()
-    results["staging cleanup"] = True
+    if DRY_RUN:
+        print("(dry run: staging cleanup skipped)")
+        results["staging cleanup"] = True
+    else:
+        cleanup_staging()
+        results["staging cleanup"] = True
     print("--- Crew assignments ---")
     assign_crew()
     results["crew assignments"] = True
     write_summary(results)
 
-    # Commit + push inbox
-    subprocess.run(["git", "add", "inbox/"], cwd="/tmp/altair-brain-inbox",
-                   capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "Spencer: Sunday shift summary"],
-        cwd="/tmp/altair-brain-inbox", capture_output=True)
-    subprocess.run(["git", "push"], cwd="/tmp/altair-brain-inbox",
-                   capture_output=True, timeout=60)
-    print("Pushed to altair-brain.")
+    # Commit + push the durable inbox clone (NOT /tmp — that path is dead
+    # on this VM; the old code swallowed the git failures silently).
+    if DRY_RUN:
+        print("(dry run: inbox push skipped)")
+        return 0
+    inbox_repo = INBOX.parent  # ~/workspace/altair-brain
+    ok = git_push(inbox_repo, "Spencer: Sunday shift summary", ["inbox/"])
+    results["inbox push"] = ok
+    if not ok:
+        print("WARNING: inbox push failed — briefing files are local-only.")
+        return 1
     return 0
 
 

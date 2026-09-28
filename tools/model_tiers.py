@@ -35,8 +35,13 @@ from pathlib import Path
 STATE = Path(__file__).parent / "state" / "model-tiers.json"
 
 
-def _port_open(host: str, port: int, timeout: float = 3.0) -> bool:
-    # My VM can't reach the tailnet directly; probe from k11-alpha via kssh.
+def _remote_port_open(port: int) -> bool:
+    """Is localhost:<port> listening ON k11-alpha?
+
+    (2026-09-28: the old _port_open(host, port) took a host argument it
+    silently ignored — the probe always ran on k11-alpha via kssh. Renamed
+    and the dead parameter removed so the API can't mislead again.)
+    """
     import subprocess
     try:
         out = subprocess.run(
@@ -75,11 +80,11 @@ def get_tiers() -> dict:
     flag = _read_flag()
     return {
         "penny_7b": {
-            "available": _port_open("100.118.53.47", 11438),
+            "available": _remote_port_open(11438),
             "role": "small fast jobs",
         },
         "deepseek_150b": {
-            "available": _port_open("100.118.53.47", 8084),
+            "available": _remote_port_open(8084),
             "role": "workhorse (serialized queue)",
         },
         "v4pro_cloud": {

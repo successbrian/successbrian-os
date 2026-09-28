@@ -27,6 +27,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -166,12 +167,16 @@ def detect_x79_conflicts(decisions: list[dict]) -> list[dict]:
 
     # 2. PSU oversized: 2x150W GPUs + 2x95W CPUs + overhead ~= 600W; 1200W is 2x over.
     psu = plan.get("PSU 1200W 80+ Gold Server", {})
-    if psu and "150W" in answers and "power-limit" in answers:
+    decided_w = re.search(r"\b(750|850)\s?W\b", answers, re.IGNORECASE)
+    if psu and "150W" in answers and "power-limit" in answers and not decided_w:
         flag("psu_oversized",
              "Plan specs 1200W PSU but decisions power-limit M40s to 150W each "
              "(~300W GPUs + ~190W CPUs + overhead ~= 600W). 1200W is oversized; "
              "consider 750-850W to save cost.",
              severity="info")
+    # (2026-09-28: once Brian's PSU decision is recorded in brian_decisions
+    # — e.g. X79 Q1 = 850W on 2026-09-27 — decided_w matches and this check
+    # auto-resolves instead of re-flagging a settled question.)
 
     # 3. Missing from plan: NVMe adapters (2/node x4 = 8)
     low = answers.lower()

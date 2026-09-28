@@ -51,11 +51,20 @@ def record(topic: str, content: str, category: str = "learning",
            confidence: str = "medium", source: str = "sunday-shift",
            verification: str = "", expires_days: int | None = 90,
            tags: list[str] | None = None) -> None:
+    pg_exec(_build_sql(topic, content, category, confidence, source,
+                       verification, expires_days, tags))
+    print(f"Recorded: {topic} [{confidence}]")
+
+
+def _build_sql(topic: str, content: str, category: str = "learning",
+               confidence: str = "medium", source: str = "sunday-shift",
+               verification: str = "", expires_days: int | None = 90,
+               tags: list[str] | None = None) -> str:
     expires = (f"now() + interval '{int(expires_days)} days'"
                if expires_days else "NULL")
     tags_sql = ("ARRAY[" + ",".join(f"'{esc(t)}'" for t in (tags or [])) + "]"
                 if tags else "NULL")
-    sql = (
+    return (
         "INSERT INTO second_brain "
         "(topic, category, content, confidence, source, verification, "
         "expires_at, tags) VALUES "
@@ -63,8 +72,6 @@ def record(topic: str, content: str, category: str = "learning",
         f"'{esc(confidence)}', '{esc(source)}', '{esc(verification)}', "
         f"{expires}, {tags_sql});"
     )
-    pg_exec(sql)
-    print(f"Recorded: {topic} [{confidence}]")
 
 
 def main() -> int:
@@ -79,10 +86,17 @@ def main() -> int:
     p.add_argument("--expires-days", type=int, default=90)
     p.add_argument("--tags", default="",
                    help="comma-separated")
+    p.add_argument("--dry-run", action="store_true",
+                   help="print the SQL that would run; write nothing")
     a = p.parse_args()
+    tags = [t.strip() for t in a.tags.split(",") if t.strip()]
+    if a.dry_run:
+        print(_build_sql(a.topic, a.content, a.category, a.confidence,
+                         a.source, a.verification, a.expires_days, tags))
+        print("(dry run: nothing written)")
+        return 0
     record(a.topic, a.content, a.category, a.confidence, a.source,
-           a.verification, a.expires_days,
-           [t.strip() for t in a.tags.split(",") if t.strip()])
+           a.verification, a.expires_days, tags)
     return 0
 
 

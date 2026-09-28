@@ -188,3 +188,17 @@ class BoardSession:
         with open(path, "w") as f:
             f.write("\n".join(L))
         return path
+
+
+if __name__ == "__main__":
+    import sys
+
+    cfg_path = sys.argv[1] if len(sys.argv) > 1 else "board/config/brian.yaml"
+    result = BoardSession(cfg_path).run()
+    print(f"session={result.session_tag} seats={len(result.seat_results)} "
+          f"failed={result.failed_seats} binding_recorded={result.recorded} "
+          f"verified={result.verified} recommendations={len(result.recommendations)}")
+    print(f"minutes: {result.minutes_path}")
+    for note in result.health_notes:
+        print(f"HEALTH: {note}")
+    sys.exit(0 if result.gated else 1)

@@ -49,6 +49,10 @@ NOTES:
       marketer-watch enrichment records) and resolves display names from
       the watcher's seen db; the verdict store is affiliate_programs.db.
     - Verdicts go stale: --pending includes rows older than 180 days.
+    - --record feeds the briefing table (tools/briefing_table.py): PROMOTE
+      verdicts land as high-priority ecosystem_knowledge, SKIP verdicts
+      with build_candidate as build_idea. Brian 2026-09-27: the ecosystem
+      adds pieces to the table all day; the briefing generator drains it.
       Affiliate terms change; a 2024 "30% recurring" claim needs rechecks.
 """
 
@@ -212,6 +216,44 @@ def cmd_offer(name):
     return 0
 
 
+def push_briefing_item(display, verdict, build_candidate, reason, terms):
+    """Feed PROMOTE verdicts / build candidates to the briefing table.
+
+    Brian 2026-09-27: "throughout the day, the ecosystem can add pieces to
+    the table that Altair draws from for the briefs." PROMOTE verdicts are
+    ecosystem_knowledge (high priority: money on the table); SKIP verdicts
+    flagged build_candidate are build_idea (product gap worth building).
+    briefing_table.py dedups on (source, title), so re-records don't spam.
+    Best-effort: table trouble never fails the record.
+    """
+    if verdict == "PROMOTE":
+        category, priority = "ecosystem_knowledge", "high"
+        title = f"Promote: {display}"
+        detail = (f"Affiliate checker verdict PROMOTE. {terms or ''} "
+                  f"{reason or ''}".strip())
+    elif verdict == "SKIP" and build_candidate:
+        category, priority = "build_idea", "medium"
+        title = f"Build candidate: {display}"
+        detail = (f"No good recurring affiliate option; flagged as something "
+                  f"Brian could build instead. {reason or ''}".strip())
+    else:
+        return
+    try:
+        import subprocess
+        from pathlib import Path
+        tool = Path(__file__).resolve().parent / "briefing_table.py"
+        subprocess.run(
+            [sys.executable, str(tool), "--add",
+             "--source", "affiliate-checker",
+             "--category", category,
+             "--title", title,
+             "--detail", detail,
+             "--priority", priority],
+            capture_output=True, text=True, timeout=90)
+    except Exception:
+        pass  # best-effort; the verdict is already recorded
+
+
 def cmd_record(a):
     slug = a.slug or offer_slug(a.display)
     verdict, reason = compute_verdict(a.has_program, a.recurring,
@@ -249,6 +291,10 @@ def cmd_record(a):
         return 0
     print(f"recorded: {a.display} [{slug}] -> {verdict}")
     print(f"reason: {reason}")
+    if not a.dry_run:
+        push_briefing_item(a.display, verdict,
+                          1 if a.build_candidate else 0,
+                          reason, a.commission_terms)
     return 0
 
 

@@ -1,0 +1,64 @@
+# TEMPLATE — bend this for your own ecosystem.
+# Copy to config/<yourname>.yaml and edit. The harness (board/harness/) never
+# changes; only this file bends. Generic-at-first, bends-per-user.
+#
+# HOW TO BEND:
+# 1. model: point at YOUR OpenAI-compatible endpoint (llama-server, ollama,
+#    vLLM, or a cloud API). `via: direct` if the harness runs on the same
+#    host as the model; `via: kssh` only applies to Brian's VM->k11 setup.
+# 2. seats: replace with YOUR C-level spots. Keep them as TITLE SPOTS
+#    (ephemeral hats directors wear for one meeting), not worker jobs.
+#    - title: the hat, e.g. "Chief Revenue Officer"
+#    - domain: what it governs, e.g. "client revenue for a coaching business"
+#    - mandate: the big-picture calls it makes each morning
+#    - wave: 1 for domain chiefs; 2 for closers that need wave-1 outputs
+#    - depends_on: wave-2 only — which wave-1 titles feed this seat
+#    - brief_keys: which brief sections this seat sees (wire pullers in
+#      board/harness/brief.py, or leave as NOT INSTRUMENTED and the board
+#      will flag the gap instead of deliberating on fiction)
+#    - constraints: hard rules, e.g. "never promise client results"
+# 3. sink: "jsonl" works with zero infrastructure (decisions append to a
+#    local file; verify counts them back). Use "second_brain" only if you
+#    run Brian's Postgres setup.
+# 4. gate.threshold: 0.90 is the doctrine. Lower it and the board
+#    auto-executes more; raise it and more goes to you as recommendations.
+# 5. Schedule it: one cron, early morning, hard deadline before whatever
+#    consumes the decisions (Brian: 3:30 AM session, 4:30 wrap, 4:40 bundle
+#    refresh feeds the 150B).
+
+model:
+  base_url: http://127.0.0.1:11434   # TODO: your OpenAI-compatible endpoint
+  name: your-model                    # TODO: model name served there
+  timeout_s: 180
+  max_tokens: 400
+  temperature: 0.7
+  via: direct                         # TODO: "direct" or "kssh" (Brian-only)
+
+gate:
+  threshold: 0.90
+
+sink:
+  type: jsonl                          # TODO: "jsonl" (zero infra) or "second_brain"
+  path: ~/board-decisions.jsonl
+
+minutes_dir: ~/board-minutes           # TODO: where minutes files land
+
+seats:
+  - title: Chief Revenue Officer
+    domain: TODO — e.g. client revenue for a coaching business
+    mandate: TODO — e.g. revenue strategy, offer focus, pipeline calls for the day.
+    wave: 1
+    brief_keys: [revenue]              # TODO: wire a "revenue" puller in brief.py
+
+  - title: Chief Content Officer
+    domain: TODO — e.g. content engine (blog, video, audio)
+    mandate: TODO — e.g. content direction, topics, publishing priorities.
+    wave: 1
+    brief_keys: [content]              # TODO: wire a "content" puller in brief.py
+
+  - title: Chief Financial Officer
+    domain: Consolidated money picture
+    mandate: "Closes the money conversation. Takes all wave-1 chiefs' calls and consolidates: revenue streams together, spending, runway, allocation."
+    wave: 2
+    depends_on: [Chief Revenue Officer, Chief Content Officer]
+    brief_keys: [revenue]

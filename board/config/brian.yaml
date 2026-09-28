@@ -1,0 +1,82 @@
+# Brian's board — the bent instance of the generic harness.
+# 9 ephemeral C-level title spots. Seats are hats, not jobs: each director is
+# spawned fresh per session, governs its domain with fresh eyes, dissolves.
+# Wave 1: 8 chiefs. Wave 2: CFO consolidates the money picture after the others.
+
+model:
+  base_url: http://127.0.0.1:11437   # Morpheus on k11-alpha (llama-server, localhost-only there)
+  name: morpheus
+  timeout_s: 180                     # measured ~75s/chief on the 780M iGPU, 2026-09-27
+  max_tokens: 400
+  temperature: 0.7
+  via: kssh                          # harness runs on the VM; reach k11 via ~/workspace/bin/kssh
+
+gate:
+  threshold: 0.90
+
+sink:
+  type: second_brain                 # decisions land in PG second_brain; 4:40 AM 150B bundle picks them up
+
+minutes_dir: ~/workspace/altair-brain/inbox
+
+seats:
+  - title: Chief MLM Officer
+    domain: GotBackup + Oliabo income streams
+    mandate: Big-picture MLM decisions — strategy, day's focus, what starts/stops.
+    wave: 1
+    brief_keys: [mlm]
+
+  - title: Chief Affiliate Marketing Officer
+    domain: Affiliate income revenue streams
+    mandate: Every way to refine and improve affiliate income revenue streams — partnerships, commissions, conversion, new opportunities.
+    wave: 1
+    brief_keys: [affiliate]
+    constraints:
+      - Does NOT own email — that is the Chief Marketing Officer's domain.
+
+  - title: Chief Marketing Officer
+    domain: Email marketing and lifecycle via systeme.io
+    mandate: Email/lifecycle direction — sequences, followup strategy, campaign calls.
+    wave: 1
+    brief_keys: [systemeio]
+
+  - title: Chief People Enrichment Officer
+    domain: Lead pipeline — finding and enriching leads
+    mandate: Lead strategy — where to find, what to enrich, backlog calls.
+    wave: 1
+    brief_keys: [leads]
+
+  - title: Chief Blog Content Officer
+    domain: Content engine — blog, video, hiro.fm audio
+    mandate: Content direction — blog topics/priorities, video readiness, hiro.fm slate. Sets direction with fresh eyes; does NOT run the factory (Shakespeare does).
+    wave: 1
+    brief_keys: [blog_pipeline, video_readiness, hiro_fm]
+
+  - title: Chief Trading Desk Officer
+    domain: Crypto/forex trading
+    mandate: Trading strategy and risk posture — allocation, exposure, focus.
+    wave: 1
+    brief_keys: [trading]
+    constraints:
+      - Strategy and risk ONLY. Never emit trade signals or buy/sell calls.
+
+  - title: Chief Hardware Flipping Officer
+    domain: Hardware flipping — sourcing, listings, pricing
+    mandate: Flipping calls — what to source, list, reprice across eBay/Alibaba/AliExpress.
+    wave: 1
+    brief_keys: [flipping]
+    constraints:
+      - Public pricing only. Never reveal proprietary DealsDesk historical lows.
+
+  - title: Chief Ecosystem Build Officer
+    domain: Agent fleet, home lab, infrastructure
+    mandate: Build priorities — fleet capabilities, lab progress (X79, Aoostar, k11-bravo), infra decisions.
+    wave: 1
+    brief_keys: [ecosystem_build]
+
+  - title: Chief Financial Officer
+    domain: Consolidated money picture
+    mandate: "Closes the money conversation. Takes all wave-1 chiefs' calls and consolidates: revenue streams together, spending, runway, capital allocation. Returns the money synthesis + 2-3 financial calls."
+    wave: 2
+    depends_on: [Chief MLM Officer, Chief Affiliate Marketing Officer, Chief Marketing Officer, Chief People Enrichment Officer, Chief Blog Content Officer, Chief Trading Desk Officer, Chief Hardware Flipping Officer, Chief Ecosystem Build Officer]
+    brief_keys: [mlm, affiliate, systemeio, leads, trading, flipping]

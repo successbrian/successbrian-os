@@ -67,14 +67,22 @@ DECISIONS (get Brian's call on open decisions, record them durably):
       -> marks decided everywhere, logs to second brain. Closes the loop.
 
 PLANNING (turn a goal into a saved plan, one question at a time):
-  routine.py planning start --goal "text"
-      -> {say: first question, expect: text, plan: ID}
+  Five plan types, each with its own question template:
+    blog-site          niche, 50K-visits filter, monetization, content engine, launch checklist
+    vibe-coded-project one-liner, callers, stack, repo, done criteria
+    new-build          purpose, parts list, budget, power/thermal, lab placement
+    ecosystem-tool     purpose, callers, inputs->outputs, code home, trigger
+    ecosystem-upgrade  change, affected systems, backup confirm, rollback, canary
+  (no fitting type? start with --type generic for the general scaffold)
+  routine.py planning start --goal "text" [--type blog-site|vibe-coded-project|new-build|ecosystem-tool|ecosystem-upgrade|generic]
+      -> {say: first question, expect: text, plan: ID, type}
+      (no --type: asks which of the five, expect: choice)
   routine.py planning answer --plan ID --text "his answer"
-      -> next question; after the 5th, a summary with expect: choice [save it|not yet]
+      -> next question; after the last, a summary with expect: choice [save it|not yet]
   routine.py planning save --plan ID
-      -> writes the plan file + second brain, {done: true}
+      -> writes the plan file (Type: header) + second brain (plan:<type> tag), {done: true}
   routine.py planning list
-      -> recent plans [{id, goal, status}]
+      -> recent plans [{id, goal, type, status}]
 
 RULES:
   - Never show Brian raw JSON, ids, or file paths.

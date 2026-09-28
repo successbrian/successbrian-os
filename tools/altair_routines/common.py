@@ -61,7 +61,7 @@ def db():
           area TEXT, title TEXT, detail TEXT, needs TEXT, options_json TEXT,
           feedback TEXT, covered INTEGER DEFAULT 0);
         CREATE TABLE plans(
-          id INTEGER PRIMARY KEY AUTOINCREMENT, goal TEXT,
+          id INTEGER PRIMARY KEY AUTOINCREMENT, goal TEXT, plan_type TEXT,
           created_at TEXT DEFAULT (datetime('now')),
           q_index INTEGER DEFAULT 0, answers_json TEXT DEFAULT '[]',
           status TEXT DEFAULT 'open', plan_path TEXT);

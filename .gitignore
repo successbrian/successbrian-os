@@ -3,3 +3,7 @@ tools/marketer_watch_transcripts/
 
 # altair routines: state.db is runtime state on k11, never committed
 tools/altair_routines/state.db
+
+# compiled python is build output, regenerated on demand
+__pycache__/
+*.py[cod]

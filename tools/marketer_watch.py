@@ -72,7 +72,6 @@ NOTES:
 
 import argparse
 import html as htmlmod
-import json
 import os
 import re
 import sqlite3

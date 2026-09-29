@@ -79,8 +79,6 @@ def cmd_add(a) -> int:
         print(f"duplicate: item {existing} already pending "
               f"({a.source}: {a.title})")
         return 0
-    exp = (f", expires_at = now() + interval '{a.expires_days} days'"
-           if a.expires_days else ", expires_at = NULL")
     detail = f"'{esc(a.detail)}'" if a.detail else "NULL"
     row = pg_exec(
         "INSERT INTO briefing_items (source, category, title, detail, priority"

@@ -30,7 +30,7 @@ import json
 import re
 import subprocess
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .seats import Seat
 

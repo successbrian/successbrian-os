@@ -23,7 +23,7 @@ CALLED BY:
 NOTES:
     Moved 2026-09-28 from ~/workspace/goals/crypto-research-feed-for-hermes-agent/code/ (night-shift consolidation). Data dirs (.cache/, snapshots/) resolve relative to this package.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass

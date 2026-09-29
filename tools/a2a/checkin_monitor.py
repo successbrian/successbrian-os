@@ -35,15 +35,19 @@ SLOTS = {
 GRACE_MINUTES = 60
 
 
-def _pg(query, params=()):
-    """Run a read query, return rows. psycopg2 preferred, psql fallback."""
+def _pg(query):
+    """Run a read query, return rows. psycopg2 preferred, psql fallback.
+
+    NOTE: query must be fully formed (no placeholders) — the psql fallback
+    cannot bind parameters. Callers inline only internally-generated values.
+    """
     try:
         import psycopg2
         dsn = "host=%s dbname=%s user=%s password=%s" % (
             PG["host"], PG["dbname"], PG["user"], PG["password"])
         conn = psycopg2.connect(dsn, connect_timeout=10)
         cur = conn.cursor()
-        cur.execute(query, params)
+        cur.execute(query)
         rows = cur.fetchall()
         cur.close()
         conn.close()
@@ -51,7 +55,6 @@ def _pg(query, params=()):
     except ImportError:
         pass
     env = dict(os.environ, PGPASSWORD=PG["password"])
-    # params are internal (slot windows), safe to inline
     r = subprocess.run(["psql", "-h", PG["host"], "-U", PG["user"],
                         "-d", PG["dbname"], "-t", "-A", "-F", "|", "-c", query],
                        capture_output=True, text=True, env=env, timeout=30)
@@ -98,12 +101,12 @@ def check_slot(slot):
                             second=0, microsecond=0)
     window_start = scheduled.strftime("%Y-%m-%d %H:%M:%S")
     # Row must have landed between scheduled time and now (monitor runs after)
+    # window_start is internally generated (YYYY-MM-DD HH:MM:SS), safe to inline
     rows = _pg(
         "SELECT id, subject, urgency, created_at FROM altair.knowledge_bridge "
         "WHERE sender='altair' AND target='spencer' "
-        "AND created_at >= %s::timestamp "
-        "ORDER BY created_at DESC LIMIT 3",
-        (window_start,))
+        "AND created_at >= '%s'::timestamp "
+        "ORDER BY created_at DESC LIMIT 3" % window_start)
     if rows:
         r = rows[0]
         return True, "row %s landed at %s (urgency=%s): %s" % (r[0], r[3], r[2], r[1][:80])

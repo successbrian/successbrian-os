@@ -72,6 +72,9 @@ Fresh signals outrank memory, always:
 Transport: `ecosystem_central.altair.knowledge_bridge`
 (sender, target, subject, body, urgency, created_at).
 
+Query view: `altair.v_spencer_checkins` — the check-in stream with an
+`is_continuation` flag for repeat-topic step-downs, newest first.
+
 - Check-ins: `sender='altair'`, `target='spencer'`
 - Pipeline alerts: `sender='lyra'`, `target='spencer'`, `urgency='important'`
 

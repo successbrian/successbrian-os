@@ -13,7 +13,8 @@ CALLED BY: Hermes --no-agent cron jobs spencer-checkin-morning (weekdays
     (agent turns proved unreliable for this; see specs/a2a-checkin.md).
 NOTES:
     - CANONICAL SOURCE: successbrian-os/tools/a2a/spencer_checkin.py
-    - DEPLOYED COPY: /home/successbrian/.hermes/scripts/spencer_checkin.py
+    - DEPLOYED COPY: /home/successbrian/.hermes/profiles/altair/scripts/spencer_checkin.py
+      (profile-scoped: Hermes cron resolves scripts against HERMES_HOME/scripts/)
       (edit the repo, redeploy — never edit the deployed copy in place)
     - Morpheus: http://127.0.0.1:11437 (Qwen2.5-14B, Altair's chat model)
     - Urgency = whether BRIAN must act (routine default). Repeat topics are

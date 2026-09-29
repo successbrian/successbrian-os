@@ -80,7 +80,7 @@ Transport: `ecosystem_central.altair.knowledge_bridge`
 Edit the canonical files in this repo, commit, push, then redeploy:
 
 ```bash
-cp tools/a2a/spencer_checkin.py /home/successbrian/.hermes/scripts/spencer_checkin.py
+cp tools/a2a/spencer_checkin.py /home/successbrian/.hermes/profiles/altair/scripts/spencer_checkin.py
 cp tools/a2a/checkin_monitor.py  /home/successbrian/.hermes/profiles/lyra/scripts/checkin_monitor.py
 ```
 

@@ -72,7 +72,6 @@ NOTES:
 
 import argparse
 import html as htmlmod
-import json
 import os
 import re
 import sqlite3
@@ -436,7 +435,6 @@ def cmd_offers(days=30):
           f"{'FIRST SEEN':10}  {'LAST SEEN':10}")
     print("-" * 72)
     for oslug, e in ranked:
-        ms = ",".join(sorted(e["marketers"]))
         print(f"{e['name'][:30]:30} {len(e['marketers']):<9} {e['n']:<6} "
               f"{e['first'][:10]:10}  {e['last'][:10]:10}")
     print("-" * 72)

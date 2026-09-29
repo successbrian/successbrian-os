@@ -31,7 +31,7 @@ from datetime import datetime
 
 from .brief import BriefBuilder
 from .gate import GatedCall, apply_gate
-from .seats import Seat, load_config, load_seats
+from .seats import Seat, load_config
 from .sinks import Decision, DecisionSink, JsonlSink, SecondBrainSink
 from .worker import ModelWorker, SeatResult
 

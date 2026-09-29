@@ -24,7 +24,6 @@ import sys
 
 sys.path.insert(0, ".")
 
-from board.harness.brief import Brief
 from board.harness.gate import apply_gate
 from board.harness.seats import Seat, load_config
 from board.harness.worker import ModelWorker

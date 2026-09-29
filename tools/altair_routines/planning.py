@@ -220,7 +220,7 @@ def cmd_save(args):
     sb_log(f"Plan: {row['goal'][:80]}", "\n".join(L),
            category="plan", confidence="high", source="brian-direct",
            tags=("plan", f"plan:{ptype}", "altair-routines"))
-    out({"say": f"Saved. The plan's filed and logged.",
+    out({"say": "Saved. The plan's filed and logged.",
          "plan": args.plan, "type": ptype, "path": path, "done": True,
          "expect": "text"})
 

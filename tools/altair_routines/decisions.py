@@ -30,7 +30,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import HOME, out, fail, today, sq, pg_rows, pg_write, sb_log  # noqa: E402
+from common import HOME, out, fail, today, pg_rows, pg_write, sb_log  # noqa: E402
 
 PENDING_MD = os.path.join(
     HOME, ".hermes/profiles/altair/briefings/context/pending-decisions.md")

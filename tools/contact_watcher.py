@@ -123,7 +123,7 @@ def main():
             (email,)).fetchone()
 
         if known:
-            kname, company, source = known
+            kname, company, _ = known
             in_baseline, is_new = 1, False
         else:
             # domain-level known senders (e.g. ISP, employer)
@@ -132,10 +132,10 @@ def main():
                 "SELECT company FROM known_domains WHERE domain=?",
                 (domain,)).fetchone() if domain else None
             if dknown:
-                kname, company, source = info["name"], dknown[0], "known_domain"
+                kname, company, _ = info["name"], dknown[0], "known_domain"
                 in_baseline, is_new = 1, False
             else:
-                kname, company, source = info["name"], None, None
+                kname, company, _ = info["name"], None, None
                 in_baseline, is_new = 0, prev is None
 
         # domain hint for unknown senders ("people and companies")

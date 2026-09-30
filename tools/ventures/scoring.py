@@ -61,4 +61,9 @@ def score_profile(profile, idea_streams, known_streams):
     risks = profile.get("risks") or []
     bd["risk_load"] = max(3, 15 - 2 * len(risks))
     total = sum(bd.values())
-    return {"total": total, "band": _band(total), "breakdown": bd}
+    band = _band(total)
+    if bd["clarity"] < 10:
+        # Not a verdict on the idea - the picture is just too incomplete
+        # to judge. Fill in customer, cost, hours and score again.
+        band = "needs-answers"
+    return {"total": total, "band": band, "breakdown": bd}

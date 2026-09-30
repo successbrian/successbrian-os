@@ -17,3 +17,10 @@ Every day, this repo gets a little better. Each entry: what changed and why.
 ## 2026-09-29
 - pyflakes lint cleanup across all 43 modules — removed 3 unused imports (`Brief` in board/test_dryrun.py, `dataclasses.field` in board/harness/worker.py and tools/crypto-intel/testing/strategies.py), 2 dead locals (`exp` in tools/briefing_table.py, `ms` in tools/marketer_watch.py), 1 placeholder-less f-string (tools/altair_routines/planning.py), and demoted never-read `source` to `_` in 3 tuple unpacks in tools/contact_watcher.py — all verified with py_compile + pyflakes before commit; zero behavior change.
 - Survey: no TODO/FIXME/HACK markers, all module docstrings present, nothing else qualified as a 90%+ safe change — left the rest untouched.
+
+## 2026-09-30
+- Untracked 7 runtime state/cache files (tools/{automate/state,state,staging}, crypto-intel/.cache, marketer_watch.db) and extended .gitignore — tracked copies were stale snapshots from Sept 27–28 that go stale on every tool run; tools recreate them (verified mkdir/exists guards), same cleanup as the 2026-09-28 __pycache__ removal.
+- Fixed stale path in tools/model_tiers.py docstring (tools/automate/state/ → tools/state/); smoke-tested --help after.
+- Removed unused `timedelta` import in tools/a2a/checkin_monitor.py (AST-verified single reference).
+- README Specs section now lists all 5 specs (was altair-apis only).
+- Survey: no TODO/FIXME/HACK markers; `from __future__ import annotations` kept per 2026-09-28 decision.

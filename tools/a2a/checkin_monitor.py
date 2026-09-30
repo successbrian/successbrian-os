@@ -14,7 +14,7 @@ NOTES:
     - CANONICAL SOURCE: successbrian-os/tools/a2a/checkin_monitor.py
     - End-to-end check: did a sender='altair' target='spencer' row land in
       altair.knowledge_bridge within the expected window? A row in the DB
-      is proof the whole chain (cron -> script -> Morpheus -> DB) worked.
+      is proof the whole chain (cron -> script -> tiered composer -> DB) worked.
     - Also inspects Altair's cron jobs.json for recent failures (secondary).
     - On failure: inserts an urgency='important' alert row as sender='lyra'
       target='spencer' AND prints details (cron delivers stdout to Lyra).

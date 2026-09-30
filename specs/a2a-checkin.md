@@ -11,13 +11,38 @@ only what Brian needs.
 Altair's cron (weekdays 9:30 AM / 2:30 PM CDT, --no-agent)
   → tools/a2a/spencer_checkin.py
     → gathers live context (goal queue, <72h notes, today's A2A inbox)
-    → Morpheus (127.0.0.1:11437) composes the check-in in Altair's voice
+    → tiered composer (Morpheus → DeepSeek 150B → DeepSeek V4 Pro) composes
+      the check-in in Altair's voice
     → INSERT altair.knowledge_bridge (sender='altair', target='spencer')
   → Spencer's receiver crons (9:45 AM / 2:45 PM CDT)
     → records in dated memory; silent unless blockers/news/3+ days quiet
   → Lyra's monitor crons (weekdays 10:15 AM / 3:15 PM CDT)
     → tools/a2a/checkin_monitor.py verifies the row landed; alerts if not
 ```
+
+## Tiered composer (2026-09-30, per Brian)
+
+The check-in must work at Morpheus, DeepSeek 150B, AND DeepSeek V4 Pro
+(InstantlyClaw) level. The composer tries, in order:
+
+1. **Morpheus** — `127.0.0.1:11437`, model `morpheus` (default; local, free)
+2. **DeepSeek 150B** — `127.0.0.1:8084`, model `DeepSeek-V4-Flash-reap-150b`
+   (local, free, slower at ~0.66 tok/s; this producer is Altair's and the
+   150B is designated Altair-only, so no fleet conflict)
+3. **DeepSeek V4 Pro** — `https://api.b.ai/v1`, model `deepseek-v4-pro`
+   (InstantlyClaw rental) — ONLY after a free balance probe
+   (`GET api.deepseek.com/user/balance` with the rental key from k11's
+   `~/.hermes/.env`) confirms the rental is live: `is_available=true` AND
+   total USD > $1.00, the same definition as `tools/v4pro_balance.py`.
+   The key never leaves k11-alpha and is never logged.
+
+Tier choice is plain Python (port reachability + balance probe), never a
+model decision — per Brian's no-chat-model-decides rule. When a fallback
+tier is used, the body carries a one-line trailer naming the tier and why.
+If all three tiers are unreachable, the script inserts a `routine`
+self-report row (subject `[checkin] composer unreachable on all tiers`)
+instead of going silent — an explicit failure beats a silent gap, and it's
+Spencer's problem to fix, not Brian's.
 
 ## Why --no-agent (not an agent turn)
 

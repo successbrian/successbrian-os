@@ -16,10 +16,22 @@ NOTES:
     - DEPLOYED COPY: /home/successbrian/.hermes/profiles/altair/scripts/spencer_checkin.py
       (profile-scoped: Hermes cron resolves scripts against HERMES_HOME/scripts/)
       (edit the repo, redeploy — never edit the deployed copy in place)
-    - Morpheus: http://127.0.0.1:11437 (Qwen2.5-14B, Altair's chat model)
+    - Tiered composer (per Brian 2026-09-30): the check-in must work at
+      Morpheus, DeepSeek 150B, AND DeepSeek V4 Pro (InstantlyClaw) level.
+      Deterministic cheapest-first fallback: local Morpheus (free) ->
+      local 150B (free, slower; this producer is Altair's and the 150B is
+      designated Altair-only, so no fleet conflict) -> V4 Pro cloud, ONLY
+      when a free balance probe says the rental is live (is_available and
+      total > $1.00, same definition as tools/v4pro_balance.py). The rental
+      key is read from k11's ~/.hermes/.env, used in-memory only, never
+      logged. Tier choice is plain Python (reachability + balance probe),
+      never a model decision (Brian's no-chat-model-decides rule).
     - Urgency = whether BRIAN must act (routine default). Repeat topics are
       stepped down (critical->important->routine) via the state file so
       Spencer isn't re-paged for the same in-progress issue.
+    - If ALL tiers are unreachable, a routine self-report row is inserted
+      ("[checkin] composer unreachable on all tiers") instead of going
+      silent — an explicit failure beats a silent gap.
     - Recency-weighted: fresh signals (goal queue, <72h notes, today's A2A)
       outrank long-term memory, which is labeled background-only.
 """
@@ -29,7 +41,23 @@ from datetime import datetime
 MEM_DIR = "/home/successbrian/.hermes/profiles/altair/memory"
 QUEUE = "/home/successbrian/.hermes/profiles/altair/goal-queue/queue.jsonl"
 INBOX = "/home/successbrian/.hermes/profiles/altair/inbox"
-MORPHEUS_URL = "http://127.0.0.1:11437/v1/chat/completions"
+# Tiered composer endpoints (per Brian 2026-09-30). Local tiers are
+# OpenAI-compatible chat-completions endpoints; V4 Pro goes through the
+# InstantlyClaw gateway with the rental key (in-memory only, never logged).
+TIERS = [
+    {"name": "morpheus", "label": "Morpheus",
+     "url": "http://127.0.0.1:11437/v1/chat/completions",
+     "model": "morpheus", "timeout": 120, "max_tokens": 400},
+    {"name": "deepseek-150b", "label": "DeepSeek 150B",
+     "url": "http://127.0.0.1:8084/v1/chat/completions",
+     "model": "DeepSeek-V4-Flash-reap-150b", "timeout": 600, "max_tokens": 300},
+]
+V4PRO_URL = "https://api.b.ai/v1/chat/completions"
+V4PRO_MODEL = "deepseek-v4-pro"
+V4PRO_BALANCE_URL = "https://api.deepseek.com/user/balance"
+V4PRO_ENV_FILE = "/home/successbrian/.hermes/.env"
+V4PRO_KEY_NAME = "DEEPSEEK_API_KEY"
+V4PRO_MIN_USD = 1.00
 PG = {"host": "localhost", "dbname": "ecosystem_central",
       "user": "successbrian", "password": "postgres"}
 STATE_FILE = "/home/successbrian/.hermes/scripts/spencer_checkin_state.json"
@@ -92,7 +120,64 @@ def gather_context():
     return "\n\n".join(parts)
 
 
+def _safe_err(e):
+    """One-line error summary, safe to log: never contains credentials
+    (the key travels in the Authorization header, never in a URL)."""
+    return str(e).replace("\n", " ")[:120]
+
+
+def _call_completions(url, model, prompt, max_tokens, timeout, headers=None):
+    req = urllib.request.Request(
+        url,
+        data=json.dumps({"model": model,
+                         "messages": [{"role": "user", "content": prompt}],
+                         "max_tokens": max_tokens, "stream": False,
+                         "temperature": 0.5}).encode(),
+        headers=dict({"Content-Type": "application/json"}, **(headers or {})))
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        out = json.load(r)
+    return out["choices"][0]["message"]["content"]
+
+
+def _read_v4pro_key():
+    """Rental key from k11's .env. In-memory only — never printed or logged."""
+    try:
+        with open(V4PRO_ENV_FILE) as f:
+            for line in f:
+                s = line.strip()
+                if s.startswith(V4PRO_KEY_NAME + "="):
+                    return s.split("=", 1)[1].strip().strip('"').strip("'") or None
+    except Exception:
+        pass
+    return None
+
+
+def _v4pro_balance_ok(key):
+    """Free balance probe: is the InstantlyClaw rental live? Same definition
+    as tools/v4pro_balance.py: is_available=true AND total USD > MIN_USD."""
+    try:
+        req = urllib.request.Request(
+            V4PRO_BALANCE_URL,
+            headers={"Authorization": "Bearer " + key,
+                     "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            b = json.load(r)
+        if not b.get("is_available"):
+            return False
+        total = 0.0
+        for info in b.get("balance_infos", []):
+            try:
+                total += float(info.get("total_balance", 0))
+            except (TypeError, ValueError):
+                pass
+        return total > V4PRO_MIN_USD
+    except Exception:
+        return False
+
+
 def compose(context, slot):
+    """Compose the check-in via the tiered composer. Returns (text, tier) on
+    success; (None, failure_summary) when every tier is unreachable."""
     prompt = (
         "You are Altair, Brian's Sr. VP agent. Write your twice-daily check-in "
         "to Spencer (senior advisor) for the %s slot, based on the context "
@@ -114,16 +199,33 @@ def compose(context, slot):
         "'important': you are blocked and need Brian to decide, approve, or "
         "provide something. 'critical': Brian must act TODAY.\n\n"
         "Context:\n%s" % (slot, context))
-    req = urllib.request.Request(
-        MORPHEUS_URL,
-        data=json.dumps({"model": "morpheus",
-                         "messages": [{"role": "user", "content": prompt}],
-                         "max_tokens": 400, "stream": False,
-                         "temperature": 0.5}).encode(),
-        headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=120) as r:
-        out = json.load(r)
-    return out["choices"][0]["message"]["content"]
+    failures = []
+    for tier in TIERS:
+        try:
+            text = _call_completions(tier["url"], tier["model"], prompt,
+                                     tier["max_tokens"], tier["timeout"])
+            trailer = ("\n\n[Composed via %s — %s.]" % (tier["label"], failures[-1])
+                       if tier["name"] != "morpheus" else "")
+            return text + trailer, tier["name"]
+        except Exception as e:
+            failures.append("%s unreachable (%s: %s)"
+                            % (tier["label"], type(e).__name__, _safe_err(e)))
+    # Tier 3: V4 Pro cloud — only when the rental is live. Never burn
+    # rental credits on a dead-rental guess; the probe is a free call.
+    key = _read_v4pro_key()
+    if key and _v4pro_balance_ok(key):
+        try:
+            text = _call_completions(
+                V4PRO_URL, V4PRO_MODEL, prompt, 400, 180,
+                headers={"Authorization": "Bearer " + key})
+            return (text + "\n\n[Composed via DeepSeek V4 Pro — %s.]"
+                    % "; ".join(failures)), "v4pro"
+        except Exception as e:
+            failures.append("DeepSeek V4 Pro failed (%s: %s)"
+                            % (type(e).__name__, _safe_err(e)))
+    else:
+        failures.append("DeepSeek V4 Pro skipped (rental not live or no key)")
+    return None, "; ".join(failures)
 
 
 def parse(text):
@@ -223,11 +325,22 @@ def main():
     if not context:
         print("ERROR: no context gathered", file=sys.stderr)
         sys.exit(1)
-    text = compose(context, slot)
+    text, detail = compose(context, slot)
+    if text is None:
+        # Every tier unreachable: say so explicitly in the stream instead of
+        # going silent. Routine urgency — this is Spencer's problem to fix,
+        # not Brian's; the honest row beats a silent gap.
+        subject = "[checkin] composer unreachable on all tiers"
+        body = ("The check-in composer could not reach any model tier:\n- "
+                + "\n- ".join(detail.split("; "))
+                + "\n\nContext was gathered normally; only composition failed.")
+        row_id = insert("routine", subject, body)
+        print("composer down, self-report row id: %s" % row_id)
+        return
     urgency, subject, body = parse(text)
     urgency, subject, _ = dedup_escalation(urgency, subject, body)
     row_id = insert(urgency, subject, body)
-    print("checkin row id: %s" % row_id)
+    print("checkin row id: %s (tier=%s)" % (row_id, detail))
 
 
 if __name__ == "__main__":

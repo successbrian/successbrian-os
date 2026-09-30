@@ -20,7 +20,7 @@ CALLED BY:
     - Humans: --v4pro available|exhausted flips the credit flag
 
 NOTES:
-    The v4pro credit flag (tools/automate/state/model-tiers.json) is manual
+    The v4pro credit flag (tools/state/model-tiers.json) is manual
     until we have an API check — Brian or Spencer flips it when credits land
     or dry up. Local tier probes run from k11-alpha via kssh because this VM
     can't reach the tailnet directly.

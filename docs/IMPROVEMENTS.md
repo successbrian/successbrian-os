@@ -24,3 +24,6 @@ Every day, this repo gets a little better. Each entry: what changed and why.
 - Removed unused `timedelta` import in tools/a2a/checkin_monitor.py (AST-verified single reference).
 - README Specs section now lists all 5 specs (was altair-apis only).
 - Survey: no TODO/FIXME/HACK markers; `from __future__ import annotations` kept per 2026-09-28 decision.
+
+## 2026-10-01
+- Nothing qualified for a safe improvement: `py_compile` clean, no TODO/FIXME/HACK markers, all module docstrings present (including the freshly-pulled ventures `scoring.py`, whose docstring already follows the rubric), README/docs current, no dead code or brittle paths found. Left the repo untouched rather than manufacture churn.

@@ -185,15 +185,6 @@ def _fetch_new_tasks(last_run_at):
         "ORDER BY completed_at DESC" % (SCHEMA, _q(last_run_at)))
 
 
-def _fetch_history(table_cols, days, exclude_ids=()):
-    where = "created_at > NOW() - interval '%d days'" % days
-    if exclude_ids:
-        where += " AND id NOT IN (%s)" % ",".join(str(int(i)) for i in exclude_ids)
-    return _read_csv(
-        "SELECT %s FROM %s.conversation_captures WHERE %s ORDER BY id"
-        % (table_cols, SCHEMA, where))
-
-
 def _build_summary(new_convos, new_tasks, since):
     agents = {}
     for c in new_convos:
@@ -230,17 +221,28 @@ def run(dry_run=False):
     links = 0
 
     if new_convos:
-        hist = _fetch_history(
-            "id, session_id, user_message", DUP_LOOKBACK_DAYS,
-            exclude_ids=new_ids)
-        link_hist = [h for h in _fetch_history(
-            "id, session_id, user_message", LINK_LOOKBACK_DAYS,
-            exclude_ids=new_ids)]
+        # Comparison set: already-processed history (id < smallest new id)
+        # plus new captures processed earlier in THIS run, in id order.
+        # Every unordered pair is therefore evaluated exactly once — when
+        # the later-id capture is processed. (The first version of this
+        # worker only compared against pre-existing history and missed
+        # new-vs-new pairs on a backfill; fixed 2026-10-02.)
+        min_new = min(new_ids)
+        prior_90 = _read_csv(
+            "SELECT id, session_id, user_message, created_at "
+            "FROM %s.conversation_captures "
+            "WHERE id < %d AND created_at > NOW() - interval '%d days' "
+            "ORDER BY id" % (SCHEMA, min_new, DUP_LOOKBACK_DAYS))
+        prior_30_ids = {r["id"] for r in _read_csv(
+            "SELECT id FROM %s.conversation_captures "
+            "WHERE id < %d AND created_at > NOW() - interval '%d days'"
+            % (SCHEMA, min_new, LINK_LOOKBACK_DAYS))}
+        seen = list(prior_90)
         for c in new_convos:
             norm = _normalize(c.get("user_message") or "")
             if len(norm) >= 6:
                 match = None
-                for h in hist:
+                for h in seen:
                     if _normalize(h.get("user_message") or "") != norm:
                         continue
                     if (h.get("session_id") or "") == (c.get("session_id") or ""):
@@ -258,18 +260,20 @@ def run(dry_run=False):
                     dup_flags += 1
             toks = _tokens(c.get("user_message") or "")
             if toks:
-                for h in link_hist:
-                    if (h.get("session_id") or "") == (c.get("session_id") or ""):
-                        continue
-                    score = _jaccard(toks, _tokens(h.get("user_message") or ""))
-                    if score >= LINK_THRESHOLD:
-                        statements.append(
-                            "INSERT INTO %s.jive_links "
-                            "(source_type, source_id, target_type, target_id, relation, score) "
-                            "VALUES ('conversation',%d,'conversation',%d,'related',%s)" % (
-                                SCHEMA, int(c["id"]), int(h["id"]),
-                                _q(round(score, 3))))
-                        links += 1
+                for h in seen:
+                    if h["id"] in prior_30_ids or int(h["id"]) in new_ids:
+                        if (h.get("session_id") or "") == (c.get("session_id") or ""):
+                            continue
+                        score = _jaccard(toks, _tokens(h.get("user_message") or ""))
+                        if score >= LINK_THRESHOLD:
+                            statements.append(
+                                "INSERT INTO %s.jive_links "
+                                "(source_type, source_id, target_type, target_id, relation, score) "
+                                "VALUES ('conversation',%d,'conversation',%d,'related',%s)" % (
+                                    SCHEMA, int(c["id"]), int(h["id"]),
+                                    _q(round(score, 3))))
+                            links += 1
+            seen.append(c)
 
     summary = _build_summary(new_convos, new_tasks, last_run_at)
     statements.append(

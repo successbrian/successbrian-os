@@ -16,7 +16,7 @@ NOTES:
       (title, angle, monetization, traffic why, effort, edge). Anything it
       can't know honestly stays blank for Brian.
 """
-import argparse, json, os, re, subprocess, sys
+import argparse, json, os, re, subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 AILLM_DB = "/home/successbrian/anything-llm/server/storage/anythingllm.db"

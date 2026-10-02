@@ -21,7 +21,7 @@ NOTES:
     - On success: prints one quiet OK line. Silence is health.
 """
 import json, os, sys, subprocess
-from datetime import datetime, timedelta
+from datetime import datetime
 from datetime import datetime
 
 PG = {"host": "localhost", "dbname": "ecosystem_central",

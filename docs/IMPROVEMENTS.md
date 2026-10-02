@@ -27,3 +27,8 @@ Every day, this repo gets a little better. Each entry: what changed and why.
 
 ## 2026-10-01
 - Nothing qualified for a safe improvement: `py_compile` clean, no TODO/FIXME/HACK markers, all module docstrings present (including the freshly-pulled ventures `scoring.py`, whose docstring already follows the rubric), README/docs current, no dead code or brittle paths found. Left the repo untouched rather than manufacture churn.
+## 2026-10-02
+- Removed 4 unused imports across 3 tools (`timedelta` in tools/a2a/checkin_monitor.py, `glob` + `timedelta` in tools/daywatch/morpheus_watch.py, `sys` in tools/ventures/prospect.py) — AST + grep verified zero other references, py_compile clean, prospect --help smoke-tested. Runtime --help failures of checkin_monitor/morpheus_watch verified pre-existing (missing psycopg2/psql on this VM, tools run on k11-alpha) — not caused by the cleanup.
+- Survey: py_compile clean across all 53 modules, no real TODO/FIXME/HACK markers, all module docstrings present, hard-coded /home/successbrian paths are intentional k11-alpha deployment targets — left untouched.
+## 2026-10-02
+- Nothing qualified for a safe improvement: `py_compile` clean, no TODO/FIXME/HACK markers, no unused imports, module docstring follows PURPOSE/WHY/CALLED BY/NOTES, README matches the tool's flags. Left the repo untouched rather than manufacture churn.

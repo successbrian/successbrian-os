@@ -30,3 +30,7 @@ Every day, this repo gets a little better. Each entry: what changed and why.
 ## 2026-10-02
 - Removed 4 unused imports across 3 tools (`timedelta` in tools/a2a/checkin_monitor.py, `glob` + `timedelta` in tools/daywatch/morpheus_watch.py, `sys` in tools/ventures/prospect.py) — AST + grep verified zero other references, py_compile clean, prospect --help smoke-tested. Runtime --help failures of checkin_monitor/morpheus_watch verified pre-existing (missing psycopg2/psql on this VM, tools run on k11-alpha) — not caused by the cleanup.
 - Survey: py_compile clean across all 53 modules, no real TODO/FIXME/HACK markers, all module docstrings present, hard-coded /home/successbrian paths are intentional k11-alpha deployment targets — left untouched.
+
+## 2026-10-03
+- Removed 6 unused imports across 4 tools — `datetime`+`sys` (tools/audience/audience.py), `sys` (tools/industry_map/industry_map.py), `datetime` (tools/jive/jive.py), `os`+`sys` (tools/people_migrate/migrate_oliabo_leads.py). AST walk + grep verified zero references anywhere including cross-module attribute access; `py_compile` clean on all 58 modules.
+- Survey: `py_compile` clean, no real TODO/FIXME/HACK markers, all module docstrings present (new jive/industry_map/people_migrate files follow the PURPOSE/WHY/CALLED BY/NOTES rubric), README/docs current — nothing else qualified, left the rest untouched.

@@ -25,7 +25,12 @@ NOTES:
     - Target: people_unified.people.people (+ people.phones for phone-only rows)
     - Dedup keys, checked per batch BEFORE insert:
         1. email: lower(primary_email) IN batch
-           (uses idx_people_lower_primary_email)
+           (uses idx_people_lower_primary_email). A matching email is NOT
+           enough on its own: the name must also match (Brian 2026-10-02,
+           "make sure it all matches"). Email match + name match (or empty
+           target name) -> duplicate, skip. Email match + conflicting name ->
+           quarantined as 'conflict_email' for human review: never auto-skipped,
+           never auto-inserted.
         2. phone: digits-only phone IN people.phones
            (uses idx_phones_phone_digits; created CONCURRENTLY if missing)
     - Rows with neither email nor phone are SKIPPED here (reason=msv_queue):
@@ -95,12 +100,36 @@ def ensure_phone_index(tgt):
     print("phone dedup index ready")
 
 
+def _norm_name(s):
+    return re.sub(r"\s+", " ", (s or "").strip().lower())
+
+
+def email_match_verdict(lead_first, lead_last, tgt_first, tgt_last):
+    """Decide what an email match means. Returns 'dup', 'dup_sparse',
+    or 'conflict'.
+
+    - Both target names empty: nothing to contradict the email -> dup_sparse.
+    - Normalized first+last both equal -> dup.
+    - Anything else -> conflict: same email, different person on record.
+      Never auto-resolved; quarantined for human review.
+    """
+    lf, ll = _norm_name(lead_first), _norm_name(lead_last)
+    tf, tl = _norm_name(tgt_first), _norm_name(tgt_last)
+    if not tf and not tl:
+        return "dup_sparse"
+    if lf == tf and ll == tl:
+        return "dup"
+    return "conflict"
+
+
 def classify_batch(tgt, rows):
-    """Return (to_insert, skipped) with per-row skip reasons.
+    """Return (to_insert, skipped, conflicts) with per-row reasons.
 
     rows: list of dicts from the source table.
-    Dedup checks hit the target in two indexed batch queries — no
-    per-row round trips against the 211M-row table.
+    Dedup checks hit the target in indexed batch queries — no per-row
+    round trips against the 211M-row table. Email matches are verified
+    against the stored name; mismatches become conflicts, never silent
+    skips and never blind inserts.
     """
     emails = {}
     phones = {}
@@ -112,15 +141,19 @@ def classify_batch(tgt, rows):
         if p:
             phones.setdefault(p, []).append(r["id"])
 
-    existing_emails = set()
+    email_hits = {}
     if emails:
         with tgt.cursor() as c:
             c.execute(
-                "SELECT lower(primary_email) FROM people.people "
+                "SELECT lower(primary_email), first_name, last_name, city "
+                "FROM people.people "
                 "WHERE lower(primary_email) = ANY(%s)",
                 (list(emails.keys()),),
             )
-            existing_emails = {row[0] for row in c.fetchall()}
+            for em, fn, ln, city in c.fetchall():
+                # keep the first hit per email; dup emails in target are
+                # themselves a data-quality signal, not our call to resolve
+                email_hits.setdefault(em, (fn, ln, city))
 
     existing_phones = set()
     if phones:
@@ -133,19 +166,31 @@ def classify_batch(tgt, rows):
             )
             existing_phones = {row[0] for row in c.fetchall()}
 
-    to_insert, skipped = [], []
+    to_insert, skipped, conflicts = [], [], []
     for r in rows:
         e = norm_email(r["email"])
         p = norm_phone(r["phone"])
-        if e and e in existing_emails:
-            skipped.append((r["id"], "dup_email"))
+        if e and e in email_hits:
+            tfn, tln, _tcity = email_hits[e]
+            lfn, lln = split_name(r["full_name"])
+            verdict = email_match_verdict(lfn, lln, tfn, tln)
+            if verdict == "conflict":
+                conflicts.append(
+                    {"lead_id": r["id"], "lead_name": r["full_name"],
+                     "lead_email": e, "target_name":
+                     ("%s %s" % (tfn or "", tln or "")).strip()}
+                )
+            else:
+                skipped.append((r["id"],
+                                "dup_email" if verdict == "dup"
+                                else "dup_email_sparse"))
         elif not e and p and p in existing_phones:
             skipped.append((r["id"], "dup_phone"))
         elif not e and not p:
             skipped.append((r["id"], "msv_queue"))
         else:
             to_insert.append(r)
-    return to_insert, skipped
+    return to_insert, skipped, conflicts
 
 
 def build_person(r, tags, batch_id):
@@ -232,9 +277,13 @@ def run(args):
 
     stats = {
         "scanned": 0, "inserted": 0, "phones_added": 0,
-        "skipped": {"dup_email": 0, "dup_phone": 0, "msv_queue": 0},
+        "skipped": {"dup_email": 0, "dup_email_sparse": 0, "dup_phone": 0,
+                    "msv_queue": 0},
+        "conflicts": 0,
     }
-    skip_examples = {"dup_email": [], "dup_phone": [], "msv_queue": []}
+    skip_examples = {"dup_email": [], "dup_email_sparse": [], "dup_phone": [],
+                     "msv_queue": []}
+    conflict_examples = []
 
     with src.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as c:
         c.execute(
@@ -250,24 +299,29 @@ def run(args):
                 break
             rows = [dict(r) for r in rows]
             stats["scanned"] += len(rows)
-            to_insert, skipped = classify_batch(tgt, rows)
+            to_insert, skipped, conflicts = classify_batch(tgt, rows)
             for lid, reason in skipped:
                 stats["skipped"][reason] += 1
                 if len(skip_examples[reason]) < 3:
                     skip_examples[reason].append(lid)
+            stats["conflicts"] += len(conflicts)
+            for cf in conflicts:
+                if len(conflict_examples) < 5:
+                    conflict_examples.append(cf)
             if to_insert and not args.dry_run:
                 batch_id = uuid.uuid4().hex
                 persons = [build_person(r, tags, batch_id) for r in to_insert]
                 n_people, n_phones = insert_batch(tgt, persons, batch_id)
                 stats["inserted"] += n_people
                 stats["phones_added"] += n_phones
+            n = lambda want: sum(1 for _, r in skipped if r == want)
             print(
-                "batch: scanned=%d to_insert=%d dup_email=%d dup_phone=%d msv_queue=%d%s"
+                "batch: scanned=%d to_insert=%d dup_email=%d dup_email_sparse=%d "
+                "dup_phone=%d msv_queue=%d conflicts=%d%s"
                 % (
                     len(rows), len(to_insert),
-                    sum(1 for _, r in skipped if r == "dup_email"),
-                    sum(1 for _, r in skipped if r == "dup_phone"),
-                    sum(1 for _, r in skipped if r == "msv_queue"),
+                    n("dup_email"), n("dup_email_sparse"),
+                    n("dup_phone"), n("msv_queue"), len(conflicts),
                     " DRY-RUN" if args.dry_run else "",
                 ),
                 flush=True,
@@ -276,7 +330,9 @@ def run(args):
     src.close()
     tgt.close()
     print(json.dumps({"dry_run": args.dry_run, "stats": stats,
-                      "skip_examples": skip_examples}, indent=2, default=str))
+                      "skip_examples": skip_examples,
+                      "conflict_examples": conflict_examples},
+                     indent=2, default=str))
 
 
 def main(argv=None):

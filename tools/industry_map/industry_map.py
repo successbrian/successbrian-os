@@ -38,7 +38,6 @@ import argparse
 import datetime
 import os
 import subprocess
-import sys
 from xml.sax.saxutils import escape as _xesc
 
 HERE = os.path.dirname(os.path.abspath(__file__))

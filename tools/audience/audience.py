@@ -30,10 +30,8 @@ NOTES:
 """
 
 import argparse
-import datetime
 import os
 import subprocess
-import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 

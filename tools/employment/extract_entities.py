@@ -37,11 +37,11 @@ PENNY_URL = "http://127.0.0.1:11438/v1/chat/completions"
 MORPHEUS_URL = "http://127.0.0.1:11437/v1/chat/completions"
 
 PROMPT = (
-    "Extract job/recruiter entities from the email below. Reply with ONLY "
-    "a JSON object, no other text. Keys: person_name (sender full name or "
-    "null), person_email, company (hiring company or null), role (job title "
-    "or null), pay (pay range string or null), location (city/state or "
-    "null), remote (true/false/null).\n\nSubject: {subject}\n\nBody:\n{body}"
+    "Extract job details from the email below. Reply with ONLY "
+    "a JSON object, no other text. Keys: company (hiring company or "
+    "null), role (job title or null), pay (pay range string or null), "
+    "location (city/state or null), remote (true/false/null).\n\n"
+    "Subject: {subject}\n\nBody:\n{body}"
 )
 
 
@@ -200,7 +200,7 @@ def main():
     for i, row in enumerate(rows, 1):
         mhash, title = row.split("|", 1)
         # find the archived message body
-        body, subject, from_email = "", title, ""
+        body, subject, from_email, header_name = "", title, "", ""
         for fn in os.listdir(args.archive_dir):
             if not fn.endswith(".json"):
                 continue
@@ -214,8 +214,12 @@ def main():
                 b = m.get("body") or ""
                 body = re.sub(r"\s+", " ",
                               re.sub(r"<[^>]+>", " ", b))[:2000]
-                fm = re.search(r"<([^>]+@[^>]+)>", m.get("from") or "")
+                frm = m.get("from") or ""
+                fm = re.search(r"<([^>]+@[^>]+)>", frm)
                 from_email = fm.group(1) if fm else ""
+                hn = re.match(r"^\s*(.*?)\s*<[^>]+>\s*$", frm)
+                header_name = (hn.group(1).strip().strip('"')
+                               if hn else frm.strip())
                 break
         if not body:
             stats["skipped"] += 1
@@ -234,6 +238,11 @@ def main():
             continue
         if not (ent.get("person_email") or "").strip() and from_email:
             ent["person_email"] = from_email
+        # Identity comes from the From header (authoritative). Penny's
+        # person_name is only a fallback — she sometimes reads the
+        # recipient's name from the greeting instead of the sender.
+        if header_name:
+            ent["person_name"] = header_name
 
         pstat, pinfo = upsert_person(ent, title[:80])
         cstat, cinfo = upsert_company(ent, ent.get("person_email"))

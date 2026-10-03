@@ -244,6 +244,13 @@ def cmd_promote(args):
         print("  - %s" % m["title"])
 
 
+def cmd_streams(_args):
+    import streams as streamlib
+    for s in streamlib.effective():
+        flag = "PERMANENT" if s["permanent"] else ("on" if s["enabled"] else "off")
+        print("%-15s %-9s (%s)" % (s["name"], flag, s["source"]))
+
+
 def main():
     ap = argparse.ArgumentParser(prog="ideas.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -258,10 +265,12 @@ def main():
     p = sub.add_parser("questions"); p.add_argument("id", type=int)
     p = sub.add_parser("score"); p.add_argument("id", type=int)
     p = sub.add_parser("promote"); p.add_argument("id", type=int)
+    sub.add_parser("streams")
     args = ap.parse_args()
     {"init-db": cmd_init_db, "capture": cmd_capture, "list": cmd_list,
      "show": cmd_show, "flesh": cmd_flesh, "questions": cmd_questions,
-     "score": cmd_score, "promote": cmd_promote}[args.cmd](args)
+     "score": cmd_score, "promote": cmd_promote,
+     "streams": cmd_streams}[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -17,3 +17,6 @@ tools/crypto-intel/.cache/
 # compiled python is build output, regenerated on demand
 __pycache__/
 *.py[cod]
+
+# venture toolkit: per-user stream config is personal, never committed
+tools/ventures/user_streams.json

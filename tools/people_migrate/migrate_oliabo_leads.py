@@ -23,16 +23,19 @@ NOTES:
     - CANONICAL: successbrian-os/tools/people_migrate/
     - Source: ecosystem_central.lead_scraper.oliabo_leads
     - Target: people_unified.people.people (+ people.phones for phone-only rows)
-    - Dedup keys, checked per batch BEFORE insert:
+    - Dedup keys, checked per batch BEFORE insert (Brian 2026-10-02:
+      "make sure it all matches" on both):
         1. email: lower(primary_email) IN batch
-           (uses idx_people_lower_primary_email). A matching email is NOT
-           enough on its own: the name must also match (Brian 2026-10-02,
-           "make sure it all matches"). Email match + name match (or empty
-           target name) -> duplicate, skip. Email match + conflicting name ->
-           quarantined as 'conflict_email' for human review: never auto-skipped,
-           never auto-inserted.
-        2. phone: digits-only phone IN people.phones
+           (uses idx_people_lower_primary_email)
+        2. phone: digits-only phone IN people.phones, joined to people.people
+           for the stored name
            (uses idx_phones_phone_digits; created CONCURRENTLY if missing)
+      A matching contact detail is NOT enough on its own: the stored name
+      must also match (or be empty). Contact match + name match -> duplicate,
+      skip. Contact match + conflicting name -> quarantined as
+      'conflict_email' / 'conflict_phone' for human review: never
+      auto-skipped, never auto-inserted. A row whose email is new but whose
+      phone matches still gets the phone check (and vice versa).
     - Rows with neither email nor phone are SKIPPED here (reason=msv_queue):
       per Brian 2026-10-02 they go through the MSV scraper first.
     - Tags default to ['oliabo']; segment tags via --extra-tags
@@ -104,14 +107,17 @@ def _norm_name(s):
     return re.sub(r"\s+", " ", (s or "").strip().lower())
 
 
-def email_match_verdict(lead_first, lead_last, tgt_first, tgt_last):
-    """Decide what an email match means. Returns 'dup', 'dup_sparse',
+def record_match_verdict(lead_first, lead_last, tgt_first, tgt_last):
+    """Decide what a contact match means. Returns 'dup', 'dup_sparse',
     or 'conflict'.
 
-    - Both target names empty: nothing to contradict the email -> dup_sparse.
+    Used for BOTH email and phone matches (Brian 2026-10-02: "make sure
+    it all matches" on both). A matching contact detail is NOT enough on
+    its own: the name must also match.
+    - Both target names empty: nothing to contradict the contact -> dup_sparse.
     - Normalized first+last both equal -> dup.
-    - Anything else -> conflict: same email, different person on record.
-      Never auto-resolved; quarantined for human review.
+    - Anything else -> conflict: same contact detail, different person on
+      record. Never auto-resolved; quarantined for human review.
     """
     lf, ll = _norm_name(lead_first), _norm_name(lead_last)
     tf, tl = _norm_name(tgt_first), _norm_name(tgt_last)
@@ -155,41 +161,63 @@ def classify_batch(tgt, rows):
                 # themselves a data-quality signal, not our call to resolve
                 email_hits.setdefault(em, (fn, ln, city))
 
-    existing_phones = set()
+    existing_phones = {}
     if phones:
         with tgt.cursor() as c:
             c.execute(
-                "SELECT regexp_replace(phone, '\\D', '', 'g') "
-                "FROM people.phones "
-                "WHERE regexp_replace(phone, '\\D', '', 'g') = ANY(%s)",
+                "SELECT regexp_replace(ph.phone, '\\D', '', 'g'), "
+                "       p.first_name, p.last_name "
+                "FROM people.phones ph "
+                "JOIN people.people p ON p.id = ph.person_id "
+                "WHERE regexp_replace(ph.phone, '\\D', '', 'g') = ANY(%s)",
                 (list(phones.keys()),),
             )
-            existing_phones = {row[0] for row in c.fetchall()}
+            for ph, fn, ln in c.fetchall():
+                existing_phones.setdefault(ph, (fn, ln))
 
     to_insert, skipped, conflicts = [], [], []
     for r in rows:
         e = norm_email(r["email"])
         p = norm_phone(r["phone"])
+        lfn, lln = split_name(r["full_name"])
+        resolved = False
         if e and e in email_hits:
+            # email match: name must also match
             tfn, tln, _tcity = email_hits[e]
-            lfn, lln = split_name(r["full_name"])
-            verdict = email_match_verdict(lfn, lln, tfn, tln)
+            verdict = record_match_verdict(lfn, lln, tfn, tln)
             if verdict == "conflict":
                 conflicts.append(
                     {"lead_id": r["id"], "lead_name": r["full_name"],
-                     "lead_email": e, "target_name":
+                     "matched_on": "email", "matched_value": e,
+                     "target_name":
                      ("%s %s" % (tfn or "", tln or "")).strip()}
                 )
             else:
                 skipped.append((r["id"],
                                 "dup_email" if verdict == "dup"
                                 else "dup_email_sparse"))
-        elif not e and p and p in existing_phones:
-            skipped.append((r["id"], "dup_phone"))
-        elif not e and not p:
-            skipped.append((r["id"], "msv_queue"))
-        else:
-            to_insert.append(r)
+            resolved = True
+        if not resolved and p and p in existing_phones:
+            # phone match: name must also match (same rule as email)
+            tfn, tln = existing_phones[p]
+            verdict = record_match_verdict(lfn, lln, tfn, tln)
+            if verdict == "conflict":
+                conflicts.append(
+                    {"lead_id": r["id"], "lead_name": r["full_name"],
+                     "matched_on": "phone", "matched_value": p,
+                     "target_name":
+                     ("%s %s" % (tfn or "", tln or "")).strip()}
+                )
+            else:
+                skipped.append((r["id"],
+                                "dup_phone" if verdict == "dup"
+                                else "dup_phone_sparse"))
+            resolved = True
+        if not resolved:
+            if not e and not p:
+                skipped.append((r["id"], "msv_queue"))
+            else:
+                to_insert.append(r)
     return to_insert, skipped, conflicts
 
 
@@ -277,11 +305,13 @@ def run(args):
 
     stats = {
         "scanned": 0, "inserted": 0, "phones_added": 0,
-        "skipped": {"dup_email": 0, "dup_email_sparse": 0, "dup_phone": 0,
+        "skipped": {"dup_email": 0, "dup_email_sparse": 0,
+                    "dup_phone": 0, "dup_phone_sparse": 0,
                     "msv_queue": 0},
         "conflicts": 0,
     }
-    skip_examples = {"dup_email": [], "dup_email_sparse": [], "dup_phone": [],
+    skip_examples = {"dup_email": [], "dup_email_sparse": [],
+                     "dup_phone": [], "dup_phone_sparse": [],
                      "msv_queue": []}
     conflict_examples = []
 
@@ -317,11 +347,13 @@ def run(args):
             n = lambda want: sum(1 for _, r in skipped if r == want)
             print(
                 "batch: scanned=%d to_insert=%d dup_email=%d dup_email_sparse=%d "
-                "dup_phone=%d msv_queue=%d conflicts=%d%s"
+                "dup_phone=%d dup_phone_sparse=%d "
+                "msv_queue=%d conflicts=%d%s"
                 % (
                     len(rows), len(to_insert),
                     n("dup_email"), n("dup_email_sparse"),
-                    n("dup_phone"), n("msv_queue"), len(conflicts),
+                    n("dup_phone"), n("dup_phone_sparse"),
+                    n("msv_queue"), len(conflicts),
                     " DRY-RUN" if args.dry_run else "",
                 ),
                 flush=True,

@@ -221,10 +221,11 @@ def cmd_report(args):
     name = _rows("SELECT name FROM successbrian_os.industry_maps "
                  "WHERE id=:'mid';", {"mid": mid})[0]
     print("=== %s ===" % name)
-    for status, n in _rows(
+    for r in _rows(
             "SELECT status, COUNT(*) FROM successbrian_os.industry_companies"
             " WHERE map_id=:'mid' GROUP BY status ORDER BY status;",
             {"mid": mid}):
+        status, n = r.split("\t")
         print("companies [%s]: %s" % (status, n))
     mine = _rows("SELECT COUNT(*) FROM successbrian_os.industry_companies"
                  " WHERE map_id=:'mid' AND is_mine;",

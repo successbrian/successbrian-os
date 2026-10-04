@@ -40,7 +40,17 @@ USER_FILE = os.path.join(HERE, "user_focus.json")
 EXAMPLE_FILE = os.path.join(HERE, "user_focus.example.json")
 
 BANDS = [(70, "strong"), (45, "consider"), (0, "shelve-or-reshape")]
-FOCUS_LIMIT = 5  # more active streams than this drags every new candidate down
+DEFAULT_FOCUS_LIMIT = 5  # product default; override per user, never hardcoded per person
+
+
+def focus_limit(explicit=None):
+    """Resolve the active-stream focus limit: explicit arg > FOCUS_LIMIT env > default."""
+    if explicit:
+        return int(explicit)
+    try:
+        return int(os.environ.get("FOCUS_LIMIT", DEFAULT_FOCUS_LIMIT))
+    except (TypeError, ValueError):
+        return DEFAULT_FOCUS_LIMIT
 
 
 def _band(total):
@@ -50,7 +60,7 @@ def _band(total):
     return "shelve-or-reshape"
 
 
-def evaluate_candidate(cand, active_streams):
+def evaluate_candidate(cand, active_streams, limit=None):
     """Deterministic 0-100 score. cand fields (all plain facts, no judgment):
 
     name, personally_tested (bool), personal_benefit (0-2),
@@ -89,12 +99,13 @@ def evaluate_candidate(cand, active_streams):
 
     # 4. Focus load (0-15): the ADHD guardrail. Too many active pursuits and
     #    every new candidate pays for it, automatically.
+    limit = focus_limit(limit)
     active_count = len(active_streams or [])
     load = 15 - max(0, min(2, int(cand.get("attention_cost") or 0))) * 5
-    load -= max(0, active_count - FOCUS_LIMIT) * 2
+    load -= max(0, active_count - limit) * 2
     bd["focus_load"] = max(0, load)
-    if active_count > FOCUS_LIMIT:
-        flags.append(f"over-limit: {active_count} active streams (limit {FOCUS_LIMIT}) — "
+    if active_count > limit:
+        flags.append(f"over-limit: {active_count} active streams (limit {limit}) — "
                      "new candidates taxed until something exits")
 
     # 5. Perception test (0-15): would a cold audience buy the story?
@@ -114,12 +125,13 @@ def load_registry():
         return json.load(f)
 
 
-def review_report(registry):
+def review_report(registry, limit=None):
     """The grounding pass. Facts only: earn / promote / test status per stream."""
+    limit = focus_limit(limit)
     streams = registry.get("streams", [])
     active = [s for s in streams if s.get("status") == "active"]
     lines = []
-    lines.append(f"ACTIVE PURSUITS: {active_count(active)} (focus limit {FOCUS_LIMIT})")
+    lines.append(f"ACTIVE PURSUITS: {len(active)} (focus limit {limit})")
     total_income = 0
     income_known = False
     rent, untested, unverified = [], [], []
@@ -155,14 +167,10 @@ def review_report(registry):
     exiting = [s.get("name", "?") for s in streams if s.get("status") == "exiting"]
     if exiting:
         lines.append("EXITING: " + ", ".join(exiting))
-    if len(active) > FOCUS_LIMIT:
-        lines.append(f"COACHING FACT: {len(active)} active pursuits exceeds the {FOCUS_LIMIT}-stream "
+    if len(active) > limit:
+        lines.append(f"COACHING FACT: {len(active)} active pursuits exceeds the {limit}-stream "
                      "focus limit. Something must exit before anything new is added.")
     return "\n".join(lines)
-
-
-def active_count(active):
-    return len(active)
 
 
 def cmd_evaluate(a):
@@ -178,7 +186,7 @@ def cmd_evaluate(a):
         "attention_cost": a.attention_cost,
     }
     active = [s for s in load_registry().get("streams", []) if s.get("status") == "active"]
-    r = evaluate_candidate(cand, active)
+    r = evaluate_candidate(cand, active, a.focus_limit)
     print(f"{r['name']}: {r['total']}/100 → {r['band']}")
     for k, v in r["breakdown"].items():
         print(f"  {k}: {v}")
@@ -187,8 +195,8 @@ def cmd_evaluate(a):
     print("Score proposes. You decide.")
 
 
-def cmd_review(_a):
-    print(review_report(load_registry()))
+def cmd_review(a):
+    print(review_report(load_registry(), a.focus_limit))
     print("Facts, not feelings. Score proposes. You decide.")
 
 
@@ -212,9 +220,13 @@ def main():
                    help="0 clean, 1 needs explaining, 2 fails the smell test.")
     e.add_argument("--attention-cost", type=int, default=1, choices=[0, 1, 2],
                    help="0 runs itself, 1 some effort, 2 demands real focus.")
+    e.add_argument("--focus-limit", type=int, default=None,
+                   help="Override the active-stream focus limit (default 5, or FOCUS_LIMIT env).")
     e.set_defaults(func=cmd_evaluate)
 
     r = sub.add_parser("review", help="Grounding report over your stream registry.")
+    r.add_argument("--focus-limit", type=int, default=None,
+                   help="Override the active-stream focus limit (default 5, or FOCUS_LIMIT env).")
     r.set_defaults(func=cmd_review)
 
     a = p.parse_args()

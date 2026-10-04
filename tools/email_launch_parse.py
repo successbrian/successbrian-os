@@ -422,10 +422,10 @@ def candidate_sql(c):
 
 
 def kssh_psql(sql):
-    """Run SQL on k11-alpha's ecosystem_central via kssh (base64 pattern)."""
+    """Run SQL on k11-alpha's altair database via kssh (base64 pattern)."""
     b64 = base64.b64encode(sql.encode()).decode()
     cmd = (f"psql -h /var/run/postgresql -U successbrian "
-           f"-d ecosystem_central -v ON_ERROR_STOP=1 -t -A "
+           f"-d altair -v ON_ERROR_STOP=1 -t -A "
            f"-c \"$(echo {b64} | base64 -d)\"")
     r = subprocess.run([KSSH, cmd], capture_output=True, text=True,
                        timeout=180)

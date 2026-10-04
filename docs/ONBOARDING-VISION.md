@@ -25,6 +25,20 @@ MLMs for themselves and their followers — not a lecture on the choice
 itself. (This is why the focus coach's perception axis is a pride test,
 not a smell test.)
 
+## Tier routing (per Brian 2026-10-04)
+
+The conversational boot interview is a **DeepSeek V4 Pro cloud-tier** job —
+it needs top-tier conversational quality, not the local workhorse. It is
+**blocked on the cloud API**: the InstantlyClaw rental is currently dry
+(balance -$0.01, is_available=false as of 2026-10-04; the hourly
+`v4pro_balance.py` check will see when it refills).
+
+Until then, the shipping path is the deterministic fallback:
+`tools/setup/init.py` asks the same questions as a script. No user waits on
+the cloud. When the rental refills, the conversational interviewer (Altair
+on the V4 Pro tier) takes over the boot conversation; the user model format
+it writes is identical, so nothing migrates.
+
 ## Where the answers live
 
 `tools/focus/user_focus.json` → `"values"`. This file is the **user model**:

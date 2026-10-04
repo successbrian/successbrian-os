@@ -87,8 +87,8 @@ Brian's asleep until 6:30 PM. Here's the crew's cut:
 - Check fleet utilization against capacity report (staging/capacity-report-latest.md).
 - Flag anything that needs Brian's call vs what you can reschedule yourself.
 
-## Model crew (via Altair) — ORDER MATTERS, DeepSeek first
-- **DeepSeek 150B** (port 8084) — HIGHEST PRIORITY: the strategic brief is the
+## Model crew (via Altair) — ORDER MATTERS, Sonic first
+- **Sonic** (port 11439) — HIGHEST PRIORITY: the strategic brief is the
   backbone of Altair's 7:30 briefing. Read the week's decisions digest and
   write: what's converging, what's conflicting, what Brian should prioritize
   next week, and the 3-5 questions that most need his judgment. Due by 5 PM
@@ -137,7 +137,7 @@ def write_summary(results: dict) -> None:
     lines += [
         "",
         "Crew assignments: Altair (infra health), Lyra (queues + utilization),",
-        "DeepSeek 150B (strategic brief), Morpheus (library), Penny (inbox triage).",
+        "Sonic (strategic brief), Morpheus (library), Penny (inbox triage).",
         "Their reports are in the inbox alongside this summary.",
         "",
         "Details: successbrian-os/tools/staging/",

@@ -112,9 +112,9 @@ def _brief_confidence(ctx: dict) -> float:
 
 def _brief_act(ctx: dict, dry_run: bool) -> str:
     body = (
-        "# Nudge: DeepSeek strategic brief overdue (automation)\n\n"
+        "# Nudge: strategic brief overdue (automation)\n\n"
         f"Time: {_now().strftime('%H:%M')} — brief was due 5:00 PM.\n"
-        "Altair: please kick DeepSeek 150B (port 8084, serialized) for the "
+        "Altair: please kick Sonic (qwen-a3b, local port 11439) for the "
         "strategic brief. It's the backbone of the 7:30 briefing.\n"
     )
     if dry_run:
@@ -248,14 +248,14 @@ def _v4pro_act(ctx: dict, dry_run: bool) -> str:
             f"Time: {_now().strftime('%Y-%m-%d %H:%M')}.\n"
             "DeepSeek V4 Pro (cloud top tier) has credits. Until they run dry:\n"
             "- Hard tasks (strategy, hard coding, cross-system reasoning) go "
-            "to V4 Pro via AnythingLLM deep research, NOT the local 150B.\n"
-            "- 150B stays on medium work; Penny keeps the small fast jobs.\n"
+            "to V4 Pro via AnythingLLM deep research, NOT local Sonic.\n"
+            "- Sonic stays on the heavy-work slot; Penny keeps the small fast jobs.\n"
             "When credits exhaust, flip the flag: "
             "`python3 tools/model_tiers.py --v4pro exhausted`.\n"
         )
         path = _inbox_note("v4pro-credits-available", body)
         return f"announced, note: {Path(path).name}"
-    return "stood down: hard tasks back to local 150B (flag flipped)"
+    return "stood down: hard tasks back to local Sonic (flag flipped)"
 
 
 # --- Rule 7: v4pro balance check (hourly, keeps the credit flag honest) -----

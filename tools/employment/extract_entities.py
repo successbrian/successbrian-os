@@ -203,7 +203,7 @@ def main():
         "ecosystem_central",
         "SELECT message_id_hash, title FROM public.job_tracking "
         "WHERE source IN ('recruiter_email','brian_outbound') "
-        "AND (company IS NULL OR company = '') "
+        "AND extracted_at IS NULL "
         "AND message_id_hash IS NOT NULL ORDER BY id;"
     ).strip().split("\n")
     rows = [r for r in rows if r.strip()]
@@ -314,11 +314,13 @@ def main():
             sets.append("gaps = regexp_replace(regexp_replace("
                         "coalesce(gaps,''), '(^|,)hours_unknown(,|$)', "
                         "'\\\\1'), '^,|,$', '', 'g')")
-        if sets:
-            kssh_psql("ecosystem_central",
-                      "UPDATE public.job_tracking SET %s WHERE "
-                      "message_id_hash = %s;" % (", ".join(sets),
-                                                 sql_lit(mhash)))
+        # Always mark the row extracted so it is not reprocessed daily,
+        # even when nothing new was found.
+        sets.append("extracted_at = now()")
+        kssh_psql("ecosystem_central",
+                  "UPDATE public.job_tracking SET %s WHERE "
+                  "message_id_hash = %s;" % (", ".join(sets),
+                                             sql_lit(mhash)))
         print("[%d/%d] %s -> person:%s company:%s"
               % (i, len(rows), (ent.get("person_name") or "?")[:30],
                  pstat, cstat))

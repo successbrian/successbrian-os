@@ -3,10 +3,13 @@
 
 PURPOSE:
     First-run setup. Interviews the entrepreneur (name, focus limit, the
-    streams they're running, Postgres location) and writes their private
+    streams they're running, how they feel about MLM/affiliate income and
+    which stream types they want, Postgres location) and writes their private
     registry files. The "agent" that greets a new user is a deterministic
     script with good questions — no chat model, no guessing, same result
-    for the same answers.
+    for the same answers. (The conversational version of this interview is
+    Altair's job at boot — see docs/ONBOARDING-VISION.md; this script is the
+    deterministic fallback.)
 
 WHY:
     Brian 2026-10-04: a downloaded OS that doesn't boot itself is a
@@ -113,6 +116,54 @@ def main():
     if not streams:
         print("No streams entered — writing an empty registry. Add some later and re-run review.\n")
 
+    print("Next: how you feel about the *kinds* of income out there.")
+    print("The coach uses this to flag opportunities that fit — or fight — your preferences.\n")
+
+    def ask_stance(thing):
+        print(f"  How do you feel about {thing}?")
+        print("    1 = promoter (I build this) / 2 = open (fine if the product is good) / 3 = avoid (not for me)")
+        while True:
+            raw = ask("  Your answer (1/2/3)", "2").strip()
+            if raw == "1":
+                return "promoter"
+            if raw == "2":
+                return "open"
+            if raw == "3":
+                return "avoid"
+            print("  Please answer 1, 2, or 3.")
+
+    mlm_stance = ask_stance("MLM / network marketing as a way to earn")
+    aff_stance = ask_stance("affiliate marketing (promoting others' products for commission)")
+    print()
+
+    print("  What kinds of income streams do you want? (comma-separated numbers, blank for all)")
+    print("    1 mlm  2 affiliate  3 own-product  4 services  5 content  6 investing")
+    type_map = {"1": "mlm", "2": "affiliate", "3": "own-product",
+                "4": "services", "5": "content", "6": "investing"}
+    raw_types = ask("  Your picks", "").strip()
+    if raw_types:
+        preferred = [type_map[t] for t in raw_types.replace(" ", "").split(",") if t in type_map]
+        preferred = preferred or list(type_map.values())
+    else:
+        preferred = list(type_map.values())
+    print(f"  Preferred types: {', '.join(preferred)}\n")
+
+    print("  Do you prefer income that recurs monthly, fast cash per sale, or both?")
+    while True:
+        raw = ask("  recurring / fast-cash / both", "both").strip().lower().replace(" ", "")
+        if raw in ("recurring", "fast-cash", "fastcash", "both"):
+            income_style = "fast-cash" if raw == "fastcash" else raw
+            break
+        print("  Please answer recurring, fast-cash, or both.")
+    print()
+
+    values = {
+        "mlm_stance": mlm_stance,
+        "affiliate_stance": aff_stance,
+        "preferred_stream_types": preferred,
+        "income_style": income_style,
+    }
+
     print("Postgres (Tier 2 modules: ventures, audience). Skip if unsure — Tier 1 works without it.")
     pg_host = ask("  Host", "localhost")
     pg_db = ask("  Database name", "successbrian_os")
@@ -127,6 +178,7 @@ def main():
         "_note": f"Private registry for {name}. GITIGNORED — never committed.",
         "_focus_limit": focus_limit,
         "streams": streams,
+        "values": values,
     }
     with open(USER_FILE, "w") as f:
         json.dump(registry, f, indent=2)

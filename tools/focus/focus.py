@@ -88,7 +88,7 @@ def _ver(node):
     return bool(isinstance(node, dict) and node.get("verified") and node.get("source"))
 
 
-def evaluate_candidate(cand, active_streams, user_audiences=None, limit=None):
+def evaluate_candidate(cand, active_streams, user_audiences=None, limit=None, values=None):
     """Deterministic 0-100 score across six axes. cand may be:
 
     - an intel-file dict (groups like identity/comp_plan/...) with
@@ -134,7 +134,14 @@ def evaluate_candidate(cand, active_streams, user_audiences=None, limit=None):
         track("personal_benefit", fit.get("personal_benefit"), load_bearing=False)
 
         payout = str(_val(comp.get("payout_structure"), "")).lower()
-        recurring = any(k in payout for k in ("unilevel", "binary", "residual", "commission"))
+        # Structural recurring income (team overrides, residuals), not just the
+        # word "commission" — a per-sale affiliate commission is not recurring.
+        # Explicit one-time language vetoes: "no residuals" contains "residual".
+        _one_time = any(k in payout for k in ("no residual", "non-recurring",
+                                             "one-time", "per sale", "per-sale"))
+        recurring = (not _one_time) and any(k in payout for k in ("unilevel", "binary",
+                                             "residual", "override", "downline",
+                                             "recurring commission", "monthly commission"))
         track("recurring_income", comp.get("payout_structure"))
         momentum = max(0, min(2, int(_val(veh.get("momentum"), 0) or 0)))
         track("momentum", veh.get("momentum"))
@@ -157,6 +164,25 @@ def evaluate_candidate(cand, active_streams, user_audiences=None, limit=None):
         reg_flags = _val(veh.get("regulatory_flags"), []) or []
         if reg_flags:
             flags.append("regulatory-flags present: " + ", ".join(map(str, reg_flags)))
+        # Values alignment: the founder's stated preferences (from the boot
+        # interview) surface as flags, never hidden score tweaks.
+        stream_type = str(_val(ident.get("stream_type"), "") or "").lower()
+        track("stream_type", ident.get("stream_type"))
+        if values and stream_type:
+            preferred = [t.lower() for t in (values.get("preferred_stream_types") or [])]
+            if preferred and stream_type in preferred:
+                flags.append(f"values-aligned: {stream_type} is one of your preferred stream types")
+            stance_map = {"mlm": values.get("mlm_stance"), "affiliate": values.get("affiliate_stance")}
+            stance = stance_map.get(stream_type)
+            if stance == "avoid":
+                flags.append(f"values-mismatch: you said you avoid {stream_type} — this candidate is one")
+            elif stance == "promoter":
+                flags.append(f"values-aligned: you're a {stream_type} promoter and this is {stream_type}")
+            income_style = (values.get("income_style") or "").lower()
+            if income_style == "recurring" and not recurring:
+                flags.append("income-style-mismatch: you prefer recurring income; this pays per sale")
+            elif income_style == "fast-cash" and recurring:
+                flags.append("income-style-mismatch: you prefer fast cash; this pays recurring residuals")
     else:
         name = cand.get("name", "candidate")
         lane = ""
@@ -291,7 +317,8 @@ def cmd_evaluate(a):
     if a.intel:
         with open(a.intel) as f:
             cand = json.load(f)
-        r = evaluate_candidate(cand, active, user_audiences, a.focus_limit)
+        r = evaluate_candidate(cand, active, user_audiences, a.focus_limit,
+                               registry.get("values"))
     else:
         cand = {
             "name": a.name, "personally_tested": a.tested,

@@ -95,6 +95,7 @@ def blank_candidate(name):
             "name": field(name, True, "founder"),
             "lane": field(),
             "competing_lanes": field([]),
+            "stream_type": field(),  # mlm | affiliate | own-product | services | content | investing | other
             "website": field(),
         },
         "offer": {

@@ -34,3 +34,7 @@ Every day, this repo gets a little better. Each entry: what changed and why.
 ## 2026-10-03
 - Removed 6 unused imports across 4 tools — `datetime`+`sys` (tools/audience/audience.py), `sys` (tools/industry_map/industry_map.py), `datetime` (tools/jive/jive.py), `os`+`sys` (tools/people_migrate/migrate_oliabo_leads.py). AST walk + grep verified zero references anywhere including cross-module attribute access; `py_compile` clean on all 58 modules.
 - Survey: `py_compile` clean, no real TODO/FIXME/HACK markers, all module docstrings present (new jive/industry_map/people_migrate files follow the PURPOSE/WHY/CALLED BY/NOTES rubric), README/docs current — nothing else qualified, left the rest untouched.
+
+## 2026-10-04
+- Docstring compliance pass (CODE-STANDARDS WHY-mandatory section): added WHY: to tools/refine_intake.py (grounded in Brian's quoted 2026-09-27 "refine it not reduce it" directive), tools/ventures/goals.py (draft-as-handoff-shape reasoning from its own docstring), tools/ventures/scoring.py (deterministic-rubric reasoning from the no-chat-model-decides rule); renamed "WHY this exists" to "WHY:" in tools/briefing_table.py for header consistency. Docstring-only, zero behavior change, py_compile clean. Left the two empty crypto-intel __init__.py files alone (adding WHY to "intentionally minimal" package inits would be churn).
+- Survey: py_compile clean across all modules, no TODO/FIXME/HACK markers, runtime .db files properly gitignored, hard-coded /home/successbrian paths are intentional k11-alpha deployment targets — nothing else qualified.

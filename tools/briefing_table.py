@@ -8,7 +8,7 @@ PURPOSE
     altair_briefing.py (on k11-alpha) pulls pending items at generation time
     and injects them into the DeepSeek prompt as TABLE CONTRIBUTIONS.
 
-WHY this exists
+WHY:
     Before this, each briefing was generated from static context files plus
     live state — anything the ecosystem noticed during the day had no place
     to land. The briefing table gives every component (affiliate checker,

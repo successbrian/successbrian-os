@@ -1,5 +1,12 @@
 """Turn a fleshed-out venture into a goal draft with milestones.
 
+WHY:
+    A fleshed-out venture is a proposal, not a commitment — scoring
+    PROPOSES and Brian DECIDES. The draft is the handoff shape between
+    the two: it turns the profile's first_steps into concrete milestones
+    Spencer can present for approval, while the 'draft' state guarantees
+    nothing becomes a tracked goal until the entrepreneur signs off.
+
 The draft stays 'draft' until Brian (or the entrepreneur) approves it;
 Spencer then creates the real tracked goal from it.
 """

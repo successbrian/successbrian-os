@@ -1,5 +1,11 @@
 """Deterministic scoring rubric for fleshed-out venture ideas.
 
+WHY:
+    Scoring must be deterministic and traceable — per Brian 2026-09-29, no
+    chat model ever decides. A fixed rubric keeps every point attributable
+    to a profile field, so a venture's standing can't drift between runs and
+    any score can be audited after the fact.
+
 Transparent on purpose: every point is traceable to a profile field.
 The score PROPOSES, Brian DECIDES. Bands, not verdicts.
 """

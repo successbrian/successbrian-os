@@ -8,6 +8,14 @@ PURPOSE
     near-duplicates and clusters similar items into single briefing_items
     rows so the Sunday briefing (and Altair) sees groups, not noise.
 
+WHY:
+    Raw intake is noisy by design — every watcher and phone drops rows into
+    intake_items independently, so the same alert re-firing or the same story
+    arriving from two phones would each become a separate briefing item.
+    Brian 2026-09-27 ruled the briefing must see groups, not noise ("refine
+    it not reduce it"). Without this pass, the briefing table fills with
+    repeats and Altair reads the same item five times.
+
 WHAT "REFINE" MEANS (not lossy reduction)
     1. DEDUPE: exact/near duplicates (same alert re-firing, same offer
        re-notified, same story from 2 phones) merge into ONE briefing item.

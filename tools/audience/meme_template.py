@@ -360,10 +360,10 @@ RAM_SCAM = {
     "kicker": "MINI PC MAKERS DON'T WANT YOU DOING THIS MATH",
     "headline": "THE $620 RAM SCAM",
     "cards": [
-        {"tag": "WHAT THEY SELL YOU", "title": "1x 32GB MACO", "price": "$1,099",
+        {"tag": "WHAT THEY SELL YOU", "title": "1x 32GB mini PC", "price": "$1,099",
          "sub": "32GB total • 1 computer", "bar_frac": 2.91/5.01,
          "bar_color": "#ff5a5a", "tint": "#fff4f4"},
-        {"tag": "WHAT I BOUGHT", "title": "2x 24GB MACO", "price": "$958",
+        {"tag": "WHAT I BOUGHT", "title": "2x 24GB mini PC", "price": "$958",
          "sub": "48GB total • 2 computers", "bar_frac": 1.0,
          "bar_color": "#22b573", "tint": "#f0faf5"},
     ],

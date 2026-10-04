@@ -77,18 +77,20 @@ def sql_lit(v):
 
 
 def load_lexicon():
+    # unnest() gives one row per pattern, avoiding psql's TEXT[] output
+    # quoting/escaping (which double-escapes regex backslashes).
     out = kssh_psql(
         "ecosystem_central",
-        "SELECT skill, patterns, brian_level FROM public.skill_lexicon;")
-    lex = []
+        "SELECT skill, unnest(patterns) AS pat, brian_level "
+        "FROM public.skill_lexicon ORDER BY skill;")
+    lex = {}
     for line in out.strip().split("\n"):
         if not line.strip():
             continue
-        skill, patterns, level = line.split("|", 2)
-        # patterns arrives like {\bpython\b,\bpy\b}
-        pats = [p for p in patterns.strip("{}").split(",") if p]
-        lex.append({"skill": skill, "patterns": pats, "level": level})
-    return lex
+        skill, pat, level = line.split("|", 2)
+        lex.setdefault(skill, {"skill": skill, "patterns": [],
+                               "level": level})["patterns"].append(pat)
+    return list(lex.values())
 
 
 def grade_row(text, lex):

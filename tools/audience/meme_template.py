@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""SuccessBrian reusable meme template — 1080x1080 social cards.
+"""SuccessBrian reusable meme template — 1080x1080 social cards (LIGHT edition).
 
 PURPOSE:
     One branded layout for every @successbrian insight meme. Drop in new
     content (headline + chart cards + punchline) and render a fresh card.
-    Brand = SuccessBrian. Photo slot takes a real photo of Brian & Gina
-    together (rounded card); until one is provided a placeholder renders.
+    Brand = SuccessBrian. Light background for readability; headline ALWAYS
+    renders as multi-color gradient with 3D extrusion. Keep it bold and
+    simple — curiosity over complexity. The audience should think
+    "wow, what is Brian telling me here?" and ask questions.
 
 USAGE:
     from meme_template import render_meme
@@ -13,16 +15,16 @@ USAGE:
 
     CONTENT = {
         "kicker": "SMALL CAPS HOOK",
-        "headline": [("THE $620 ", "#ffffff"), ("RAM SCAM", "#ffd23f")],
+        "headline": "THE $620 RAM SCAM",   # gradient+3D applied automatically
+        "grad_colors": ["#4dd8ff", "#2b7fff", "#8b2bff"],  # optional override
         "cards": [
             {"tag": "WHAT THEY SELL YOU", "title": "1x 32GB MACO",
              "price": "$1,099", "sub": "32GB total • 1 computer",
-             "bar_frac": 0.58, "bar_color": "#ff5a5a",
-             "bar_label": "RAM per $100: 2.9 GB"},
+             "bar_frac": 0.58, "bar_color": "#ff5a5a"},
             ...
         ],
         "punchline": "+16GB MORE RAM • A SECOND COMPUTER • $141 LESS",
-        "callouts": ["line one", "line two"],
+        "curiosity": "Curious how I figured this out? Ask me below.",
     }
 
 BRAND defaults below are Brian's; override per user.
@@ -36,9 +38,9 @@ FB = "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf"
 FR = "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
 
 BRAND = {
-    "wordmark": [("SUCCESS", "#ffffff"), ("BRIAN", "#35d0ff")],
+    "wordmark": [("SUCCESS", "#16213a"), ("BRIAN", "#0aa5e0")],
     "tagline": "AI INSIGHTS THAT SAVE YOU REAL MONEY",
-    "accent": "#35d0ff",
+    "accent": "#0aa5e0",
     "handles": [
         ("facebook", "@successbrian"),
         ("instagram", "@successbrian"),
@@ -48,8 +50,12 @@ BRAND = {
     "blog_url": "successbrianhub.substack.com",
 }
 
-YELLOW = "#ffd23f"; CYAN = "#35d0ff"; WHITE = "#ffffff"
-GRAY = "#9aa4b5"; DIM = "#5b6474"
+INK = "#16213a"        # body text on light
+GRAY = "#5b6474"
+FAINT = "#8a93a3"
+YELLOW = "#ffd23f"
+MAROON_BG = "#6e1423"
+MAROON_EDGE = "#c0392b"
 
 
 def font(path, size):
@@ -71,13 +77,13 @@ def icon(kind, size=56):
         t = "f"; tw = d.textlength(t, font=f)
         d.text(((size-tw)/2, size*0.16), t, font=f, fill="white")
     elif kind == "instagram":
-        _rr(d, [pad, pad, size-pad, size-pad], size//4, None, "white", 4)
+        _rr(d, [pad, pad, size-pad, size-pad], size//4, None, "#16213a", 4)
         r = size*0.20
-        d.ellipse([size/2-r, size/2-r, size/2+r, size/2+r], outline="white", width=4)
+        d.ellipse([size/2-r, size/2-r, size/2+r, size/2+r], outline="#16213a", width=4)
         dr = size*0.07; cx, cy = size*0.70, size*0.30
-        d.ellipse([cx-dr, cy-dr, cx+dr, cy+dr], fill="white")
+        d.ellipse([cx-dr, cy-dr, cx+dr, cy+dr], fill="#16213a")
     elif kind == "x":
-        _rr(d, [pad, pad, size-pad, size-pad], size//4, "#000000", "#8a93a3", 3)
+        _rr(d, [pad, pad, size-pad, size-pad], size//4, "#000000", None, 1)
         f = font(FB, int(size*0.55))
         t = "X"; tw = d.textlength(t, font=f)
         d.text(((size-tw)/2, size*0.20), t, font=f, fill="white")
@@ -89,7 +95,6 @@ def icon(kind, size=56):
                                 3, fill="white")
     elif kind == "whatsapp":
         d.ellipse([pad, pad, size-pad, size-pad], fill="#25d366")
-        # chat bubble
         bw, bh = size*0.52, size*0.42
         bx, by = (size-bw)/2, (size-bh)/2 - 2
         _rr(d, [bx, by, bx+bw, by+bh], 10, "white")
@@ -110,20 +115,18 @@ def photo_card(photo_path, size=148):
         except Exception:
             im = None
     if im is not None:
-        # center-crop square then resize
         s = min(im.size)
         im = im.crop(((im.width-s)//2, (im.height-s)//2,
                       (im.width+s)//2, (im.height+s)//2)).resize((size, size), Image.LANCZOS)
         mask = Image.new("L", (size, size), 0)
         ImageDraw.Draw(mask).rounded_rectangle([0, 0, size, size], 28, fill=255)
         card.paste(im, (0, 0), mask)
-        d.rounded_rectangle([0, 0, size, size], 28, outline=(CYAN, 255), width=4)
+        d.rounded_rectangle([0, 0, size, size], 28, outline=(10, 165, 224, 255), width=4)
     else:
-        d.rounded_rectangle([0, 0, size, size], 28, fill=(20, 28, 42, 255),
-                            outline=(90, 100, 120, 255), width=3)
-        # dashed ring
+        d.rounded_rectangle([0, 0, size, size], 28, fill=(232, 237, 245, 255),
+                            outline=(140, 150, 168, 255), width=3)
         for a in range(0, 360, 18):
-            d.arc([8, 8, size-8, size-8], a, a+10, fill=(53, 208, 255, 160), width=3)
+            d.arc([8, 8, size-8, size-8], a, a+10, fill=(10, 165, 224, 200), width=3)
         f = font(FB, 20)
         for i, t in enumerate(["YOUR", "PHOTO", "HERE"]):
             tw = d.textlength(t, font=f)
@@ -131,22 +134,19 @@ def photo_card(photo_path, size=148):
     return card
 
 
-# ---------------- background ----------------
+# ---------------- light background ----------------
 def background():
-    img = Image.new("RGB", (W, H), "#05070d")
-    d = ImageDraw.Draw(img, "RGBA")
+    img = Image.new("RGB", (W, H), "#f4f6fb")
+    d = ImageDraw.Draw(img)
     for y in range(H):
         t = y / H
-        d.line([(0, y), (W, y)],
-               fill=(int(5+8*t), int(7+10*t), int(13+18*t)))
+        # very light cool gradient: #fbfcfe -> #e9eef6
+        r = int(251 - 14*t); g = int(252 - 12*t); b = int(254 - 8*t)
+        d.line([(0, y), (W, y)], fill=(r, g, b))
+    # soft blue glow top
     glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    ImageDraw.Draw(glow).ellipse([W//2-420, -260, W//2+420, 380], fill=(0, 180, 255, 46))
-    img = Image.alpha_composite(img.convert("RGBA"), glow.filter(ImageFilter.GaussianBlur(60))).convert("RGB")
-    d = ImageDraw.Draw(img)
-    for x in range(0, W, 90):
-        d.line([(x, 0), (x, H)], fill=(255, 255, 255, 3))
-    for y in range(0, H, 90):
-        d.line([(0, y), (W, y)], fill=(255, 255, 255, 3))
+    ImageDraw.Draw(glow).ellipse([W//2-460, -280, W//2+460, 360], fill=(120, 190, 255, 60))
+    img = Image.alpha_composite(img.convert("RGBA"), glow.filter(ImageFilter.GaussianBlur(70))).convert("RGB")
     return img
 
 
@@ -159,6 +159,60 @@ def _centered(d, y, text, fnt, fill, tracking=0):
             x += d.textlength(ch, font=fnt) + tracking
         return
     d.text(((W-d.textlength(text, font=fnt))/2, y), text, font=fnt, fill=fill)
+
+
+# ---------------- gradient + 3D headline ----------------
+def _hex(c):
+    c = c.lstrip("#")
+    return tuple(int(c[i:i+2], 16) for i in (0, 2, 4))
+
+
+def headline_3d(base, text, fnt, colors, depth=7):
+    """Multi-color vertical gradient face + 3D extrusion + soft shadow.
+    Returns (layer, (w, h)) sized to the text."""
+    tmp = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    bbox = tmp.textbbox((0, 0), text, font=fnt)
+    tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
+    pad = 24
+    lw, lh = tw + pad*2 + depth + 14, th + pad*2 + depth + 18
+    layer = Image.new("RGBA", (lw, lh), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    ox, oy = pad - bbox[0], pad - bbox[1]
+
+    # soft drop shadow
+    sh = Image.new("RGBA", (lw, lh), (0, 0, 0, 0))
+    ImageDraw.Draw(sh).text((ox+5, oy+9), text, font=fnt, fill=(20, 30, 60, 110))
+    layer = Image.alpha_composite(layer, sh.filter(ImageFilter.GaussianBlur(7)))
+    d = ImageDraw.Draw(layer)
+
+    # 3D extrusion: dark navy block behind, offset down-right
+    for i in range(depth, 0, -1):
+        d.text((ox+i, oy+i), text, font=fnt, fill=(26, 36, 80, 255))
+    # darker edge on the extrusion for depth
+    d.text((ox+depth, oy+depth), text, font=fnt, fill=(16, 22, 54, 255))
+
+    # gradient face
+    n = len(colors)
+    face = Image.new("RGBA", (tw+8, th+8), (0, 0, 0, 0))
+    fd = ImageDraw.Draw(face)
+    mask = Image.new("L", (tw+8, th+8), 0)
+    ImageDraw.Draw(mask).text((4-bbox[0], 4-bbox[1]), text, font=fnt, fill=255)
+    for yy in range(th+8):
+        t = yy / max(1, th+7)
+        seg = t*(n-1); i = int(seg); f = seg-i
+        c1 = _hex(colors[i]); c2 = _hex(colors[min(i+1, n-1)])
+        col = tuple(int(a+(b-a)*f) for a, b in zip(c1, c2))
+        fd.line([(0, yy), (tw+8, yy)], fill=col+(255,))
+    face.putalpha(mask)
+    # subtle top highlight on the face
+    hi = Image.new("RGBA", (tw+8, th+8), (0, 0, 0, 0))
+    ImageDraw.Draw(hi).text((4-bbox[0], 4-bbox[1]), text, font=fnt, fill=(255, 255, 255, 70))
+    himask = mask.point(lambda v: int(v*0.35) if True else v)
+    hi.putalpha(himask)
+    face = Image.alpha_composite(face, hi)
+
+    layer.alpha_composite(face, (ox-4+bbox[0], oy-4+bbox[1]))
+    return layer, (lw, lh)
 
 
 # ---------------- main render ----------------
@@ -178,74 +232,69 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
         wx += d.textlength(word, font=f) + 10
     d.text((x, 104), b["tagline"], font=font(FR, 21), fill=GRAY)
 
-    # content zone
-    _centered(d, 208, content["kicker"], font(FR, 24), CYAN, tracking=3)
-    f_big = font(FB, 84)
-    parts = content["headline"]
-    total = sum(d.textlength(t, font=f_big) for t, _ in parts)
-    x0 = (W-total)/2
-    for t, color in parts:
-        d.text((x0, 248), t, font=f_big, fill=color)
-        x0 += d.textlength(t, font=f_big)
+    # kicker
+    _centered(d, 212, content["kicker"], font(FB, 25), "#0a7fd4", tracking=3)
 
-    # cards
+    # headline: gradient + 3D, always
+    f_big = font(FB, 92)
+    colors = content.get("grad_colors", ["#4dd8ff", "#2b7fff", "#8b2bff"])
+    hl, (lw, lh) = headline_3d(img, content["headline"], f_big, colors)
+    img.paste(hl, ((W-lw)//2, 252), hl)
+    d = ImageDraw.Draw(img)
+
+    # cards (white, soft shadow, simple)
     cards = content["cards"]
     n = len(cards)
     gap, margin = 32, 48
     cw = (W - 2*margin - gap*(n-1)) / n
-    cy0, ch = 400, 296
+    cy0, ch = 470, 250
     for i, c in enumerate(cards):
         x = margin + i*(cw+gap)
-        d.rounded_rectangle([x, cy0, x+cw, cy0+ch], 26,
-                            fill=(13, 18, 30, 255), outline=(70, 80, 100, 255), width=3)
+        # soft shadow
+        d.rounded_rectangle([x+6, cy0+10, x+cw+6, cy0+ch+10], 26, fill=(180, 190, 205, 255))
+        d.rounded_rectangle([x, cy0, x+cw, cy0+ch], 26, fill="white",
+                            outline=(210, 218, 230, 255), width=2)
         cx = x + cw/2
         for txt, fnt, col, yy in [
-            (c["tag"], font(FB, 19), DIM, cy0+22),
-            (c["title"], font(FB, 29), WHITE, cy0+52),
-            (c["price"], font(FB, 68), c["bar_color"], cy0+94),
-            (c["sub"], font(FR, 21), GRAY, cy0+178),
+            (c["tag"], font(FB, 19), FAINT, cy0+24),
+            (c["title"], font(FB, 30), INK, cy0+54),
+            (c["price"], font(FB, 66), c["bar_color"], cy0+96),
         ]:
             tw = d.textlength(txt, font=fnt)
             d.text((cx-tw/2, yy), txt, font=fnt, fill=col)
-        bx, bw, bh, by = x+36, cw-72, 24, cy0+222
-        d.rounded_rectangle([bx, by, bx+bw, by+bh], 12, fill=(30, 38, 54, 255))
+        t = c["sub"]; tw = d.textlength(t, font=font(FR, 22))
+        d.text((cx-tw/2, cy0+178), t, font=font(FR, 22), fill=GRAY)
+        bx, bw, bh, by = x+36, cw-72, 24, cy0+212
+        d.rounded_rectangle([bx, by, bx+bw, by+bh], 12, fill=(232, 237, 245, 255))
         d.rounded_rectangle([bx, by, bx+bw*c["bar_frac"], by+bh], 12, fill=c["bar_color"])
-        t = c["bar_label"]; tw = d.textlength(t, font=font(FR, 18))
-        d.text((cx-tw/2, by+bh+8), t, font=font(FR, 18), fill=GRAY)
 
-    # punchline
-    py0, py1 = 724, 806
-    d.rounded_rectangle([48, py0, W-48, py1], 18, fill=(64, 14, 18, 255),
-                        outline=(255, 90, 90, 255), width=2)
+    # punchline strip (maroon — Brian's favorite)
+    py0, py1 = 748, 830
+    d.rounded_rectangle([48, py0, W-48, py1], 18, fill=MAROON_BG,
+                        outline=MAROON_EDGE, width=2)
     _centered(d, py0+22, content["punchline"], font(FB, 29), YELLOW)
 
-    # callouts
-    y = 828
-    for line in content.get("callouts", []):
-        _centered(d, y, line, font(FR, 23), WHITE if y == 828 else GRAY)
-        y += 34
+    # curiosity line (replaces technical callouts)
+    if content.get("curiosity"):
+        _centered(d, 852, content["curiosity"], font(FB, 26), INK)
 
     # footer
-    d.line([(48, 904), (W-48, 904)], fill=(40, 48, 64, 255), width=2)
-    # social row
-    items = []
-    for kind, handle in b["handles"]:
-        items.append((icon(kind, 42), handle))
+    d.line([(48, 916), (W-48, 916)], fill=(200, 208, 220, 255), width=2)
+    items = [(icon(kind, 42), handle) for kind, handle in b["handles"]]
     widths = [42 + 12 + d.textlength(h, font=font(FR, 20)) for _, h in items]
     total_w = sum(widths) + 40*(len(items)-1)
-    x = (W-total_w)/2; y_ic = 918
+    x = (W-total_w)/2; y_ic = 930
     for (ic, handle), wdt in zip(items, widths):
         img.paste(ic, (int(x), y_ic), ic)
-        d.text((x+42+12, y_ic+7), handle, font=font(FR, 20), fill=WHITE)
+        d.text((x+42+12, y_ic+7), handle, font=font(FR, 20), fill=INK)
         x += wdt + 40
-    # blog row — larger, with blog icon
     bic = icon("blog", 46)
     url = b["blog_url"]
     f_blog = font(FB, 30)
     tw = d.textlength(url, font=f_blog)
     bx = (W - (46 + 14 + tw))/2
-    img.paste(bic, (int(bx), 972), bic)
-    d.text((bx+46+14, 974), url, font=f_blog, fill=WHITE)
+    img.paste(bic, (int(bx), 978), bic)
+    d.text((bx+46+14, 980), url, font=f_blog, fill=INK)
 
     img.save(out_path)
     return out_path
@@ -254,18 +303,17 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
 # ---------------- demo: the RAM SCAM card ----------------
 RAM_SCAM = {
     "kicker": "MINI PC MAKERS DON'T WANT YOU DOING THIS MATH",
-    "headline": [("THE $620 ", "#ffffff"), ("RAM SCAM", "#ffd23f")],
+    "headline": "THE $620 RAM SCAM",
     "cards": [
         {"tag": "WHAT THEY SELL YOU", "title": "1x 32GB MACO", "price": "$1,099",
          "sub": "32GB total • 1 computer", "bar_frac": 2.91/5.01,
-         "bar_color": "#ff5a5a", "bar_label": "RAM per $100: 2.9 GB"},
+         "bar_color": "#ff5a5a"},
         {"tag": "WHAT I BOUGHT", "title": "2x 24GB MACO", "price": "$958",
          "sub": "48GB total • 2 computers", "bar_frac": 1.0,
-         "bar_color": "#3ddc84", "bar_label": "RAM per $100: 5.0 GB"},
+         "bar_color": "#22b573"},
     ],
     "punchline": "+16GB MORE RAM • A SECOND COMPUTER • $141 LESS",
-    "callouts": ["They charge $77.50/GB for soldered RAM. Real cost ~ $5/GB.",
-                 "That's a 15x markup on a part you can never upgrade."],
+    "curiosity": "Curious how I figured this out? Ask me below.",
 }
 
 if __name__ == "__main__":

@@ -369,7 +369,13 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
         db.rounded_rectangle([0, 0, bs, bh], 18, fill="white",
                              outline=(210, 218, 230, 255), width=2)
         badge.paste(q, ((bs-116)//2, 10), q)
-        t = "SCAN FOR FULL STORY"; f = font(FB, 14)
+        t = "SCAN FOR FULL STORY"
+        fs = 14
+        while fs > 8:
+            f = font(FB, fs)
+            if db.textlength(t, font=f) <= bs-16:
+                break
+            fs -= 1
         tw = db.textlength(t, font=f)
         db.text(((bs-tw)/2, 134), t, font=f, fill=INK)
         img.paste(badge, (W-bs-28, 36), badge)

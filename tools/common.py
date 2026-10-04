@@ -49,9 +49,13 @@ def git_push(repo: Path, message: str, paths: list[str]) -> bool:
     a failed push is LOUD — a lost inbox push is a lost briefing.
     """
     try:
-        for step in ([["git", "add", *paths]],
-                     [["git", "commit", "-m", message]],
-                     [["git", "push"]]):
+        # NOTE (2026-10-04): steps are flat arg lists — an extra nesting
+        # level (e.g. [["git", "add", *paths]]) makes subprocess.run raise
+        # "expected str, bytes or os.PathLike object, not list" and silently
+        # kills every inbox push. Keep this tuple flat.
+        for step in (["git", "add", *paths],
+                     ["git", "commit", "-m", message],
+                     ["git", "push"]):
             r = subprocess.run(step, cwd=repo, capture_output=True,
                                text=True, timeout=90)
             if r.returncode != 0:

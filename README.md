@@ -95,3 +95,9 @@ Under active daily development by its founder, who runs a real
 multi-stream business on it. Expect velocity over polish: the test suite is
 thin, the docs are growing, and Tier 3 modules still carry the fingerprints
 of one person's infrastructure. What's here is real, used, and compounding.
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE). Use it, fork it, build on it, sell
+what you build. The only things you can't take are the founder's name,
+trademarks, and private data (which was never in the repo to begin with).

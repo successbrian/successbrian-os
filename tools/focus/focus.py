@@ -138,7 +138,12 @@ def evaluate_candidate(cand, active_streams, user_audiences=None, limit=None):
         track("recurring_income", comp.get("payout_structure"))
         momentum = max(0, min(2, int(_val(veh.get("momentum"), 0) or 0)))
         track("momentum", veh.get("momentum"))
-        risk = max(0, min(2, int(_val(mkt.get("perception_risk"), 0) or 0)))
+        # perception_risk 0-2: the PRIDE test, not a smell test.
+        # 0 = product-first: you'd recommend it even with zero comp attached.
+        # 1 = needs context: solid, but the story needs telling (default when unknown).
+        # 2 = opportunity-only: the pitch only works as income, no standalone
+        #     product value for followers.
+        risk = max(0, min(2, int(_val(mkt.get("perception_risk"), 1) or 0)))
         track("perception_risk", mkt.get("perception_risk"))
         attention = max(0, min(2, int(_val(fit.get("attention_cost"), 1) or 0)))
         track("attention_cost", fit.get("attention_cost"), load_bearing=False)
@@ -202,10 +207,13 @@ def evaluate_candidate(cand, active_streams, user_audiences=None, limit=None):
         flags.append(f"over-limit: {active_count} active streams (limit {limit}) — "
                      "new candidates taxed until something exits")
 
-    # 5. Perception (0-15): the cold-audience smell test.
+    # 5. Perception (0-15): the pride test. The user chose MLM; this axis does
+    # not judge that choice. It asks: can you promote this for the product
+    # alone, with pride, to your own followers?
     bd["perception"] = max(0, 15 - risk * 7)
     if risk >= 2:
-        flags.append("perception-fail: would not survive a cold audience's smell test")
+        flags.append("opportunity-only: the pitch only works as income — "
+                     "no standalone product value for followers")
 
     # 6. Audience fit (0-15): does it match audiences you can actually reach?
     user_auds = [a.lower() for a in (user_audiences or [])]
@@ -323,7 +331,7 @@ def main():
     e.add_argument("--overlaps", type=int, default=0)
     e.add_argument("--recurring", action="store_true")
     e.add_argument("--momentum", type=int, default=0, choices=[0, 1, 2])
-    e.add_argument("--perception-risk", type=int, default=0, choices=[0, 1, 2])
+    e.add_argument("--perception-risk", type=int, default=1, choices=[0, 1, 2])
     e.add_argument("--attention-cost", type=int, default=1, choices=[0, 1, 2])
     e.add_argument("--focus-limit", type=int, default=None)
     e.set_defaults(func=cmd_evaluate)

@@ -16,7 +16,8 @@ ever decides anything in this repo.
   draft. Fixed rubric, bands not verdicts, every point traceable to a field.
 - `tools/focus/` — the focus coach. `evaluate` scores any new opportunity
   (MLM, affiliate program, product, side stream) on life value, ecosystem fit,
-  future fit, focus load, and the cold-audience perception test. `review` is
+  future fit, focus load, and the pride test (can you promote it for the
+  product alone, to your own followers?). `review` is
   the regular grounding pass: every active pursuit reduced to facts — what
   earns, what is promoted, what is tested, what is attention rent.
 

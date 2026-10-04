@@ -116,7 +116,7 @@ def blank_candidate(name):
         "market": {
             "target_audiences": field([]),
             "sentiment": field(),
-            "perception_risk": field(),  # 0 clean, 1 needs explaining, 2 fails the smell test
+            "perception_risk": field(),  # 0 product-first (proud to promote), 1 needs context, 2 opportunity-only pitch
             "perception_notes": field(),
         },
         "founder_fit": {

@@ -1,0 +1,136 @@
+{
+  "_note": "FICTIONAL EXAMPLE \u2014 template only. Real candidates live in this directory (gitignored).",
+  "comp_plan": {
+    "autoship_monthly_usd": {
+      "source": "",
+      "value": null,
+      "verified": false
+    },
+    "autoship_required": {
+      "source": "comp plan PDF",
+      "value": true,
+      "verified": true
+    },
+    "gotchas": {
+      "source": "comp plan PDF",
+      "value": [
+        {
+          "pattern": "autoship-required-to-earn",
+          "severity": "severe",
+          "source": "comp plan PDF, section 4"
+        }
+      ],
+      "verified": true
+    },
+    "payout_structure": {
+      "source": "comp plan PDF",
+      "value": "unilevel, 7 levels",
+      "verified": true
+    },
+    "startup_cost_usd": {
+      "source": "enrollment page",
+      "value": 49,
+      "verified": true
+    }
+  },
+  "founder_fit": {
+    "attention_cost": {
+      "source": "founder",
+      "value": 1,
+      "verified": true
+    },
+    "personal_benefit": {
+      "source": "founder",
+      "value": 1,
+      "verified": true
+    },
+    "personally_tested": {
+      "source": "founder",
+      "value": false,
+      "verified": true
+    }
+  },
+  "identity": {
+    "lane": {
+      "source": "founder",
+      "value": "example lane",
+      "verified": true
+    },
+    "name": {
+      "source": "founder",
+      "value": "ExampleCo",
+      "verified": true
+    },
+    "website": {
+      "source": "founder",
+      "value": "https://example.com",
+      "verified": true
+    },
+    "competing_lanes": {
+      "value": [
+        "example lane"
+      ],
+      "verified": true,
+      "source": "founder"
+    }
+  },
+  "market": {
+    "perception_notes": {
+      "source": "",
+      "value": null,
+      "verified": false
+    },
+    "perception_risk": {
+      "source": "trade press",
+      "value": 1,
+      "verified": true
+    },
+    "sentiment": {
+      "source": "",
+      "value": null,
+      "verified": false
+    },
+    "target_audiences": {
+      "source": "example.com",
+      "value": [
+        "busy parents",
+        "remote workers"
+      ],
+      "verified": true
+    }
+  },
+  "name": "ExampleCo",
+  "offer": {
+    "prices": {
+      "source": "example.com/shop",
+      "value": "$49-89/mo",
+      "verified": true
+    },
+    "products": {
+      "source": "example.com/shop",
+      "value": [
+        "Example Widget",
+        "Example Refill"
+      ],
+      "verified": true
+    }
+  },
+  "updated": "2026-10-04",
+  "vehicle": {
+    "momentum": {
+      "source": "trade press, 2026",
+      "value": 1,
+      "verified": true
+    },
+    "momentum_source": {
+      "source": "trade press, 2026",
+      "value": "stable, no growth signals",
+      "verified": true
+    },
+    "regulatory_flags": {
+      "source": "",
+      "value": [],
+      "verified": false
+    }
+  }
+}

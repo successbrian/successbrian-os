@@ -22,3 +22,6 @@ __pycache__/
 tools/ventures/user_streams.json
 
 tools/focus/user_focus.json
+
+tools/focus/candidates/*
+!tools/focus/candidates/example.json

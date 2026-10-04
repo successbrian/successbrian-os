@@ -1,0 +1,47 @@
+# Launch/affiliate senders whose mail carries launch intel.
+#
+# WHY THIS FILE EXISTS:
+#   Brian's inbox already receives direct vendor launch announcements,
+#   launch-webinar invites, and review-site promos. The dates and vendor
+#   names in that mail are intel the affiliate pipeline can cross-check
+#   against MunchEye — but it was all filed under "launch-hype, ignore".
+#   tools/email_launch_parse.py scans recent mail from these senders and
+#   records launch candidates into affiliate_intel.launches (source email).
+#
+# DERIVED FROM: full scan of Brian's Outlook archive, 49,101 messages,
+# 2026-10-04. Counts are launch/affiliate-keyword hits per sender domain.
+# Add a sender here when a new recurring vendor list shows up; the parser
+# needs no code change.
+#
+# kind: vendor  = the From address IS the vendor (announcements, promos)
+# kind: infra   = webinar/webinar-kit infra — the real vendor is in the
+#                 subject/body, never the From (parser extracts from subject)
+
+senders:
+  - domain: gotowebinar.com
+    note: launch webinar invites (248 hits)
+    kind: infra
+  - domain: zoom.us
+    note: launch webinar invites (37 hits)
+    kind: infra
+  - domain: getwebinarkit.com
+    note: webinar registration pages (20 hits)
+    kind: infra
+  - domain: imreviewandbonus.com
+    note: Reed Floren — launch review + bonus site (84 hits)
+    kind: vendor
+  - domain: jvzoo.com
+    note: JVZoo affiliate notifications (40 hits)
+    kind: vendor
+  - domain: toddgross.in
+    note: Todd Gross's own list (39 hits)
+    kind: vendor
+  - domain: chadnicely.com
+    note: vendor announcements (27 hits)
+    kind: vendor
+  - domain: saurabhbhatnagar.com
+    note: FlexiFunnels vendor (16 hits)
+    kind: vendor
+  - domain: abhineos.com
+    note: vendor announcements (15 hits)
+    kind: vendor

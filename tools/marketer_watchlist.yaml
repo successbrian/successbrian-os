@@ -1,4 +1,4 @@
-# Marketer watchlist — YouTube channels Brian follows.
+# Marketer watchlist — YouTube channels and blogs Brian follows.
 #
 # WHY THIS FILE EXISTS:
 #   Brian follows affiliate marketers to keep up with launches and tactics, but
@@ -23,9 +23,16 @@
 # The watcher polls the channel /videos page HTML instead. youtube_rss_url is
 # kept in the schema (null) in case the endpoint ever comes back.
 #
-# EXTENDING LATER: blogs/newsletters get their own keys here later
-# (e.g. blog_feed_url, newsletter_source) with matching pollers in
-# marketer_watch.py. YouTube is the v1 source.
+# BLOG WATCHER (2026-10-04): a watcher may also carry blog_url/blog_rss keys.
+# WordPress /feed/ RSS is preferred over HTML scraping. New posts are logged
+# to the second brain exactly like videos (dedupe by URL in seen_posts) and
+# feed the same --offers aggregation. A watcher can have both a YouTube
+# channel and a blog (Tim Verdouw does).
+#
+# ADDING A BLOG: verify the feed URL returns RSS/Atom (curl it), add
+# blog_url + blog_rss to the watcher's entry, then:
+#   python3 tools/marketer_watch.py --check --dry-run
+# First-ever --check baselines posts silently, same as videos.
 
 # Videos whose titles match any keyword (case-insensitive) get their transcript
 # pulled via the youtube-content skill on k11 for a deeper summary by the
@@ -46,7 +53,10 @@ watchers:
     youtube_channel_id: UC1CUuE0DMkL_4OyFausPbpg
     youtube_channel_url: https://www.youtube.com/channel/UC1CUuE0DMkL_4OyFausPbpg
     youtube_rss_url: null
+    blog_url: https://timverdouw.com
+    blog_rss: https://timverdouw.com/feed/
     added: 2026-09-28
+    blog_added: 2026-10-04
 
   - name: Todd Gross
     slug: todd-gross
@@ -63,4 +73,6 @@ watchers:
 #     youtube_channel_id: UCxxxxxxxxxxxxxxxxxxxxxx
 #     youtube_channel_url: https://www.youtube.com/@janehandle
 #     youtube_rss_url: null
+#     blog_url: https://janemarketer.com        # optional
+#     blog_rss: https://janemarketer.com/feed/  # optional
 #     added: YYYY-MM-DD

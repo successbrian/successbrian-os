@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-YouTube watcher for affiliate marketers Brian follows.
+YouTube + blog watcher for affiliate marketers Brian follows.
 
 WHY:
     Brian follows marketers (Tim Verdouw, Todd Gross, ...) to track affiliate
@@ -11,10 +11,16 @@ WHY:
     observation (title + date + URL + title-based summary — no hype, no
     recommendations). Brian reads the digest instead of the firehose. If this
     is removed, marketer intel either stops or has to be gathered by hand.
+    Per Brian 2026-10-04 the watcher also polls marketers' blogs (Tim
+    Verdouw's timverdouw.com launch reviews, via RSS): review posts carry
+    funnel/OTO/bonus detail the videos don't. Posts flow through the same
+    pipeline — second-brain log, seen-db dedupe, offer tagging, --offers
+    aggregation — as videos.
 
 CALLED BY:
-    Humans (`--check`, `--list`, `--add`, `--baseline`), future cron (cadence
-    TBD by Brian as of 2026-09-28). Reads tools/marketer_watchlist.yaml.
+    cron marketer-watch-poll (Mon/Thu ~6:42 AM America/Chicago, per Brian
+    2026-10-04), humans (`--list`, `--add`, `--baseline`). Reads
+    tools/marketer_watchlist.yaml.
 
 NOTES:
     - YouTube's public RSS feeds (feeds/videos.xml) returned 404 for valid
@@ -68,6 +74,14 @@ NOTES:
       nothing (strategy talk, interviews), pass no --offer — the record
       says "Promoted offer: none identifiable." Never guess a price or
       date that isn't in the transcript/title.
+    - BLOG WATCHER (2026-10-04): a watcher may carry blog_url/blog_rss keys
+      (WordPress RSS preferred over HTML scraping — YouTube's RSS is dead
+      but blog RSS is alive and well). Posts dedupe by URL in seen_posts;
+      --enrich-summary/--set-offer accept a post URL as the id; --offers
+      unions seen_videos + seen_posts. ENRICH_CANDIDATE lines for posts
+      carry the post URL — the driver reads the post text (no transcript
+      exists) before summarizing. First-ever --check baselines blog posts
+      silently, same as videos.
 """
 
 import argparse
@@ -78,6 +92,7 @@ import sqlite3
 import subprocess
 import sys
 import urllib.request
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -126,7 +141,8 @@ def load_config(path=WATCHLIST):
             k, v = s.split(":", 1)
             v = v.strip()
             cur[k.strip()] = None if v in ("null", "~", "") else v
-    return ([w for w in watchers if w.get("youtube_channel_id")],
+    return ([w for w in watchers
+             if w.get("youtube_channel_id") or w.get("blog_rss")],
             enrich_keywords)
 
 
@@ -186,6 +202,61 @@ def fetch_channel_videos(channel_id, timeout=30):
     return videos
 
 
+def _strip_html(s):
+    text = re.sub(r"<[^>]+>", " ", s or "")
+    return htmlmod.unescape(re.sub(r"\s+", " ", text)).strip()
+
+
+ATOM_NS = "{http://www.w3.org/2005/Atom}"
+
+
+def fetch_blog_posts(rss_url, timeout=30):
+    """Return [{post_url, title, published, summary}] newest first from RSS.
+
+    Handles RSS 2.0 and Atom. Raises on fetch/parse failure (loud, never
+    silent) so the driver knows the poll didn't happen.
+    """
+    xml_text = fetch_url(rss_url, timeout=timeout)
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as e:
+        raise RuntimeError(f"RSS parse failed for {rss_url}: {e}")
+    posts = []
+    for it in root.findall(".//item"):
+        title = (it.findtext("title") or "(untitled)").strip()
+        link = (it.findtext("link") or "").strip()
+        pub = (it.findtext("pubDate") or "").strip()
+        desc = it.findtext("description") or ""
+        posts.append({
+            "post_url": link,
+            "title": htmlmod.unescape(title),
+            "published": pub,
+            "summary": _strip_html(desc)[:400],
+        })
+    for it in root.findall(f".//{ATOM_NS}entry"):
+        title_el = it.find(f"{ATOM_NS}title")
+        title = title_el.text.strip() if title_el is not None and title_el.text else "(untitled)"
+        link = ""
+        for l in it.findall(f"{ATOM_NS}link"):
+            if l.get("rel", "alternate") == "alternate":
+                link = l.get("href", "")
+                break
+        pub_el = it.find(f"{ATOM_NS}updated")
+        pub = pub_el.text.strip() if pub_el is not None and pub_el.text else ""
+        sum_el = it.find(f"{ATOM_NS}summary")
+        posts.append({
+            "post_url": link,
+            "title": htmlmod.unescape(title),
+            "published": pub,
+            "summary": _strip_html(sum_el.text if sum_el is not None else "")[:400],
+        })
+    posts = [p for p in posts if p["post_url"]]
+    if not posts:
+        raise RuntimeError(f"no posts parsed from {rss_url} "
+                           "(feed format may have changed)")
+    return posts
+
+
 # ---------------------------------------------------------------- seen db
 
 def db():
@@ -198,6 +269,16 @@ def db():
         published_hint TEXT,
         first_seen_at TEXT NOT NULL,
         logged INTEGER NOT NULL DEFAULT 0
+    )""")
+    con.execute("""CREATE TABLE IF NOT EXISTS seen_posts (
+        post_url TEXT PRIMARY KEY,
+        slug TEXT NOT NULL,
+        title TEXT,
+        published TEXT,
+        first_seen_at TEXT NOT NULL,
+        logged INTEGER NOT NULL DEFAULT 0,
+        offer TEXT,
+        offer_slug TEXT
     )""")
     _ensure_offer_cols(con)
     return con
@@ -238,6 +319,23 @@ def mark_seen(con, slug, channel_id, videos, logged):
     con.commit()
 
 
+def seen_post_urls(con, slug):
+    return {r[0] for r in
+            con.execute("SELECT post_url FROM seen_posts WHERE slug=?", (slug,))}
+
+
+def mark_posts_seen(con, slug, posts, logged):
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    for p in posts:
+        con.execute(
+            """INSERT OR IGNORE INTO seen_posts
+               (post_url, slug, title, published, first_seen_at, logged)
+               VALUES (?,?,?,?,?,?)""",
+            (p["post_url"], slug, p["title"][:200], p["published"], now,
+             1 if logged else 0))
+    con.commit()
+
+
 # ---------------------------------------------------------------- logging
 
 def build_entry(marketer_name, slug, video):
@@ -254,6 +352,30 @@ def build_entry(marketer_name, slug, video):
         "Video description not retrievable (YouTube blocks automated "
         "fetches); summary is title-based only, no detail invented."
     )
+    return topic, "\n".join(lines)
+
+
+def build_post_entry(marketer_name, slug, post):
+    """Second-brain entry for a new blog post. Excerpt-based, never invented."""
+    topic = f"{marketer_name} blogged: {post['title'][:120]}"
+    lines = [
+        post["post_url"],
+        f"Published: {post['published'] or 'date unknown'} "
+        f"(as seen {datetime.now(timezone.utc).date().isoformat()}).",
+    ]
+    title_clean = post["title"].strip().rstrip(".")
+    if post["summary"]:
+        lines.append(
+            f"Summary: {marketer_name} published a blog post titled "
+            f"\"{title_clean}\" — feed excerpt: {post['summary'][:300]} "
+            "Excerpt-based only; full post not read, no detail invented."
+        )
+    else:
+        lines.append(
+            f"Summary: {marketer_name} published a blog post titled "
+            f"\"{title_clean}\". Title-based only; excerpt not available, "
+            "no detail invented."
+        )
     return topic, "\n".join(lines)
 
 
@@ -309,11 +431,12 @@ def fetch_transcript(video_id, timeout=90):
     return out_path
 
 
-def cmd_enrich_summary(video_id, summary_file, offer=None):
-    """Record an agent-written deep-dive summary for an enriched video.
+def cmd_enrich_summary(item_id, summary_file, offer=None):
+    """Record an agent-written deep-dive summary for an enriched item.
 
-    offer: optional display string like "UnfoldVideo ($27 launch, Sep 5
-    2026)" identified by the driver from the transcript/title/description.
+    item_id is a YouTube video_id OR a blog post URL (both live in the seen
+    db). offer: optional display string like "UnfoldVideo ($27 launch, Sep 5
+    2026)" identified by the driver from the transcript/post/title.
     Stored in the seen db and recorded on the second-brain record as a
     `Promoted offer:` line plus an `offer:<slug>` tag. None (default) means
     no identifiable offer — recorded explicitly as such, never guessed.
@@ -321,13 +444,25 @@ def cmd_enrich_summary(video_id, summary_file, offer=None):
     con = db()
     row = con.execute(
         "SELECT slug, title FROM seen_videos WHERE video_id=?",
-        (video_id,)).fetchone()
-    if not row:
-        con.close()
-        print(f"error: unknown video_id {video_id} (not in seen db)",
-              file=sys.stderr)
-        return 2
-    slug, title = row
+        (item_id,)).fetchone()
+    if row:
+        slug, title = row
+        table, idcol = "seen_videos", "video_id"
+        url = f"https://www.youtube.com/watch?v={item_id}"
+        src_note = ("transcript pulled via the youtube-content skill "
+                    "on k11-alpha")
+    else:
+        prow = con.execute(
+            "SELECT slug, title, post_url FROM seen_posts WHERE post_url=?",
+            (item_id,)).fetchone()
+        if not prow:
+            con.close()
+            print(f"error: unknown id {item_id} (not in seen db)",
+                  file=sys.stderr)
+            return 2
+        slug, title, url = prow
+        table, idcol = "seen_posts", "post_url"
+        src_note = "post text read by the driver (no transcript exists)"
     oslug = offer_slug(offer) if offer else None
     watchers = {w["slug"]: w for w in load_watchlist()}
     name = watchers.get(slug, {}).get("name", slug)
@@ -340,16 +475,15 @@ def cmd_enrich_summary(video_id, summary_file, offer=None):
     topic = f"{name}: {title[:100]} — deep dive"
     offer_line = (f"Promoted offer: {offer}" if offer
                   else "Promoted offer: none identifiable from "
-                       "transcript/title/description.")
-    content = (f"https://www.youtube.com/watch?v={video_id}\n"
+                       "transcript/post/title.")
+    content = (f"{url}\n"
                f"{offer_line}\n"
-               f"Transcript-based summary (transcript pulled via the "
-               f"youtube-content skill on k11-alpha):\n{summary}")
+               f"Source-based summary ({src_note}):\n{summary}")
     tags = f"marketer-watch,{slug},enriched"
     if oslug:
         tags += f",offer:{oslug}"
-        con.execute("UPDATE seen_videos SET offer=?, offer_slug=? "
-                    "WHERE video_id=?", (offer, oslug, video_id))
+        con.execute(f"UPDATE {table} SET offer=?, offer_slug=? "
+                    f"WHERE {idcol}=?", (offer, oslug, item_id))
         con.commit()
     con.close()
     cmd = [sys.executable, SECOND_BRAIN,
@@ -367,29 +501,37 @@ def cmd_enrich_summary(video_id, summary_file, offer=None):
     return 0
 
 
-def cmd_set_offer(video_id, offer):
-    """Backfill/attach an offer to an already-seen video (no second-brain
-    re-log — the enriched record already exists; this feeds --offers only)."""
+def cmd_set_offer(item_id, offer):
+    """Backfill/attach an offer to an already-seen video or blog post
+    (no second-brain re-log — the enriched record already exists; this
+    feeds --offers only). item_id is a video_id or a post URL."""
     con = db()
     row = con.execute(
-        "SELECT slug, title, offer FROM seen_videos WHERE video_id=?",
-        (video_id,)).fetchone()
-    if not row:
-        con.close()
-        print(f"error: unknown video_id {video_id} (not in seen db)",
-              file=sys.stderr)
-        return 2
+        "SELECT 1 FROM seen_videos WHERE video_id=?",
+        (item_id,)).fetchone()
+    if row:
+        table, idcol = "seen_videos", "video_id"
+    else:
+        prow = con.execute(
+            "SELECT 1 FROM seen_posts WHERE post_url=?",
+            (item_id,)).fetchone()
+        if not prow:
+            con.close()
+            print(f"error: unknown id {item_id} (not in seen db)",
+                  file=sys.stderr)
+            return 2
+        table, idcol = "seen_posts", "post_url"
     oslug = offer_slug(offer)
     if not oslug:
         con.close()
         print("error: could not derive an offer slug from that string",
               file=sys.stderr)
         return 2
-    con.execute("UPDATE seen_videos SET offer=?, offer_slug=? WHERE video_id=?",
-                (offer, oslug, video_id))
+    con.execute(f"UPDATE {table} SET offer=?, offer_slug=? WHERE {idcol}=?",
+                (offer, oslug, item_id))
     con.commit()
     con.close()
-    print(f"offer set on {video_id}: {offer} (tag offer:{oslug})")
+    print(f"offer set on {item_id}: {offer} (tag offer:{oslug})")
     return 0
 
 
@@ -405,10 +547,14 @@ def cmd_offers(days=30):
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(
         timespec="seconds")
     rows = con.execute(
-        """SELECT offer, offer_slug, slug, title, video_id, first_seen_at
+        """SELECT offer, offer_slug, slug, title, video_id AS item, first_seen_at
            FROM seen_videos
            WHERE offer_slug IS NOT NULL AND first_seen_at >= ?
-           ORDER BY first_seen_at""", (cutoff,)).fetchall()
+           UNION ALL
+           SELECT offer, offer_slug, slug, title, post_url AS item, first_seen_at
+           FROM seen_posts
+           WHERE offer_slug IS NOT NULL AND first_seen_at >= ?
+           ORDER BY first_seen_at""", (cutoff, cutoff)).fetchall()
     con.close()
     watchers = {w["slug"]: w.get("name", w["slug"]) for w in load_watchlist()}
 
@@ -456,7 +602,106 @@ def cmd_offers(days=30):
 
 def cmd_list():
     for w in load_watchlist():
-        print(f"{w['slug']:15} {w['name']:20} {w['youtube_channel_id']}")
+        kinds = []
+        if w.get("youtube_channel_id"):
+            kinds.append("youtube")
+        if w.get("blog_rss"):
+            kinds.append("blog")
+        ident = w.get("youtube_channel_id") or w.get("blog_rss") or ""
+        print(f"{w['slug']:15} {w['name']:20} {'+'.join(kinds):12} {ident}")
+
+
+def _check_youtube(con, w, dry_run, baseline, enrich_keywords):
+    """Poll one watcher's YouTube channel. Returns (logged_count, failures)."""
+    slug, name, cid = w["slug"], w["name"], w["youtube_channel_id"]
+    try:
+        videos = fetch_channel_videos(cid)
+    except Exception as e:  # loud, continue with others
+        print(f"[{slug}] FETCH FAILED: {e}", file=sys.stderr)
+        return 0, [slug]
+    known = seen_ids(con, slug)
+    new = [v for v in videos if v["video_id"] not in known]
+    if baseline or not known:
+        if dry_run:
+            print(f"[{slug}] would baseline {len(videos)} videos "
+                  f"({len(new)} new) — nothing logged")
+        else:
+            mark_seen(con, slug, cid, videos, logged=False)
+            print(f"[{slug}] baseline: marked {len(videos)} videos seen "
+                  f"({len(new)} new) — nothing logged")
+        return 0, []
+    if dry_run:
+        print(f"[{slug}] would log {len(new)} new video(s):")
+        for v in new:
+            print(f"    - {v['published_hint'] or '?':>10} | {v['title'][:70]}")
+        return 0, []
+    logged = 0
+    for v in new:
+        topic, content = build_entry(name, slug, v)
+        try:
+            log_to_second_brain(topic, content, slug)
+        except Exception as e:
+            print(f"[{slug}] LOG FAILED for {v['video_id']}: {e}",
+                  file=sys.stderr)
+            return logged, [slug]
+        mark_seen(con, slug, cid, [v], logged=True)
+        logged += 1
+        print(f"[{slug}] logged: {v['title'][:70]}")
+        hits = is_enrich_candidate(v["title"], enrich_keywords)
+        if hits:
+            tpath = fetch_transcript(v["video_id"])
+            if tpath:
+                print(f"ENRICH_CANDIDATE {v['video_id']} "
+                      f"keywords={','.join(hits)} transcript={tpath}")
+    if not new:
+        print(f"[{slug}] no new videos")
+    return logged, []
+
+
+def _check_blog(con, w, dry_run, baseline, enrich_keywords):
+    """Poll one watcher's blog RSS feed. Returns (logged_count, failures)."""
+    slug, name, rss = w["slug"], w["name"], w["blog_rss"]
+    try:
+        posts = fetch_blog_posts(rss)
+    except Exception as e:  # loud, continue with others
+        print(f"[{slug}:blog] FETCH FAILED: {e}", file=sys.stderr)
+        return 0, [f"{slug}:blog"]
+    known = seen_post_urls(con, slug)
+    new = [p for p in posts if p["post_url"] not in known]
+    if baseline or not known:
+        if dry_run:
+            print(f"[{slug}:blog] would baseline {len(posts)} posts "
+                  f"({len(new)} new) — nothing logged")
+        else:
+            mark_posts_seen(con, slug, posts, logged=False)
+            print(f"[{slug}:blog] baseline: marked {len(posts)} posts seen "
+                  f"({len(new)} new) — nothing logged")
+        return 0, []
+    if dry_run:
+        print(f"[{slug}:blog] would log {len(new)} new post(s):")
+        for p in new:
+            print(f"    - {p['published'][:16] or '?':>16} | {p['title'][:70]}")
+        return 0, []
+    logged = 0
+    for p in new:
+        topic, content = build_post_entry(name, slug, p)
+        try:
+            log_to_second_brain(topic, content, f"{slug},blog")
+        except Exception as e:
+            print(f"[{slug}:blog] LOG FAILED for {p['post_url']}: {e}",
+                  file=sys.stderr)
+            return logged, [f"{slug}:blog"]
+        mark_posts_seen(con, slug, [p], logged=True)
+        logged += 1
+        print(f"[{slug}:blog] logged: {p['title'][:70]}")
+        hits = is_enrich_candidate(p["title"], enrich_keywords)
+        if hits:
+            # No transcript for posts — the driver reads the post text.
+            print(f"ENRICH_CANDIDATE {p['post_url']} "
+                  f"keywords={','.join(hits)}")
+    if not new:
+        print(f"[{slug}:blog] no new posts")
+    return logged, []
 
 
 def cmd_check(dry_run=False, baseline=False, enrich_keywords=None):
@@ -464,61 +709,41 @@ def cmd_check(dry_run=False, baseline=False, enrich_keywords=None):
     con = db()
     failures, logged_total = [], 0
     for w in watchers:
-        slug, name, cid = w["slug"], w["name"], w["youtube_channel_id"]
-        try:
-            videos = fetch_channel_videos(cid)
-        except Exception as e:  # loud, continue with others
-            print(f"[{slug}] FETCH FAILED: {e}", file=sys.stderr)
-            failures.append(slug)
-            continue
-        known = seen_ids(con, slug)
-        new = [v for v in videos if v["video_id"] not in known]
-        if baseline or not known:
-            if dry_run:
-                print(f"[{slug}] would baseline {len(videos)} videos "
-                      f"({len(new)} new) — nothing logged")
-            else:
-                mark_seen(con, slug, cid, videos, logged=False)
-                print(f"[{slug}] baseline: marked {len(videos)} videos seen "
-                      f"({len(new)} new) — nothing logged")
-            continue
-        if dry_run:
-            print(f"[{slug}] would log {len(new)} new video(s):")
-            for v in new:
-                print(f"    - {v['published_hint'] or '?':>10} | {v['title'][:70]}")
-            continue
-        for v in new:
-            topic, content = build_entry(name, slug, v)
-            try:
-                log_to_second_brain(topic, content, slug)
-            except Exception as e:
-                print(f"[{slug}] LOG FAILED for {v['video_id']}: {e}",
-                      file=sys.stderr)
-                failures.append(slug)
-                break
-            else:
-                mark_seen(con, slug, cid, [v], logged=True)
-                logged_total += 1
-                print(f"[{slug}] logged: {v['title'][:70]}")
-                hits = is_enrich_candidate(v["title"], enrich_keywords or [])
-                if hits:
-                    tpath = fetch_transcript(v["video_id"])
-                    if tpath:
-                        print(f"ENRICH_CANDIDATE {v['video_id']} "
-                              f"keywords={','.join(hits)} transcript={tpath}")
-        if not new:
-            print(f"[{slug}] no new videos")
+        if w.get("youtube_channel_id"):
+            n, f = _check_youtube(con, w, dry_run, baseline,
+                                  enrich_keywords or [])
+            logged_total += n
+            failures.extend(f)
+        if w.get("blog_rss"):
+            n, f = _check_blog(con, w, dry_run, baseline,
+                               enrich_keywords or [])
+            logged_total += n
+            failures.extend(f)
     con.close()
     if failures:
         print(f"failures: {', '.join(failures)}", file=sys.stderr)
         return 1
     if not dry_run and not baseline:
-        print(f"done: {logged_total} new video(s) logged")
+        print(f"done: {logged_total} new item(s) logged")
     return 0
 
 
 def cmd_add(args):
     import re as _re
+    if getattr(args, "blog_rss", None):
+        if not args.blog_rss.startswith("http"):
+            print("error: --blog-rss must be a full http(s) feed URL",
+                  file=sys.stderr)
+            return 2
+        print("Add to tools/marketer_watchlist.yaml under watchers:")
+        print(f"""  - name: {args.add}
+    slug: {"-".join(args.add.lower().split())}
+    note: <what they do and why Brian follows them>
+    blog_url: <site home page>
+    blog_rss: {args.blog_rss}
+    added: {datetime.now(timezone.utc).date().isoformat()}""")
+        print("Then verify: python3 tools/marketer_watch.py --check --dry-run")
+        return 0
     if not _re.fullmatch(r"UC[A-Za-z0-9_-]{22}", args.channel_id or ""):
         print("error: --channel-id must be a valid YouTube channel ID "
               "(UC + 22 chars)", file=sys.stderr)
@@ -536,28 +761,33 @@ def cmd_add(args):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Watch marketers' YouTube channels")
-    ap.add_argument("--check", action="store_true", help="poll all, log new videos")
+    ap = argparse.ArgumentParser(
+        description="Watch marketers' YouTube channels and blogs")
+    ap.add_argument("--check", action="store_true",
+                    help="poll all, log new videos and blog posts")
     ap.add_argument("--dry-run", action="store_true", help="show what would be logged")
     ap.add_argument("--baseline", action="store_true",
                     help="mark all current videos seen without logging")
     ap.add_argument("--list", action="store_true", help="list watched marketers")
     ap.add_argument("--add", metavar="NAME", help="print YAML stanza for a new marketer")
     ap.add_argument("--channel-id", help="YouTube channel ID for --add")
-    ap.add_argument("--enrich-summary", metavar="VIDEO_ID",
+    ap.add_argument("--blog-rss",
+                    help="blog RSS feed URL for --add (prints a blog stanza)")
+    ap.add_argument("--enrich-summary", metavar="ITEM_ID",
                     help="record an agent-written deep-dive summary for a video "
-                         "(needs --summary-file; optional --offer to track "
-                         "the promoted offer)")
+                         "or blog post (needs --summary-file; optional --offer "
+                         "to track the promoted offer)")
     ap.add_argument("--summary-file", metavar="PATH",
                     help="path to the summary text for --enrich-summary")
     ap.add_argument("--offer", metavar="OFFER",
                     help="promoted offer display string for --enrich-summary "
                          'or --set-offer, e.g. "UnfoldVideo ($27 launch, '
                          'Sep 5 2026)". Identified by the driver from '
-                         "transcript/title/description — never guessed.")
-    ap.add_argument("--set-offer", metavar="VIDEO_ID",
+                         "transcript/post/title — never guessed.")
+    ap.add_argument("--set-offer", metavar="ITEM_ID",
                     help="backfill/attach an offer to an already-seen video "
-                         "(needs --offer; feeds --offers, no re-logging)")
+                         "or post (needs --offer; feeds --offers, no "
+                         "re-logging)")
     ap.add_argument("--offers", action="store_true",
                     help="aggregate promoted offers across the watchlist "
                          "(multi-marketer pushes rank highest)")

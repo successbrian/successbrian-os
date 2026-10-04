@@ -50,9 +50,38 @@ PROMPT = (
     "'Confidential', or 'A leading company' — otherwise false), "
     "role (job title or null), pay (pay range string or null), "
     "location (city/state or null), remote (true/false/null), "
-    "schedule (work hours/shift info or null).\n\n"
+    "schedule (work hours/shift info or null), "
+    "required_skills (array of {{\"skill\": name, \"required_level\": "
+    "\"high\" if the posting demands strong/expert/senior/5+ years, else "
+    "\"stated\"}} — every technical skill, tool, or domain the posting "
+    "asks for), "
+    "skill_gaps (array of {{\"skill\": name, \"required_level\": "
+    "\"high\"/\"stated\", \"gap_kind\": \"underqualified\"}} — the "
+    "subset of required_skills where the posting wants MORE than Brian "
+    "has, judged against BRIAN'S PROFILE below), "
+    "coding_fit (\"vibe_fit\" if the work is greenfield builds, workflow "
+    "automation, local AI deploys, or consulting/audits; "
+    "\"hand_code_heavy\" if it demands strong hand-written code in "
+    "someone else's production codebase; \"mixed\" if both; null if the "
+    "role is not technical).\n\n"
+    "BRIAN'S PROFILE: {profile}\n\n"
     "Subject: {subject}\n\nBody:\n{body}"
 )
+
+
+def load_profile():
+    """Compact skill profile from the criteria row, injected into Penny's
+    prompt so fit grading knows Brian is a developing vibe coder."""
+    try:
+        out = kssh_psql(
+            "ecosystem_central",
+            "SELECT criteria->'freelance_ai'->>'coding_profile', "
+            "criteria->'skills' FROM public.employment_criteria "
+            "WHERE user_id='brian';").strip().split("\n")[0]
+        prof, skills = out.split("|", 1)
+        return (prof or "") + " Skill levels: " + skills
+    except Exception:
+        return ("Vibe coder, developing at hand-writing code.")
 
 
 def kssh(cmd):
@@ -70,14 +99,15 @@ def kssh_psql(db, sql):
         "-c \"$(echo %s | base64 -d)\"" % (db, b64))
 
 
-def model_extract(url, subject, body):
+def model_extract(url, subject, body, profile):
     payload = {
         "model": url.split("/")[3] if False else "local",
         "messages": [{"role": "user",
                       "content": PROMPT.format(subject=subject[:300],
-                                              body=body[:1500])}],
+                                              body=body[:1500],
+                                              profile=profile[:800])}],
         "temperature": 0.1,
-        "max_tokens": 400,
+        "max_tokens": 600,
         "stream": False,
     }
     b64 = base64.b64encode(json.dumps(payload).encode()).decode()
@@ -190,6 +220,73 @@ def upsert_company(ent, contact_email, mhash=None):
     return ("inserted", company)
 
 
+def merge_skill_grades(mhash, ent, track, source):
+    """Merge Penny's skill grading with the deterministic baseline from
+    grade_skills.py (union by skill; Penny's required_level/gap_kind wins
+    on conflict). Writes skill_gaps/required_skills/coding_fit and any new
+    gap signals. Returns the coding_fit written."""
+    try:
+        cur = kssh_psql(
+            "ecosystem_central",
+            "SELECT id, coalesce(skill_gaps,'[]')::text, "
+            "coalesce(required_skills,'[]')::text, coalesce(coding_fit,'') "
+            "FROM public.job_tracking WHERE message_id_hash = %s;"
+            % sql_lit(mhash)).strip().split("\n")[0].split("|", 3)
+        jid, cur_gaps_s, cur_req_s, cur_fit = cur
+    except Exception:
+        return None
+    try:
+        cur_gaps = json.loads(cur_gaps_s)
+        cur_req = json.loads(cur_req_s)
+    except Exception:
+        cur_gaps, cur_req = [], []
+    p_gaps = ent.get("skill_gaps") or []
+    p_req = ent.get("required_skills") or []
+    if not isinstance(p_gaps, list):
+        p_gaps = []
+    if not isinstance(p_req, list):
+        p_req = []
+
+    def norm(items):
+        out = {}
+        for it in items:
+            if isinstance(it, dict) and it.get("skill"):
+                out[str(it["skill"]).lower()] = it
+        return out
+
+    req = norm(cur_req)
+    req.update(norm(p_req))  # Penny's read of the full body wins
+    gaps = norm(cur_gaps)
+    gaps.update(norm(p_gaps))
+    coding_fit = (ent.get("coding_fit") if ent.get("coding_fit") in
+                  ("vibe_fit", "hand_code_heavy", "mixed")
+                  else (cur_fit or None))
+    if not p_gaps and not p_req and not ent.get("coding_fit"):
+        return coding_fit  # Penny found nothing new; keep baseline
+    kssh_psql(
+        "ecosystem_central",
+        "UPDATE public.job_tracking SET skill_gaps = %s::jsonb, "
+        "required_skills = %s::jsonb, coding_fit = %s, updated_at = now() "
+        "WHERE id = %s;" % (sql_lit(json.dumps(list(gaps.values()))),
+                            sql_lit(json.dumps(list(req.values()))),
+                            sql_lit(coding_fit), jid))
+    new_gaps = [g for g in gaps.values()
+                if str(g.get("skill", "")).lower()
+                not in norm(cur_gaps)]
+    if new_gaps:
+        vals = ",".join(
+            "(%s,%s,%s,%s,%s,%s)" % (
+                jid, sql_lit(g["skill"]),
+                sql_lit(g.get("required_level")), sql_lit(g.get("gap_kind")),
+                sql_lit(track), sql_lit(source)) for g in new_gaps)
+        kssh_psql(
+            "ecosystem_central",
+            "INSERT INTO public.skill_gap_signals (job_tracking_id, skill, "
+            "required_level, gap_kind, track, source) VALUES " + vals +
+            " ON CONFLICT (job_tracking_id, skill) DO NOTHING;")
+    return coding_fit
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--archive-dir",
@@ -198,6 +295,8 @@ def main():
                         "archive-brian.lathe/cur"))
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
+
+    profile = load_profile()
 
     rows = kssh_psql(
         "ecosystem_central",
@@ -258,11 +357,11 @@ def main():
             stats["skipped"] += 1
             continue
 
-        ent = model_extract(PENNY_URL, subject, body)
+        ent = model_extract(PENNY_URL, subject, body, profile)
         if ent:
             stats["penny_ok"] += 1
         else:
-            ent = model_extract(MORPHEUS_URL, subject, body)
+            ent = model_extract(MORPHEUS_URL, subject, body, profile)
             if ent:
                 stats["morpheus_ok"] += 1
         if not ent:
@@ -292,6 +391,26 @@ def main():
             stats["company_inserted"] += 1
         elif cstat == "merged":
             stats["company_merged"] += 1
+
+        # Skill-fit grading: Penny's nuanced read merges with the
+        # deterministic grade_skills.py baseline (union; Penny wins).
+        pstat_track = None
+        try:
+            trow = kssh_psql(
+                "ecosystem_central",
+                "SELECT track, source FROM public.job_tracking WHERE "
+                "message_id_hash = %s;" % sql_lit(mhash)
+            ).strip().split("\n")[0].split("|")
+            if len(trow) == 2:
+                pstat_track = trow
+        except Exception:
+            pass
+        if pstat_track:
+            coding_fit = merge_skill_grades(mhash, ent, pstat_track[0],
+                                            pstat_track[1])
+            if coding_fit == "hand_code_heavy":
+                notes_extra.append("coding_fit: hand_code_heavy (stretch "
+                                   "for a vibe coder)")
 
         # fill gaps on the tracking row
         sets = []

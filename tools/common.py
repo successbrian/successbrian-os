@@ -22,6 +22,7 @@ NOTES:
     when that helper moves into the repo, update KSSH here only.
 """
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -65,3 +66,38 @@ def git_push(repo: Path, message: str, paths: list[str]) -> bool:
     except Exception as e:  # noqa: BLE001
         print(f"git_push FAILED: {e}")
         return False
+
+
+def pg_password(host="localhost", dbname="ecosystem_central",
+                user="successbrian"):
+    """Postgres password from the sanctioned stores only: PGPASSWORD env,
+    then ~/.pgpass. Never hardcoded — a literal password in this public
+    repo is a secret leak, and it breaks the per-user-database model where
+    every user has their own credentials.
+
+    WHY: eight tools hard-coded "postgres" as the DB password (found
+    2026-10-04 during the per-user-database spec). They now call this.
+    Raises RuntimeError (loud) when no credential is found.
+    """
+    env_pw = os.environ.get("PGPASSWORD")
+    if env_pw:
+        return env_pw
+    pgpass = Path.home() / ".pgpass"
+    try:
+        with open(pgpass) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split(":")
+                if len(parts) >= 5:
+                    h, d, u = parts[0], parts[2], parts[3]
+                    pw = ":".join(parts[4:])
+                    if h in (host, "*") and d in (dbname, "*") \
+                            and u in (user, "*"):
+                        return pw
+    except FileNotFoundError:
+        pass
+    raise RuntimeError(
+        "Postgres password not found: set PGPASSWORD or add a "
+        f"{host}:5432:{dbname}:{user}:*** entry to ~/.pgpass")

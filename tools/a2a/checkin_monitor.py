@@ -24,8 +24,13 @@ import json, os, sys, subprocess
 from datetime import datetime
 from datetime import datetime
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from common import pg_password
+
 PG = {"host": "localhost", "dbname": "ecosystem_central",
-      "user": "successbrian", "password": "postgres"}
+      "user": "successbrian"}
+PG["password"] = pg_password(PG["host"], PG["dbname"], PG["user"])
 ALTAIR_JOBS = "/home/successbrian/.hermes/profiles/altair/cron/jobs.json"
 # Check-in slots and the monitor runs that watch them
 SLOTS = {

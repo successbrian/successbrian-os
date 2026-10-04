@@ -33,8 +33,13 @@ import json, os, sys, urllib.request, subprocess
 from datetime import datetime
 
 MORPHEUS_URL = "http://127.0.0.1:11437/v1/chat/completions"
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from common import pg_password
+
 PG = {"host": "localhost", "dbname": "ecosystem_central",
-      "user": "successbrian", "password": "postgres"}
+      "user": "successbrian"}
+PG["password"] = pg_password(PG["host"], PG["dbname"], PG["user"])
 HEALTH_LOG = "/home/successbrian/.hermes/profiles/lyra/state/lyra_health_15min.log"
 STATE_FILE = "/home/successbrian/.hermes/profiles/lyra/state/morpheus_watch_state.json"
 # Services whose restart counts are worth watching (crash loops hide here).

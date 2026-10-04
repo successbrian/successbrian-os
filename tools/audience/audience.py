@@ -35,8 +35,13 @@ import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from common import pg_password
+
 PG = {"host": "localhost", "dbname": "ecosystem_central",
-      "user": "successbrian", "password": "postgres"}
+      "user": "successbrian"}
+PG["password"] = pg_password(PG["host"], PG["dbname"], PG["user"])
 
 
 def _psql(sql, variables=None, field_sep="\t"):

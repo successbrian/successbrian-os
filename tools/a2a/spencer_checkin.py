@@ -58,8 +58,13 @@ V4PRO_BALANCE_URL = "https://api.deepseek.com/user/balance"
 V4PRO_ENV_FILE = "/home/successbrian/.hermes/.env"
 V4PRO_KEY_NAME = "DEEPSEEK_API_KEY"
 V4PRO_MIN_USD = 1.00
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from common import pg_password
+
 PG = {"host": "localhost", "dbname": "ecosystem_central",
-      "user": "successbrian", "password": "postgres"}
+      "user": "successbrian"}
+PG["password"] = pg_password(PG["host"], PG["dbname"], PG["user"])
 STATE_FILE = "/home/successbrian/.hermes/scripts/spencer_checkin_state.json"
 STOPWORDS = {"the", "a", "an", "and", "or", "of", "to", "in", "on", "for",
              "with", "is", "are", "at", "multiple"}

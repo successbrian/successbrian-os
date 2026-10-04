@@ -33,8 +33,13 @@ import json, os, subprocess, urllib.request
 from datetime import datetime
 
 MORPHEUS_URL = "http://127.0.0.1:11437/v1/chat/completions"
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from common import pg_password
+
 PG = {"host": "localhost", "dbname": "ecosystem_central",
-      "user": "successbrian", "password": "postgres"}
+      "user": "successbrian"}
+PG["password"] = pg_password(PG["host"], PG["dbname"], PG["user"])
 STATE_FILE = "/home/successbrian/.hermes/profiles/dealsdesk/state/listing_vet_state.json"
 TIERS = ["STEAL", "EXCELLENT_DEAL", "SNATCH", "GREAT_DEAL"]
 PER_RUN = 60

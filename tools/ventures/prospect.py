@@ -20,8 +20,13 @@ import argparse, json, os, re, subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 AILLM_DB = "/home/successbrian/anything-llm/server/storage/anythingllm.db"
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from common import pg_password
+
 PG = {"host": "localhost", "dbname": "ecosystem_central",
-      "user": "successbrian", "password": "postgres"}
+      "user": "successbrian"}
+PG["password"] = pg_password(PG["host"], PG["dbname"], PG["user"])
 
 TAG_STREAM = {"BLOG": "blog_network", "networker": "mlm", "ai": "ai_clients",
               "crypto": "crypto", "health": "mlm"}

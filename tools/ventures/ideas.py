@@ -27,8 +27,13 @@ sys.path.insert(0, HERE)
 from scoring import score_profile
 from goals import draft_goal
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from common import pg_password
+
 PG = {"host": "localhost", "dbname": "ecosystem_central",
-      "user": "successbrian", "password": "postgres"}
+      "user": "successbrian"}
+PG["password"] = pg_password(PG["host"], PG["dbname"], PG["user"])
 MORPHEUS_URL = "http://127.0.0.1:11437/v1/chat/completions"
 
 

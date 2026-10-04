@@ -414,8 +414,8 @@ def candidate_sql(c):
         "ON CONFLICT (name) DO UPDATE SET last_seen = NOW() RETURNING id) "
         "INSERT INTO affiliate_intel.launches "
         "(vendor_id, product_name, price, commission_pct, launch_date, "
-        "launch_status, evergreen, recurring_commission, tool_type) "
-        "SELECT id, %s, %s, %s, %s, 'upcoming', FALSE, %s, '%s' FROM v "
+        "launch_status, evergreen, recurring_commission, tool_type, source) "
+        "SELECT id, %s, %s, %s, %s, 'upcoming', FALSE, %s, '%s', 'email' FROM v "
         "ON CONFLICT (vendor_id, product_name) DO NOTHING;"
         % (v, p, _sql_lit(c["price"]), _sql_lit(c["commission_pct"]),
            _sql_lit(c["launch_date"]), recurring, tool_type))

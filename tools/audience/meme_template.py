@@ -31,6 +31,10 @@ BRAND defaults below are Brian's; override per user.
 """
 
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
+try:
+    import qrcode
+except ImportError:
+    qrcode = None
 import os
 
 W = H = 1080
@@ -350,6 +354,26 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
     bx = (W - (48 + 14 + tw))/2
     img.paste(bic, (int(bx), 930), bic)
     d.text((bx+48+14, 932), url, font=f_blog, fill=INK)
+
+    # optional QR badge (top-right): the link survives screenshots/forwards.
+    # On the feed itself it's unscannable, so keep it small and clearly
+    # labeled; it earns its place when the image circulates on WhatsApp.
+    if content.get("qr_url") and qrcode is not None:
+        qr = qrcode.QRCode(box_size=6, border=2)
+        qr.add_data(content["qr_url"]); qr.make(fit=True)
+        qim = qr.make_image(fill_color="black", back_color="white").convert("RGBA")
+        q = qim.resize((116, 116), Image.LANCZOS)
+        bs, bh = 144, 176
+        badge = Image.new("RGBA", (bs, bh), (0, 0, 0, 0))
+        db = ImageDraw.Draw(badge)
+        db.rounded_rectangle([0, 0, bs, bh], 18, fill="white",
+                             outline=(210, 218, 230, 255), width=2)
+        badge.paste(q, ((bs-116)//2, 10), q)
+        t = "SCAN FOR FULL STORY"; f = font(FB, 14)
+        tw = db.textlength(t, font=f)
+        db.text(((bs-tw)/2, 134), t, font=f, fill=INK)
+        img.paste(badge, (W-bs-28, 36), badge)
+        d = ImageDraw.Draw(img)
 
     img.save(out_path)
     return out_path

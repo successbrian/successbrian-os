@@ -301,12 +301,15 @@ def main():
                 sets.append("company_confidence = 'masked'")
         if ent.get("pay"):
             sets.append("pay_range = %s" % sql_lit(ent["pay"][:60]))
+        notes_extra = []
         if ent.get("role"):
-            sets.append("notes = coalesce(notes,'') || %s"
-                        % sql_lit(" | role: " + ent["role"][:80]))
+            notes_extra.append("role: " + ent["role"][:80])
         if schedule:
+            notes_extra.append("schedule: " + schedule[:80])
+        if notes_extra:
             sets.append("notes = coalesce(notes,'') || %s"
-                        % sql_lit(" | schedule: " + schedule[:80]))
+                        % sql_lit(" | " + " | ".join(notes_extra)))
+        if schedule:
             # A found schedule resolves the hours_unknown gap.
             sets.append("gaps = regexp_replace(regexp_replace("
                         "coalesce(gaps,''), '(^|,)hours_unknown(,|$)', "

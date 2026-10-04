@@ -21,6 +21,12 @@ NOTES:
       + saved), never silently merged.
     - Idempotent: rows already enriched (company filled + extracted_at set
       in notes) are skipped.
+    - Staffing-agency placeholder employers ("Project Blue", "Confidential"
+      — flagged by Penny as company_is_placeholder) are never inserted
+      into lead_discovery.companies; the job_tracking row is marked
+      company_confidence='masked' instead (learning 2026-10-04).
+    - Extracted schedule/hours info is appended to the tracking row's notes
+      and clears the hours_unknown gap the scan recorded.
 """
 import argparse
 import base64
@@ -39,8 +45,12 @@ MORPHEUS_URL = "http://127.0.0.1:11437/v1/chat/completions"
 PROMPT = (
     "Extract job details from the email below. Reply with ONLY "
     "a JSON object, no other text. Keys: company (hiring company or "
-    "null), role (job title or null), pay (pay range string or null), "
-    "location (city/state or null), remote (true/false/null).\n\n"
+    "null), company_is_placeholder (true if the company name looks like "
+    "a staffing-agency placeholder such as 'Project Blue', "
+    "'Confidential', or 'A leading company' — otherwise false), "
+    "role (job title or null), pay (pay range string or null), "
+    "location (city/state or null), remote (true/false/null), "
+    "schedule (work hours/shift info or null).\n\n"
     "Subject: {subject}\n\nBody:\n{body}"
 )
 
@@ -145,10 +155,19 @@ def upsert_person(ent, source_note):
     return ("inserted", email)
 
 
-def upsert_company(ent, contact_email):
+def upsert_company(ent, contact_email, mhash=None):
     company = (ent.get("company") or "").strip()
     if not company:
         return ("skipped", "no company")
+    # Staffing-agency placeholder names ("Project Blue", "Confidential")
+    # are not real companies — never insert them into the companies
+    # table; mark the tracking row instead.
+    if ent.get("company_is_placeholder"):
+        if mhash:
+            kssh_psql("ecosystem_central",
+                      "UPDATE public.job_tracking SET company_confidence = "
+                      "'masked' WHERE message_id_hash = %s;" % sql_lit(mhash))
+        return ("skipped", "placeholder employer: " + company[:40])
     existing = kssh_psql(
         "people_unified",
         "SELECT id, contact_email FROM lead_discovery.companies "
@@ -192,6 +211,24 @@ def main():
         rows = rows[:args.limit]
     print("rows needing enrichment: %d" % len(rows))
 
+    # Build the hash->archive-file index ONCE up front. The old code did a
+    # full os.listdir + json.load over ~22k files for EVERY row, which made
+    # each row take minutes (found 2026-10-03 when a 306-row backlog was
+    # effectively unprocessable). One pass here, O(1) lookups below.
+    h2path = {}
+    files = [f for f in os.listdir(args.archive_dir) if f.endswith(".json")]
+    print("indexing %d archive files..." % len(files))
+    for fn in files:
+        p = os.path.join(args.archive_dir, fn)
+        try:
+            m = json.load(open(p))
+        except Exception:
+            continue
+        h = m.get("_id_hash") or fn[:-5]
+        if h and h not in h2path:
+            h2path[h] = p
+    print("indexed %d messages" % len(h2path))
+
     stats = {"person_inserted": 0, "person_merged": 0, "company_inserted": 0,
              "company_merged": 0, "quarantine": 0, "skipped": 0,
              "penny_ok": 0, "morpheus_ok": 0, "failed": 0}
@@ -199,17 +236,12 @@ def main():
 
     for i, row in enumerate(rows, 1):
         mhash, title = row.split("|", 1)
-        # find the archived message body
+        # look up the archived message body
         body, subject, from_email, header_name = "", title, "", ""
-        for fn in os.listdir(args.archive_dir):
-            if not fn.endswith(".json"):
-                continue
-            p = os.path.join(args.archive_dir, fn)
+        p = h2path.get(mhash)
+        if p:
             try:
                 m = json.load(open(p))
-            except Exception:
-                continue
-            if m.get("_id_hash") == mhash:
                 subject = m.get("subject") or title
                 b = m.get("body") or ""
                 body = re.sub(r"\s+", " ",
@@ -220,7 +252,8 @@ def main():
                 hn = re.match(r"^\s*(.*?)\s*<[^>]+>\s*$", frm)
                 header_name = (hn.group(1).strip().strip('"')
                                if hn else frm.strip())
-                break
+            except Exception:
+                pass
         if not body:
             stats["skipped"] += 1
             continue
@@ -245,7 +278,9 @@ def main():
             ent["person_name"] = header_name
 
         pstat, pinfo = upsert_person(ent, title[:80])
-        cstat, cinfo = upsert_company(ent, ent.get("person_email"))
+        cstat, cinfo = upsert_company(ent, ent.get("person_email"), mhash)
+
+        schedule = (ent.get("schedule") or "").strip()
         if pstat == "inserted":
             stats["person_inserted"] += 1
         elif pstat == "merged":
@@ -262,11 +297,20 @@ def main():
         sets = []
         if ent.get("company"):
             sets.append("company = %s" % sql_lit(ent["company"][:120]))
+            if ent.get("company_is_placeholder"):
+                sets.append("company_confidence = 'masked'")
         if ent.get("pay"):
             sets.append("pay_range = %s" % sql_lit(ent["pay"][:60]))
         if ent.get("role"):
             sets.append("notes = coalesce(notes,'') || %s"
                         % sql_lit(" | role: " + ent["role"][:80]))
+        if schedule:
+            sets.append("notes = coalesce(notes,'') || %s"
+                        % sql_lit(" | schedule: " + schedule[:80]))
+            # A found schedule resolves the hours_unknown gap.
+            sets.append("gaps = regexp_replace(regexp_replace("
+                        "coalesce(gaps,''), '(^|,)hours_unknown(,|$)', "
+                        "'\\\\1'), '^,|,$', '', 'g')")
         if sets:
             kssh_psql("ecosystem_central",
                       "UPDATE public.job_tracking SET %s WHERE "

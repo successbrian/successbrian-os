@@ -26,10 +26,30 @@ ALTER TABLE public.job_tracking ADD COLUMN IF NOT EXISTS next_action_due DATE;
 ALTER TABLE public.job_tracking ADD COLUMN IF NOT EXISTS message_id_hash TEXT;
 ALTER TABLE public.job_tracking ADD COLUMN IF NOT EXISTS notes TEXT;
 
+-- 2026-10-04 (learnings from the Project Blue Indeed match): normalized
+-- pay numbers so rows compare against the floor/target without human math;
+-- tiered verdict instead of a binary worth-eyes call; masked-employer and
+-- profile-staleness flags; gaps checklist of what the posting didn't say.
+ALTER TABLE public.job_tracking ADD COLUMN IF NOT EXISTS pay_hourly_low NUMERIC;
+ALTER TABLE public.job_tracking ADD COLUMN IF NOT EXISTS pay_hourly_high NUMERIC;
+ALTER TABLE public.job_tracking ADD COLUMN IF NOT EXISTS pay_annual_low NUMERIC;
+ALTER TABLE public.job_tracking ADD COLUMN IF NOT EXISTS pay_annual_high NUMERIC;
+ALTER TABLE public.job_tracking ADD COLUMN IF NOT EXISTS ai_role BOOLEAN;
+-- company_confidence: 'parsed' | 'masked' (staffing placeholder) | 'none'
+ALTER TABLE public.job_tracking ADD COLUMN IF NOT EXISTS company_confidence TEXT;
+-- profile_flags: comma-joined, e.g. 'profile_stale,no_min_pay'
+ALTER TABLE public.job_tracking ADD COLUMN IF NOT EXISTS profile_flags TEXT;
+-- gaps: comma-joined checklist of unknowns, e.g.
+-- 'company_unknown,pay_unknown,hours_unknown,idemia_fit_unconfirmed'
+ALTER TABLE public.job_tracking ADD COLUMN IF NOT EXISTS gaps TEXT;
+-- verdict: 'target' | 'fallback' | 'below_bar'
+ALTER TABLE public.job_tracking ADD COLUMN IF NOT EXISTS verdict TEXT;
+
 CREATE UNIQUE INDEX IF NOT EXISTS job_tracking_message_hash_uidx
     ON public.job_tracking (message_id_hash) WHERE message_id_hash IS NOT NULL;
 CREATE INDEX IF NOT EXISTS job_tracking_track_idx ON public.job_tracking (track);
 CREATE INDEX IF NOT EXISTS job_tracking_status_idx2 ON public.job_tracking (application_status);
+CREATE INDEX IF NOT EXISTS job_tracking_verdict_idx ON public.job_tracking (verdict);
 
 -- 2) Shared matching criteria. One row per user ('brian' today); the scan,
 -- the matcher, and any agent read this instead of hardcoding his rules.
@@ -47,6 +67,8 @@ INSERT INTO public.employment_criteria (user_id, criteria) VALUES (
             "must_be_remote": true,
             "pay_rule": "much higher than CREW2",
             "pay_floor_hourly_usd": 24,
+            "ai_target_annual_usd": 100000,
+            "crew2_pay_hourly_usd": null,
             "target": "100k+ AI jobs",
             "schedule_constraint": "must fit around Idemia shifts (Wed/Thu 17:30-02:00, Fri 19:00-07:30, Sun 02:00-14:30 America/Chicago)"
         },

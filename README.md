@@ -53,9 +53,12 @@ Not everything needs the same setup. Three tiers, honestly labeled:
 git clone https://github.com/successbrian/successbrian-os.git
 cd successbrian-os
 
-# Your private registry — gitignored, never committed, never leaves your machine
-cp tools/focus/user_focus.example.json tools/focus/user_focus.json
-# Edit user_focus.json: list everything you're actively pursuing.
+# The onboarding interview: builds your private registry in ~5 minutes.
+# (Your answers stay on this machine — gitignored, never committed.)
+python3 tools/setup/init.py
+
+# The boot check: verifies every tier and tells you exactly what's missing.
+python3 tools/setup/doctor.py
 
 # The grounding review: facts about your commitments
 python3 tools/focus/focus.py review

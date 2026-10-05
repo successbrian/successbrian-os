@@ -131,7 +131,7 @@ def get_tiers() -> dict:
             "available": bool(flag["v4pro_credits"]),
             "status": "live",
             "role": "top tier, hard tasks only",
-            "note": "Credit flag is manual until an API check exists.",
+            "note": "Credit flag auto-checked hourly by tools/v4pro_balance.py (DeepSeek balance API via k11).",
             "flag_updated_at": flag["updated_at"],
             "flag_updated_by": flag["updated_by"],
         },

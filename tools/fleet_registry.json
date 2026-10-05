@@ -1,0 +1,90 @@
+{
+  "_meta": {
+    "maintained_by": "night shift / Sunday shift workers; verify with Brian when status changes",
+    "purpose": "Single source of truth for the SuccessBrian OS fleet inventory, demand targets, and storage plan. Read by tools/capacity.py and tools/ecosystem_state.py (never copy the list into code).",
+    "source_key": "Every numeric field carries a *_source tag: measured | by_design | plan_target | plan_stated | estimate_unverified. A number without a source tag is a bug \u2014 fix it, don't ship it.",
+    "updated": "2026-10-04",
+    "why": "capacity.py and ecosystem_state.py each carried their own hard-coded fleet list, which drifted (DeepSeek 150B stayed listed after it was retired 2026-10-02). One registry means one edit when the fleet changes."
+  },
+  "demand": {
+    "anythingllm_maintenance": {
+      "cpu_hours_per_night": 4,
+      "cpu_hours_per_night_source": "estimate_unverified",
+      "note": "Dedup, embeddings, hygiene. Offload target: X79s.",
+      "source": "estimate_unverified (cpu_hours_per_night)"
+    },
+    "blog_network": {
+      "articles_per_blog_per_day": 2,
+      "articles_per_blog_per_day_source": "plan_target",
+      "batch_window_hours": 8,
+      "batch_window_hours_note": "Overnight batch window when Brian sleeps / works Idemia.",
+      "batch_window_hours_source": "plan_target",
+      "blogs": 100,
+      "blogs_note": "Brian's stated 100-blog network goal.",
+      "blogs_source": "plan_stated",
+      "tokens_per_article": 2700,
+      "tokens_per_article_source": "estimate_unverified",
+      "tokens_per_article_verifies_when": "Average actual generated article token count once the content factory runs."
+    }
+  },
+  "fleet": [
+    {
+      "batch_tok_s": 0,
+      "batch_tok_s_source": "by_design",
+      "kind": "compute node (residential Comcast, tailnet 100.118.53.47)",
+      "name": "k11-alpha",
+      "note": "Interactive node (Altair/Morpheus/Penny/Sonic) + goal loop. Not a batch content node.",
+      "services": {
+        "deepseek_150b": "RETIRED 2026-10-02 \u2014 port 8084 verified CLOSED 2026-10-04",
+        "morpheus": "14B Q6 (chat/board) on localhost:11437 \u2014 verified OPEN 2026-10-04",
+        "penny": "7B Q6_K (small/fast) on localhost:11438 \u2014 verified OPEN 2026-10-04",
+        "sonic": "Qwen3.6-35B-A3B Q6_K (workhorse) on localhost:11439 \u2014 verified OPEN 2026-10-04"
+      },
+      "status": "live",
+      "verified": "2026-10-04 via kssh: up 7d 18h, 16 CPUs, 92GB RAM, load ~18"
+    },
+    {
+      "batch_tok_s": 0,
+      "batch_tok_s_source": "by_design",
+      "kind": "inference box (GMKtec K11, 96GB RAM)",
+      "name": "k11-bravo",
+      "note": "Build runbook drafted 2026-10-03 evening; build window was the Sun 2026-10-04 2:00 AM\u20132:30 PM Idemia shift. Future: chuck (2B), penny (7B), morpheus (14B), Qwen3.6-35B-A3B + task router.",
+      "status": "in_pieces",
+      "verified": "2026-10-04 via kssh tailscale status on k11-alpha: no bravo node on tailnet"
+    },
+    {
+      "batch_tok_s": 40,
+      "batch_tok_s_source": "estimate_unverified",
+      "batch_tok_s_verifies_when": "Shakespeare 70B tok/s measured on one X79 node, times 4 nodes",
+      "kind": "4x X79 dual-M40 nodes (48GB VRAM each)",
+      "name": "x79-node-1..4",
+      "note": "Content factory. 2x striped NVMe per node for Colibri, M.2 + threads for web/scraping.",
+      "status": "planned",
+      "verified": "2026-10-04 via kssh tailscale status on k11-alpha: no x79 nodes on tailnet"
+    },
+    {
+      "batch_tok_s": 0,
+      "batch_tok_s_source": "by_design",
+      "kind": "EPYC Rome 256GB (8x32GB DDR4-3200, one DIMM per channel)",
+      "name": "epyc-rome",
+      "note": "$48 chip at Core 4. Was the QLoRA training fit; 150B-tier scrapped 2026-10-03 (Qwen A3B switch). Role TBD.",
+      "status": "evaluating"
+    },
+    {
+      "batch_tok_s": 0,
+      "batch_tok_s_source": "by_design",
+      "kind": "Aoostar mini-PC nodes (24GB planned, 4U rack)",
+      "name": "aoostar-1..2",
+      "note": "GLM 5.3 on striped NVMe. Not batch content nodes. (Memory notes 8x planned for the rack; registry tracks the 2 that entered the build plan \u2014 expand when funded.)",
+      "status": "planned"
+    }
+  ],
+  "storage_plan": {
+    "model_hot_gb": 100,
+    "model_hot_gb_note": "Breakdown Oct 2026: qwen-a3b Q6_K ~28GB + Shakespeare 70B Q4 ~40GB + Penny/Morpheus Q6 ~5-12GB each + Chuck 2B Q8 ~2GB + headroom. Was 220GB when it included the retired DeepSeek 150B (~80GB). Recount when the library settles.",
+    "model_hot_gb_source": "estimate_unverified",
+    "x79_nvme_tb": 24,
+    "x79_nvme_tb_note": "4 nodes x 3x 2TB NVMe.",
+    "x79_nvme_tb_source": "plan_target"
+  }
+}

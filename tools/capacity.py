@@ -17,87 +17,77 @@ CALLED BY:
     - tools/ecosystem_state.py (capacity section of the state snapshot)
 
 NOTES:
-    Demand figures are still hard-coded estimates (articles/day, tok/s).
-    Verdicts are directional, not measured. Refine as real throughput data
-    arrives from the fleet. See KNOWN ISSUES in the weekly review.
+    Fleet inventory and demand figures come from tools/fleet_registry.json —
+    the single source of truth. Every number carries a *_source tag
+    (measured / by_design / plan_target / plan_stated / estimate_unverified);
+    the report prints the tags, so Brian can see which verdicts rest on
+    measurements and which rest on guesses. Verdicts are directional.
+    Source tags marked estimate_unverified list what would verify them in
+    the registry's *_verifies_when notes.
 """
 
 import argparse
+import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 
 STAGING = Path(__file__).parent / "staging"
+REGISTRY = Path(__file__).parent / "fleet_registry.json"
+
+
+def _load_registry() -> dict:
+    """Read the canonical fleet registry. Raises if missing/corrupt —
+    a hard-coded fallback list would silently drift, which is exactly the
+    bug this registry exists to kill."""
+    return json.loads(REGISTRY.read_text())
+
+
+_REG = _load_registry()
 
 # ---------------------------------------------------------------------------
-# Fleet inventory — known live + planned systems
-# Topic: keep this in sync with brian_decisions as the fleet changes.
+# Fleet inventory + demand — read from the registry, kept as module-level
+# names because ecosystem_state.py imports them.
 # ---------------------------------------------------------------------------
+FLEET: list[dict] = _REG["fleet"]
 
-# Numbers below are ESTIMATES unless tagged "measured". Per CODE-STANDARDS,
-# guesses must be labeled as guesses — update a tag when real data lands.
-FLEET = [
-    {
-        "name": "k11-alpha",
-        "status": "live",
-        "batch_tok_s": 0,      # interactive node, not batch
-        "batch_tok_s_source": "by_design",
-        "note": "Altair/Morpheus/Penny/DeepSeek 150B. Interactive + goal loop.",
-    },
-    {
-        "name": "k11-bravo",
-        "status": "in_pieces",
-        "batch_tok_s": 0,
-        "batch_tok_s_source": "by_design",
-        "note": "96GB RAM in wrapping. Future QLoRA training for small models.",
-    },
-    {
-        "name": "x79-node-1..4",
-        "status": "planned",
-        "batch_tok_s": 40,     # 4 nodes x ~10 tok/s Shakespeare-class
-        "batch_tok_s_source": "estimate_unverified",
-        "note": "Dual M40 per node (48GB VRAM), 2x striped NVMe for Colibri, "
-                "M.2 + threads for web/scraping. Content factory.",
-    },
-    {
-        "name": "epyc-rome",
-        "status": "evaluating",
-        "batch_tok_s": 0,
-        "batch_tok_s_source": "by_design",
-        "note": "$48 chip at Core 4. 256GB build for dual 150B + QLoRA.",
-    },
-    {
-        "name": "aoostar-glm-1..2",
-        "status": "planned",
-        "batch_tok_s": 0,
-        "batch_tok_s_source": "by_design",
-        "note": "GLM 5.3 on triple-striped NVMe. Not batch content nodes.",
-    },
-]
 
-# ---------------------------------------------------------------------------
-# Demand estimates — articles/day -> tok/s
-# ---------------------------------------------------------------------------
+def _demand_blog_network(reg: dict) -> dict:
+    d = reg["demand"]["blog_network"]
+    articles_per_day = d["blogs"] * d["articles_per_blog_per_day"]
+    tok_s_needed = (articles_per_day * d["tokens_per_article"]
+                    / (d["batch_window_hours"] * 3600))
+    return {
+        "articles_per_day": articles_per_day,
+        "tokens_per_article": d["tokens_per_article"],
+        "batch_window_hours": d["batch_window_hours"],
+        "tok_s_needed": tok_s_needed,
+        "source": ("plan_stated (blog count) + plan_target (articles/day, "
+                   "batch window) + estimate_unverified (tokens/article)"),
+        "note": (f"{d['blogs']} blogs x {d['articles_per_blog_per_day']} "
+                 f"articles/day, {d['batch_window_hours']}h overnight batch "
+                 f"window."),
+    }
 
-# 100-blog network: even a modest 2 articles/blog/day = 200 articles/day.
-# Avg 2,700 tokens/article -> 540k tokens/day -> ~6.25 tok/s sustained 24/7.
-# Reality: batch overnight (8h window) -> ~19 tok/s needed in-window.
+
 DEMAND = {
-    "blog_network": {
-        "articles_per_day": 200,
-        "tokens_per_article": 2700,
-        "batch_window_hours": 8,
-        "tok_s_needed": 200 * 2700 / (8 * 3600),  # ~18.75
-        "source": "estimate_unverified",
-        "note": "100 blogs x 2 articles/day, 8h overnight batch window.",
-    },
-    "anythingllm_maintenance": {
-        "cpu_hours_per_night": 4,
-        "source": "estimate_unverified",
-        "note": "Dedup, embeddings, hygiene. Offload target: X79s.",
-    },
+    "blog_network": _demand_blog_network(_REG),
+    "anythingllm_maintenance": _REG["demand"]["anythingllm_maintenance"],
 }
+
+STORAGE_PLAN = _REG["storage_plan"]
+
+
+def _x79_node_count() -> tuple[int, str]:
+    """Planned X79 node count, parsed from the registry fleet name."""
+    for f in FLEET:
+        if f["name"].startswith("x79"):
+            m = re.search(r"(\d+)\.\.(\d+)", f["name"])
+            if m:
+                return int(m.group(2)) - int(m.group(1)) + 1, "derived_from_registry"
+    return 4, "fallback_default"
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +99,8 @@ def analyze_inference() -> dict:
                         if f["status"] in ("planned", "live"))
     needed = DEMAND["blog_network"]["tok_s_needed"]
     headroom = planned_batch - needed
+    sources = sorted({f.get("batch_tok_s_source", "UNKNOWN") for f in FLEET
+                      if f["status"] in ("planned", "live")})
     if headroom >= needed * 0.5:
         verdict = "healthy"
         rec = ("Capacity covers demand with 50%+ headroom. No action needed.")
@@ -126,7 +118,9 @@ def analyze_inference() -> dict:
     return {
         "dimension": "inference",
         "available_tok_s": planned_batch,
+        "available_source": "+".join(sources),
         "needed_tok_s": round(needed, 1),
+        "needed_source": DEMAND["blog_network"]["source"],
         "headroom_tok_s": round(headroom, 1),
         "verdict": verdict,
         "recommendation": rec,
@@ -134,42 +128,43 @@ def analyze_inference() -> dict:
 
 
 def analyze_storage() -> dict:
-    # X79 plan: 4 nodes x (3x 2TB NVMe) = 24TB NVMe planned
-    # Model library estimate: Shakespeare 40GB + DeepSeek 150B 80GB +
-    #   assorted 7B/14B (~100GB) = ~220GB hot. 24TB is ample.
-    nvme_tb = 4 * 3 * 2
-    model_hot_gb = 220
+    nvme_tb = STORAGE_PLAN["x79_nvme_tb"]
+    model_hot_gb = STORAGE_PLAN["model_hot_gb"]
     verdict = "healthy"
-    rec = (f"{nvme_tb}TB NVMe planned vs ~{model_hot_gb}GB hot models. "
-           f"Ample. SATA tier sizes still open (see X79 Q3 for Brian).")
+    rec = (f"{nvme_tb}TB NVMe planned ({STORAGE_PLAN['x79_nvme_tb_note']}) vs "
+           f"~{model_hot_gb}GB hot models. Ample. SATA tier sizes still open "
+           f"(see X79 Q3 for Brian).")
     return {
         "dimension": "storage",
         "nvme_tb_planned": nvme_tb,
+        "nvme_tb_source": STORAGE_PLAN["x79_nvme_tb_source"],
         "model_hot_gb": model_hot_gb,
-        "figures_source": "estimate_unverified",
+        "model_hot_gb_source": STORAGE_PLAN["model_hot_gb_source"],
         "verdict": verdict,
         "recommendation": rec,
     }
 
 
 def analyze_web_serving() -> dict:
-    # 100 blogs / 4 nodes = 25 sites per node.
-    # Static sites (Hugo -> nginx): trivial load, ~25 static sites is nothing
-    #   for 16 Ivy Bridge cores. Even 100 on one node would be fine.
-    # WordPress: 25x PHP-FPM pools + 25x MySQL DBs per node is HEAVY —
-    #   memory and I/O pressure on 64GB DDR3, and 100 WP installs to maintain
-    #   is an ops burden Brian can't carry alone.
-    sites_per_node = 25
+    blogs = _REG["demand"]["blog_network"]["blogs"]
+    x79_count, x79_src = _x79_node_count()
+    sites_per_node = blogs // x79_count if x79_count else None
+    # Static vs WordPress load reasoning is architectural (by_design), not
+    # measured — the verdict stays "watch" until Brian picks the stack.
     verdict = "watch"
     rec = ("Architecture decision needed: static-site generator (Hugo/Jekyll "
-           "-> nginx) vs WordPress. Static: 25 sites/node is trivial, near-zero "
-           "maintenance, perfect for SEO content blogs. WordPress: 25 PHP pools "
-           "+ 25 DBs per node strains 64GB DDR3 and creates 100 installs to "
-           "patch. Recommendation: static unless a specific blog needs WP "
-           "features. This is a question for Brian.")
+           "-> nginx) vs WordPress. Static: "
+           f"{sites_per_node} sites/node is trivial, near-zero maintenance, "
+           "perfect for SEO content blogs. WordPress: "
+           f"{sites_per_node} PHP pools + {sites_per_node} DBs per node "
+           "strains 64GB DDR3 and creates 100 installs to patch. "
+           "Recommendation: static unless a specific blog needs WP features. "
+           "This is a question for Brian.")
     return {
         "dimension": "web_serving",
         "sites_per_node": sites_per_node,
+        "sites_per_node_source": (f"derived: {blogs} plan_stated blogs / "
+                                  f"{x79_count} x79 nodes ({x79_src})"),
         "stack_options": "static (Hugo->nginx) vs WordPress",
         "verdict": verdict,
         "recommendation": rec,
@@ -202,19 +197,25 @@ def render_report(results: list[dict]) -> str:
         "",
         "The ecosystem's read on capacity vs demand. "
         "Verdicts: `healthy` / `tight` / `gap` / `watch`.",
+        "Numbers carry source tags (measured / by_design / plan_target / "
+        "plan_stated / estimate_unverified) — trust measured and by_design, "
+        "treat the rest as planning figures.",
         "",
         "---",
         "",
-        "## Fleet",
+        "## Fleet (from tools/fleet_registry.json)",
         "",
     ]
     for f in FLEET:
         src = f.get("batch_tok_s_source")
         tag = f" [throughput: {src}]" if src and src != "by_design" else ""
-        lines += [f"- **{f['name']}** ({f['status']}){tag}: {f['note']}", ""]
+        ver = f.get("verified", "")
+        ver_tag = f" (verified: {ver})" if ver else ""
+        lines += [f"- **{f['name']}** ({f['status']}){tag}: {f['note']}{ver_tag}", ""]
     lines += ["## Demand", ""]
     for key, d in DEMAND.items():
-        lines += [f"- **{key}**: {d['note']}", ""]
+        src = d.get("source", "")
+        lines += [f"- **{key}** [source: {src}]: {d['note']}", ""]
     lines += ["---", "", "## Analysis", ""]
     for r in results:
         emoji = {"healthy": "OK", "tight": "TIGHT",

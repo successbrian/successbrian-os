@@ -15,12 +15,16 @@ CALLED BY:
     - tools/sunday_shift.py (weekly)
 
 NOTES:
-    Fleet list is still hard-coded; live_health for x79/bravo/epyc nodes,
-    blog_placement, and anythingllm sections are stubs until those systems
-    feed real data. live_health["k11-alpha"] IS measured (disk + queue
-    depths, read-only via kssh) as of 2026-09-28. "Five nodes" includes
-    grouped/planned systems. Treat "healthy" verdicts as provisional until
-    watchers.py replaces the hard-coded fleet.
+    Fleet list comes from tools/fleet_registry.json (single source of truth),
+    not from capacity.py's old hard-coded FLEET. live_health["k11-alpha"] is
+    measured read-only via kssh: disk pct, queue depths, 1-min CPU load, RAM
+    pct (2026-10-04). GPU/temp counters are NOT measured — k11-alpha's GPU is
+    the 780M iGPU; no verified telemetry source yet, so they're marked
+    not_measured rather than zeroed. bravo/x79/epyc nodes were VERIFIED
+    absent from the tailnet 2026-10-04 (not_on_tailnet), which is stronger
+    than the old "not yet built" guess. blog_placement and anythingllm are
+    explicit NOT-IMPLEMENTED stubs with a `needs` field saying what unblocks
+    them.
 """
 
 import argparse
@@ -31,10 +35,23 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "decision_sync"))
 from sync import get_decisions, get_build_plan  # noqa: E402
-from capacity import FLEET, analyze_inference, analyze_storage  # noqa: E402
+from capacity import analyze_inference, analyze_storage  # noqa: E402
 from automate.watchers import queue_depths, alpha_disk  # noqa: E402
+from automate.engine import kssh  # noqa: E402
 
 STAGING = Path(__file__).parent / "staging"
+REGISTRY = Path(__file__).parent / "fleet_registry.json"
+
+
+def get_fleet() -> list[dict]:
+    """Fleet inventory from the canonical registry.
+
+    Reads tools/fleet_registry.json every run so the snapshot can never
+    drift behind an edited copy of the list. A missing/corrupt registry is
+    a hard failure — a silent hard-coded fallback would be the old bug
+    all over again.
+    """
+    return json.loads(REGISTRY.read_text())["fleet"]
 
 
 def get_build_plans() -> dict:
@@ -48,11 +65,32 @@ def get_build_plans() -> dict:
     return plans
 
 
-def get_live_health() -> dict:
-    """Measured health for nodes we can reach; stubs for the rest.
+def _probe_alpha_cpu_ram() -> dict:
+    """1-min load average + RAM % on k11-alpha, read-only via kssh.
 
-    k11-alpha is measured read-only via kssh right now. Other nodes keep
-    the published schema until their telemetry feeds come online.
+    Returns {"error": ...} when the probe fails — unknown is reported as
+    unknown, never as 0.
+    """
+    try:
+        load = kssh("cat /proc/loadavg | awk '{print $1, $2, $3}'", timeout=20)
+        mem = kssh("free -m | awk '/^Mem:/ {print $2, $3}'", timeout=20)
+        total_mb, used_mb = (float(x) for x in mem.split())
+        return {
+            "cpu_load_1m": float(load.split()[0]),
+            "ram_pct": round(used_mb / total_mb * 100, 1),
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+
+
+def get_live_health() -> dict:
+    """Measured health for nodes we can reach; explicit NOT-IMPLEMENTED
+    markers for the rest.
+
+    Statuses: measured | probe_failed | not_on_tailnet | not_implemented.
+    A status of not_on_tailnet was verified against `tailscale status` on
+    k11-alpha (2026-10-04) — it means no tailnet presence, i.e. the node is
+    not reachable, whatever its physical build state.
     """
     schema = {
         "node": "str",
@@ -61,26 +99,45 @@ def get_live_health() -> dict:
         "vram_used_gb": "float", "temp_c": "float",
         "last_seen": "iso8601",
     }
+    verified_note = ("Verified absent from tailnet 2026-10-04 "
+                     "(`tailscale status` on k11-alpha).")
     health = {
-        "x79-node-1..4": {"status": "not_yet_available",
-                          "note": "Nodes not built yet.",
+        "x79-node-1..4": {"status": "not_on_tailnet",
+                          "note": verified_note + " Content factory nodes "
+                          "not built yet.",
                           "schema": schema},
-        "k11-bravo": {"status": "not_yet_available",
-                      "note": "Node not online yet.", "schema": schema},
-        "epyc-rome": {"status": "not_yet_available",
-                      "note": "Node not online yet.", "schema": schema},
+        "k11-bravo": {"status": "not_on_tailnet",
+                      "note": verified_note + " Build runbook drafted "
+                      "2026-10-03; build window was Sun 2026-10-04 "
+                      "2:00 AM-2:30 PM Idemia shift — no tailnet sign-in yet.",
+                      "schema": schema},
+        "epyc-rome": {"status": "not_on_tailnet",
+                      "note": verified_note + " Evaluating; role TBD after "
+                      "the 2026-10-03 Qwen A3B switch scrapped the 150B tier.",
+                      "schema": schema},
+        "aoostar-1..2": {"status": "not_on_tailnet",
+                         "note": verified_note + " Planned rack nodes.",
+                         "schema": schema},
     }
     try:
         disks = alpha_disk()
         queues = queue_depths()
+        cpu_ram = _probe_alpha_cpu_ram()
         health["k11-alpha"] = {
             "status": "measured",
             "measured_at": datetime.now(timezone.utc).isoformat(),
             "disk_pct": disks,
             "queues": queues,
-            "note": ("Disk + queue depths measured read-only via kssh. "
-                     "CPU/RAM/GPU counters not yet wired."),
+            "cpu_load_1m": cpu_ram.get("cpu_load_1m"),
+            "ram_pct": cpu_ram.get("ram_pct"),
+            "gpu_util_pct": "not_measured",
+            "temp_c": "not_measured",
+            "note": ("Disk + queues + CPU load + RAM measured read-only via "
+                     "kssh. GPU/temp: no verified telemetry source on "
+                     "k11-alpha (780M iGPU) yet — marked not_measured, not 0."),
         }
+        if "error" in cpu_ram:
+            health["k11-alpha"]["cpu_ram_probe"] = cpu_ram["error"]
     except Exception as e:  # noqa: BLE001
         health["k11-alpha"] = {"status": "probe_failed",
                                "note": f"kssh probe failed: {e}"}
@@ -95,8 +152,8 @@ def build_state() -> dict:
         "generated_at": now,
         "source": "successbrian-os/tools/ecosystem_state.py",
 
-        # --- Fleet: what exists and what it's for ---
-        "fleet": FLEET,
+        # --- Fleet: what exists and what it's for (canonical registry) ---
+        "fleet": get_fleet(),
 
         # --- Decisions: what Brian decided, newest first ---
         "decisions": {
@@ -115,19 +172,25 @@ def build_state() -> dict:
             "storage": analyze_storage(),
         },
 
-        # --- Stubs: Lyra and the CMS feed these as they come online ---
+        # --- Live node health: measured for k11-alpha, explicit markers else ---
         "live_health": get_live_health(),
+
+        # --- NOT-IMPLEMENTED stubs: schema published, feed not wired ---
         "blog_placement": {
-            "status": "not_yet_available",
-            "note": "CMS will populate blog->node assignments.",
+            "status": "not_implemented",
+            "needs": ("CMS feed of blog->node assignments. The blog network "
+                      "content factory is not built yet (x79 nodes: "
+                      "not_on_tailnet), so there is nothing to place."),
             "schema": {
                 "domain": "str", "node": "str",
                 "plugin_profile": "str", "monthly_visits": "int",
             },
         },
         "anythingllm": {
-            "status": "api_key_pending",
-            "note": "Library stats once AnythingLLM API access lands.",
+            "status": "not_implemented",
+            "needs": ("AnythingLLM API access (api_key_pending since before "
+                      "2026-09-28). Once granted: workspace/document counts, "
+                      "embedding backlog, dedup stats."),
         },
     }
 
@@ -140,7 +203,7 @@ def render_markdown(state: dict) -> str:
         "",
         "---",
         "",
-        "## Fleet",
+        "## Fleet (tools/fleet_registry.json)",
         "",
     ]
     for f in state["fleet"]:
@@ -151,10 +214,10 @@ def render_markdown(state: dict) -> str:
     for key, cap in state["capacity"].items():
         lines += [f"- **{key}**: {cap['verdict']} — "
                   f"{cap['recommendation'][:120]}...", ""]
-    lines += ["## Pending Inputs", ""]
+    lines += ["## Pending Inputs (NOT-IMPLEMENTED)", ""]
     for key in ("blog_placement", "anythingllm"):
         s = state[key]
-        lines += [f"- **{key}**: {s['status']} — {s['note']}", ""]
+        lines += [f"- **{key}**: {s['status']} — {s['needs']}", ""]
     lines += ["## Node Health", ""]
     for node, h in state["live_health"].items():
         lines += [f"- **{node}**: {h['status']} — {h['note']}", ""]

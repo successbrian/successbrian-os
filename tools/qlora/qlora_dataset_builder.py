@@ -37,6 +37,13 @@ NOTES
       is deterministic by content hash (90/10) so rebuilds are stable.
     - Raw assistant text is truncated to a sane length; secrets are never
       written into pairs (rows are filtered for secret-ish patterns).
+    - RUNS-ON-NODES NOTE (per AGENTS.md 2026-10-04): this builder runs on the
+      Hatch VM, not k11-alpha, because two of its six sources live only here
+      (~/memory/*.md and successbrian-os/specs/*.md). All PostgreSQL reads are
+      k11-native via the kssh pipe; the produced JSONL is pushed to
+      /home/successbrian/qlora_datasets/ on k11-alpha where training happens.
+      If memory/specs ever sync to k11, move the builder there and trigger via
+      kssh instead.
 """
 
 import argparse

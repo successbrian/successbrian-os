@@ -80,16 +80,26 @@ def _inbox_confidence(ctx: dict) -> float:
 def _inbox_act(ctx: dict, dry_run: bool) -> str:
     if dry_run:
         return "would git add/commit/push inbox"
-    subprocess.run(["git", "-C", str(INBOX), "add", "inbox/"],
-                   capture_output=True, timeout=30)
-    subprocess.run(
-        ["git", "-C", str(INBOX), "commit", "-m",
-         "automation: push pending inbox notes", "--allow-empty"],
-        capture_output=True, timeout=30)
+    # Only commit when the tree is actually dirty — the old --allow-empty
+    # flag minted empty commits on every run, spamming git history and the
+    # second brain with 10x duplicate "inbox pushed" facts.
+    # (Night shift 2026-10-04.)
+    dirty = bool(subprocess.run(
+        ["git", "-C", str(INBOX), "status", "--porcelain"],
+        capture_output=True, text=True, timeout=30).stdout.strip())
+    if dirty:
+        subprocess.run(["git", "-C", str(INBOX), "add", "inbox/"],
+                       capture_output=True, timeout=30)
+        subprocess.run(
+            ["git", "-C", str(INBOX), "commit", "-m",
+             "automation: push pending inbox notes"],
+            capture_output=True, timeout=30)
     r = subprocess.run(["git", "-C", str(INBOX), "push"],
                        capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
         raise RuntimeError(r.stderr.strip()[:200])
+    if not dirty and "Everything up-to-date" in (r.stdout + r.stderr):
+        return "NO-CHANGE: inbox already pushed, nothing new"
     return "inbox pushed"
 
 

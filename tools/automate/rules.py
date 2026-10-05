@@ -283,6 +283,16 @@ def _bal_confidence(ctx: dict) -> float:
 def _bal_act(ctx: dict, dry_run: bool) -> str:
     if dry_run:
         return "would query DeepSeek balance API"
+    # Read the previous availability BEFORE the probe: v4pro_balance.py
+    # writes this same state file when it runs, so the read must come first
+    # or every run looks like steady state. (Night shift 2026-10-04.)
+    prev_available = None
+    if _V4PRO_BAL_STATE.exists():
+        try:
+            prev_available = json.loads(
+                _V4PRO_BAL_STATE.read_text()).get("available")
+        except Exception:  # noqa: BLE001
+            pass
     import subprocess as _sp
     r = _sp.run([sys.executable, str(Path(__file__).parent.parent /
                                       "v4pro_balance.py")],
@@ -292,14 +302,26 @@ def _bal_act(ctx: dict, dry_run: bool) -> str:
     except Exception:  # noqa: BLE001
         raise RuntimeError(f"balance check failed: {r.stderr[:200]}")
     # Stamp the check so the hourly throttle in _bal_check engages.
+    # Includes "available" so the next run can detect steady state.
     _V4PRO_BAL_STATE.parent.mkdir(parents=True, exist_ok=True)
     _V4PRO_BAL_STATE.write_text(
         json.dumps({"checked_at": _now().isoformat(),
+                    "available": bool(result.get("available"))
+                    if result.get("ok") else None,
                     "result": result.get("error") or result.get("usd")}))
     if not result.get("ok"):
         # No key yet (or API down) — not a failure of the ecosystem.
         # Record once to the brain so we stop wondering, then stay quiet.
         return f"skipped: {result.get('error')}"
+    # Steady-state quiet: only count as "acted" when availability CHANGED
+    # since the last check. Hourly "still exhausted" probes return NO-CHANGE
+    # so the engine skips the brain record and the acted count.
+    # (Night shift 2026-10-04 — kills the hourly dry-state noise.)
+    available = bool(result.get("available"))
+    if prev_available is not None and prev_available == available:
+        state_word = "AVAILABLE" if available else "exhausted"
+        return (f"NO-CHANGE: v4pro still {state_word} "
+                f"(${result['usd']:.2f}) — flag untouched")
     return (f"balance ${result['usd']:.2f} -> "
             f"v4pro {'AVAILABLE' if result['available'] else 'exhausted'}")
 

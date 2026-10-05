@@ -93,6 +93,16 @@ def run_rules(rules: list[Rule], dry_run: bool = False) -> dict:
             except Exception as e:  # noqa: BLE001
                 result, acted = f"action failed: {e}", False
             log_action(rule.name, ctx, conf, result, acted, dry_run)
+            # NO-CHANGE convention: a rule whose act() returns a string
+            # starting with "NO-CHANGE:" ran but changed nothing (e.g. a
+            # periodic probe whose reading matches the last recorded state).
+            # It stays in the action log for audit, but it is NOT
+            # brain-recorded and does NOT count as "acted" — this keeps
+            # hourly steady-state probes from spamming the second brain
+            # and the heartbeat summaries. (Night shift 2026-10-04.)
+            if result.startswith("NO-CHANGE:"):
+                summary["skipped"].append((rule.name, result))
+                continue
             if not dry_run:
                 sb_record(
                     topic=f"automation: {rule.name}",

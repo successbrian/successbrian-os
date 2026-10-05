@@ -4,18 +4,20 @@ Model tier routing for SuccessBrian OS.
 
 PURPOSE:
     Answer "which model should take this task?" One source of truth for the
-    stack: Penny 7B (small/fast) -> DeepSeek 150B local (workhorse) ->
-    DeepSeek V4 Pro cloud (top tier, hard tasks only when credits allow).
+    stack: Penny 7B (small/fast) -> Sonic Qwen3.6-35B-A3B local (workhorse)
+    -> DeepSeek V4 Pro cloud (top tier, hard tasks only when credits allow).
+    DeepSeek 150B stays listed as a RETIRED entry so history stays readable.
 
 WHY:
     Brian's local-first principle: don't count tokens, optimize wall-clock
-    and owned hardware. But hard tasks still sometimes need the cloud tier.
-    Without a routing decision point, every worker guesses — burning V4 Pro
-    credits on easy jobs or starving hard jobs on the slow 150B (~0.66 tok/s).
-    This makes the choice explicit and checkable.
+    and owned hardware. The 150B tier was retired 2026-10-02 (Qwen A3B
+    switch) — routing to it after retirement silently sent hard work to a
+    dark port. Without a routing decision point, every worker guesses —
+    burning V4 Pro credits on easy jobs or starving hard jobs on the wrong
+    tier. This makes the choice explicit and checkable.
 
 CALLED BY:
-    - tools/automate/rules.py (v4pro_routing rule)
+    - tools/automate/rules.py (v4pro_routing rule reads get_tiers())
     - Night shift / heartbeat workers before assigning work
     - Humans: --v4pro available|exhausted flips the credit flag
 
@@ -23,7 +25,10 @@ NOTES:
     The v4pro credit flag (tools/state/model-tiers.json) is manual
     until we have an API check — Brian or Spencer flips it when credits land
     or dry up. Local tier probes run from k11-alpha via kssh because this VM
-    can't reach the tailnet directly.
+    can't reach the tailnet directly. --status output keeps the old key names
+    (penny_7b / deepseek_150b / v4pro_cloud, each with "available") and adds
+    "status" + "note" fields; consumers should treat status == "retired" as
+    never-routable even if a probe ever answered.
 """
 import argparse
 import json
@@ -32,6 +37,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 STATE = Path(__file__).parent / "state" / "model-tiers.json"
+
+# Local ports on k11-alpha. Verified 2026-10-04 via kssh:
+#   11438 (penny) OPEN, 11439 (sonic) OPEN, 8084 (150b) CLOSED (retired).
+_PORTS = {
+    "penny_7b": 11438,
+    "sonic": 11439,
+    "deepseek_150b": 8084,
+}
+
+# Historical record for the retired tier. Probing a dark port is pointless;
+# the entry exists so old reports and Brian's memory stay legible.
+_RETIRED_150B = {
+    "retired": True,
+    "retired_on": "2026-10-02",
+    "port": 8084,
+}
 
 
 def _remote_port_open(port: int) -> bool:
@@ -75,20 +96,42 @@ def set_v4pro(available: bool, by: str = "manual") -> dict:
 
 
 def get_tiers() -> dict:
-    """Live tier status. v4pro comes from the credit flag; locals are probed."""
+    """Live tier status. v4pro comes from the credit flag; locals are probed.
+
+    Key names are backward compatible with the pre-2026-10-04 output
+    (penny_7b / deepseek_150b / v4pro_cloud, each with "available"); "sonic"
+    is new, and every tier now carries "status" + "note".
+    """
     flag = _read_flag()
     return {
         "penny_7b": {
-            "available": _remote_port_open(11438),
+            "available": _remote_port_open(_PORTS["penny_7b"]),
+            "status": "live",
             "role": "small fast jobs",
+            "note": "MiniCPM/Penny 7B Q6_K on k11-alpha localhost:11438.",
+        },
+        "sonic": {
+            "available": _remote_port_open(_PORTS["sonic"]),
+            "status": "live",
+            "role": "workhorse",
+            "note": ("Qwen3.6-35B-A3B Q6_K (Brian named it Sonic) on k11-alpha "
+                     "localhost:11439. The local workhorse since the "
+                     "2026-10-02 Qwen switch; also Altair's default chat "
+                     "model. 780M Vulkan, 96K ctx."),
         },
         "deepseek_150b": {
-            "available": _remote_port_open(8084),
-            "role": "workhorse (serialized queue)",
+            "available": False,
+            "status": "retired",
+            "role": "historical entry only — never routable",
+            "note": (f"Retired {_RETIRED_150B['retired_on']}; port "
+                     f"{_RETIRED_150B['port']} verified CLOSED 2026-10-04. "
+                     "Kept so old digests/reports stay legible."),
         },
         "v4pro_cloud": {
             "available": bool(flag["v4pro_credits"]),
+            "status": "live",
             "role": "top tier, hard tasks only",
+            "note": "Credit flag is manual until an API check exists.",
             "flag_updated_at": flag["updated_at"],
             "flag_updated_by": flag["updated_by"],
         },
@@ -96,14 +139,23 @@ def get_tiers() -> dict:
 
 
 def route_for(difficulty: str) -> str:
-    """Which tier should take a task of this difficulty?"""
+    """Which tier should take a task of this difficulty?
+
+    hard   -> v4pro_cloud when credits allow, else sonic
+    medium -> sonic
+    easy   -> penny_7b
+    Falls through to the next tier down when the pick is unavailable;
+    "none_available" only when nothing local answers.
+    """
     tiers = get_tiers()
     if difficulty == "hard" and tiers["v4pro_cloud"]["available"]:
         return "v4pro_cloud"
-    if difficulty in ("hard", "medium") and tiers["deepseek_150b"]["available"]:
-        return "deepseek_150b"
+    if difficulty in ("hard", "medium") and tiers["sonic"]["available"]:
+        return "sonic"
     if tiers["penny_7b"]["available"]:
         return "penny_7b"
+    if tiers["sonic"]["available"]:
+        return "sonic"
     return "none_available"
 
 

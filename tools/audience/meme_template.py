@@ -14,6 +14,16 @@ PURPOSE:
     the humanoid android) standing watch top-right — exactly one robot
     per meme — plus the kicker flanked by AI sparkles.
 
+WHY:
+    Brian's standing design rules: light background because readability
+    comes first — a card that can't be read in one glance gets scrolled
+    past. The headline renders as multi-color gradient with 3D extrusion
+    and drop shadow because that is the hook — bold, simple, built to
+    spark curiosity so people ask questions in the comments. Cards stay
+    comparative and plain-worded so casual observers relate without
+    knowing brand names. Every render is 1080x1080 square, no exceptions;
+    one format keeps the feed consistent and the template code simple.
+
 USAGE:
     from meme_template import render_meme
     render_meme(CONTENT, photo_path="/path/they.jpg", out_path="meme.png")

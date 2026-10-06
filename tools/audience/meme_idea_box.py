@@ -27,6 +27,14 @@ NOTES:
       data store per AGENTS.md). Table: public.meme_ideas.
     - generate() NEVER invents poll numbers. If Sonic returns no real data,
       the angle must say so.
+    - FULLY AUTONOMOUS: k11 needs nothing from Hatch. generate() retries
+      Sonic once after 60s; if it still yields zero finals it writes a
+      dated fallback note (never fails silently). Every run also writes
+      /home/successbrian/meme-ideas/YYYY-MM-DD.md and posts the 4 ideas
+      to Brian's Telegram via scripts/tg_post.py — so Brian gets the ideas
+      even if the Hatch link is dead. The Hatch 18:45 chat read is the
+      primary interactive path (he picks numbers in chat); duplicates
+      across Telegram + chat are acceptable, missing the ideas is not.
     - RSS parsing is dependency-free (urllib + ElementTree). Feeds die;
       failures are skipped, never fatal.
     - Sonic JSON is parsed defensively (code fences, brace matching) —
@@ -40,12 +48,15 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.request
 import xml.etree.ElementTree as ET
 
 DBNAME = os.environ.get("MEME_IDEA_DB", "ecosystem_central")
 SONIC_URL = os.environ.get("SONIC_URL", "http://localhost:11439/v1/chat/completions")
 SONIC_MODEL = os.environ.get("SONIC_MODEL", "qwen-a3b")
+IDEAS_DIR = os.environ.get("MEME_IDEAS_DIR", "/home/successbrian/meme-ideas")
+TG_POST = os.environ.get("TG_POST", "/home/successbrian/scripts/tg_post.py")
 
 RSS_FEEDS = [
     ("FoxNews-Politics", "http://feeds.foxnews.com/foxnews/politics"),
@@ -281,21 +292,86 @@ data for a claim, say so in the angle and keep the idea commentary-driven.
 - Output ONLY the JSON array, no prose before or after."""
 
 
+def write_ideas_file(idea_date, ideas, headlines, raw_lines,
+                     failed=False, fail_reason=""):
+    """Dated markdown archive — Brian's fallback read if chat is down."""
+    os.makedirs(IDEAS_DIR, exist_ok=True)
+    path = os.path.join(IDEAS_DIR, f"{idea_date}.md")
+    lines = [f"# Meme ideas — {idea_date}", ""]
+    if failed:
+        lines += ["**Generation failed** — Sonic unreachable or returned "
+                  "no usable ideas after 2 attempts.",
+                  f"Reason: {fail_reason}", "",
+                  "Raw intake below so the evening is not a total loss.", ""]
+    else:
+        try:
+            days = (dt.date(2026, 11, 3)
+                    - dt.date.fromisoformat(idea_date)).days
+            lines += [f"{days} days until election day (2026-11-03).", ""]
+        except ValueError:
+            pass
+    for i, it in enumerate(ideas, 1):
+        lines += [f"## {i}. {it.get('headline', '')}", "",
+                  f"**Angle:** {it.get('angle', '')}", "",
+                  f"**Punchline:** \"{it.get('punchline', '')}\"", "",
+                  f"**Why it works:** {it.get('why_it_works', '')}", "",
+                  f"**Sources:** {it.get('sources', '')}", ""]
+    if raw_lines:
+        lines += ["---", "", "### Raw intake", ""] + raw_lines + [""]
+    if headlines:
+        lines += (["### Headlines scanned", ""]
+                  + [f"- {h}" for h in headlines[:40]] + [""])
+    with open(path, "w") as f:
+        f.write("\n".join(lines))
+    print(f"wrote {path}")
+    return path
+
+
+def deliver_telegram(idea_date, ideas, failed=False):
+    """k11-native delivery — no Hatch involvement. Uses the established
+    tg_post.py pattern (token from file, never logged)."""
+    if failed:
+        text = (f"Meme ideas {idea_date}: tonight's generation failed "
+                f"(Sonic unreachable). Raw intake saved to {IDEAS_DIR}/"
+                f"{idea_date}.md — check it for the raw hooks.")
+    else:
+        parts = [f"Tonight's 4 meme ideas ({idea_date}):", ""]
+        for i, it in enumerate(ideas, 1):
+            parts.append(f"{i}. {it.get('headline', '')}")
+            if it.get("punchline"):
+                parts.append(f"   \"{it['punchline']}\"")
+        parts += ["", "Reply with the number(s) to render."]
+        text = "\n".join(parts)
+    try:
+        p = subprocess.run(["/usr/bin/python3", TG_POST], input=text,
+                           capture_output=True, text=True, timeout=60)
+        out = p.stdout.strip() or p.stderr.strip()
+        print(f"telegram: {out}")
+    except Exception as e:
+        print(f"telegram delivery failed: {e}", file=sys.stderr)
+
+
 def cmd_generate(args):
     idea_date = args.date or dt.date.today().isoformat()
-    print(f"[{idea_date}] fetching RSS headlines...")
-    headlines = fetch_rss_headlines()
-    print(f"[{idea_date}] got {len(headlines)} headlines")
 
-    raw = db_list(idea_date, kind="raw")
+    def log(msg):
+        print(f"[{idea_date}] {msg}", flush=True)
+
+    log("fetching RSS headlines...")
+    headlines = fetch_rss_headlines()
+    log(f"got {len(headlines)} headlines")
+
+    try:
+        raw = db_list(idea_date, kind="raw")
+    except Exception as e:
+        log(f"DB read failed ({e}) — continuing without raw ideas")
+        raw = []
     raw_lines = [f"- {r[3]}" for r in raw]
-    print(f"[{idea_date}] got {len(raw_lines)} raw ideas from the box")
+    log(f"got {len(raw_lines)} raw ideas from the box")
 
     user_prompt = (
-        f"Today is {idea_date}. Election day is 2026-11-03 "
-        f"({(dt.date(2026, 11, 3) - dt.date.fromisoformat(idea_date)).days} "
-        "days away).\n\n"
-        "TODAY'S HEADLINES:\n" +
+        f"Today is {idea_date}. Election day is 2026-11-03."
+        "\n\nTODAY'S HEADLINES:\n" +
         ("\n".join(headlines[:40]) if headlines else "(no headlines fetched)") +
         "\n\nRAW IDEAS FED IN TODAY:\n" +
         ("\n".join(raw_lines) if raw_lines else "(none)") +
@@ -304,25 +380,57 @@ def cmd_generate(args):
         "a toss-up, RCP average Flanagan +1.6."
         "\n\nReturn EXACTLY 4 magausnavyvet style contrasts as a JSON array."
     )
-    print(f"[{idea_date}] calling Sonic ({SONIC_MODEL})...")
-    reply = sonic_chat(SYSTEM_PROMPT, user_prompt)
-    ideas = extract_json_array(reply)
+
+    ideas = []
+    last_err = None
+    for attempt in (1, 2):
+        try:
+            log(f"calling Sonic ({SONIC_MODEL}), attempt {attempt}...")
+            reply = sonic_chat(SYSTEM_PROMPT, user_prompt)
+            ideas = extract_json_array(reply)[:4]
+            if ideas:
+                break
+            last_err = "model returned empty idea list"
+        except Exception as e:
+            last_err = e
+            log(f"Sonic attempt {attempt} failed: {e}")
+        if attempt == 1:
+            log("retrying in 60s...")
+            time.sleep(60)
+
+    if not ideas:
+        # Never silently fail: dated fallback note + telegram, then stop.
+        log(f"GENERATION FAILED after 2 attempts: {last_err}")
+        write_ideas_file(idea_date, [], headlines, raw_lines,
+                         failed=True, fail_reason=str(last_err))
+        deliver_telegram(idea_date, [], failed=True)
+        return []
+
     if len(ideas) != 4:
-        print(f"WARNING: model returned {len(ideas)} ideas, expected 4",
-              file=sys.stderr)
+        log(f"WARNING: model returned {len(ideas)} ideas, expected 4")
+
     ids = []
-    for it in ideas[:4]:
-        nid = db_add(
-            headline=it.get("headline", "")[:300],
-            angle=it.get("angle", ""),
-            punchline=it.get("punchline", "")[:300],
-            why=it.get("why_it_works", ""),
-            sources=it.get("sources", ""),
-            kind="final", status="new", idea_date=idea_date,
-            metadata={"generator": "sonic", "model": SONIC_MODEL})
-        ids.append(nid)
-    print(f"[{idea_date}] stored {len(ids)} finals: {ids}")
-    for i, it in enumerate(ideas[:4], 1):
+    for it in ideas:
+        try:
+            nid = db_add(
+                headline=it.get("headline", "")[:300],
+                angle=it.get("angle", ""),
+                punchline=it.get("punchline", "")[:300],
+                why=it.get("why_it_works", ""),
+                sources=it.get("sources", ""),
+                kind="final", status="new", idea_date=idea_date,
+                metadata={"generator": "sonic", "model": SONIC_MODEL})
+            ids.append(nid)
+        except Exception as e:
+            log(f"DB insert failed ({e}) — delivering from memory")
+            break
+    log(f"stored {len(ids)} finals: {ids}")
+
+    # k11-native delivery paths (no Hatch needed)
+    write_ideas_file(idea_date, ideas, headlines, raw_lines)
+    deliver_telegram(idea_date, ideas)
+
+    for i, it in enumerate(ideas, 1):
         print(f"\n{i}. {it.get('headline', '')}")
         print(f"   {it.get('punchline', '')}")
     return ids

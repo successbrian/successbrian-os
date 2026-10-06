@@ -39,8 +39,9 @@ NOTES:
       can, V4 Pro assists): step 1, Sonic drafts the 4 contrasts;
       step 2, maybe_sharpen_with_v4pro() sends the drafts for a polish
       pass ONLY when tools/state/model-tiers.json says v4pro_credits=true
-      (currently dry). Any V4 Pro failure returns the Sonic drafts
-      unchanged — the job never fails because V4 Pro is missing.
+      (rental live as of 2026-10-06). Any V4 Pro failure returns
+      the Sonic drafts unchanged — the job never fails because V4 Pro
+      is missing.
     - RSS parsing is dependency-free (urllib + ElementTree). Feeds die;
       failures are skipped, never fatal.
     - Sonic JSON is parsed defensively (code fences, brace matching) —
@@ -300,8 +301,12 @@ data for a claim, say so in the angle and keep the idea commentary-driven.
 
 
 # ------------------------------------------------- V4 Pro polish
-V4PRO_URL = "https://api.b.ai/v1/chat/completions"
-V4PRO_MODEL = "deepseek-v4-pro"
+# NOTE (2026-10-06): the InstantlyClaw proxy path (api.b.ai, model
+# "deepseek-v4-pro") currently 401s with the rental key, so we call
+# DeepSeek's own chat endpoint instead — same key, validated live by
+# tools/v4pro_balance.py against api.deepseek.com/user/balance.
+V4PRO_URL = "https://api.deepseek.com/chat/completions"
+V4PRO_MODEL = "deepseek-chat"
 V4PRO_ENV_FILE = "/home/successbrian/.hermes/.env"
 V4PRO_KEY_NAME = "DEEPSEEK_API_KEY"
 
@@ -547,7 +552,7 @@ def cmd_generate(args):
                 kind="final", status="new", idea_date=idea_date,
                 metadata={"generator": gen_tag,
                           "model": SONIC_MODEL +
-                          ("+deepseek-v4-pro" if sharpened else "")})
+                          (V4PRO_MODEL if sharpened else "")})
             ids.append(nid)
         except Exception as e:
             log(f"DB insert failed ({e}) — delivering from memory")

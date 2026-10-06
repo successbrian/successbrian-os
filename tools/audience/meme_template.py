@@ -560,9 +560,12 @@ def _centered(d, y, text, fnt, fill, tracking=0):
 
 
 # ---------------- gradient + 3D headline ----------------
-def headline_3d(base, text, fnt, colors, depth=7):
+def headline_3d(base, text, fnt, colors, depth=7, extrusion=((26, 36, 80, 255),
+               (16, 22, 54, 255))):
     """Multi-color vertical gradient face + 3D extrusion + soft shadow.
-    Returns (layer, (w, h)) sized to the text."""
+    Returns (layer, (w, h)) sized to the text.
+    extrusion: (main, edge) RGBA fills for the 3D block — override for
+    dark canvases (e.g. health's deep teal, crypto's charcoal)."""
     tmp = ImageDraw.Draw(Image.new("RGB", (10, 10)))
     bbox = tmp.textbbox((0, 0), text, font=fnt)
     tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
@@ -578,11 +581,11 @@ def headline_3d(base, text, fnt, colors, depth=7):
     layer = Image.alpha_composite(layer, sh.filter(ImageFilter.GaussianBlur(7)))
     d = ImageDraw.Draw(layer)
 
-    # 3D extrusion: dark navy block behind, offset down-right
+    # 3D extrusion: dark block behind, offset down-right
     for i in range(depth, 0, -1):
-        d.text((ox+i, oy+i), text, font=fnt, fill=(26, 36, 80, 255))
+        d.text((ox+i, oy+i), text, font=fnt, fill=extrusion[0])
     # darker edge on the extrusion for depth
-    d.text((ox+depth, oy+depth), text, font=fnt, fill=(16, 22, 54, 255))
+    d.text((ox+depth, oy+depth), text, font=fnt, fill=extrusion[1])
 
     # gradient face
     n = len(colors)

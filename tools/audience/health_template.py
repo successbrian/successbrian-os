@@ -4,11 +4,13 @@ Same format as the AI and political templates (brand bar, kicker, gradient
 3D headline, comparison cards, garnet punchline, curiosity CTA, shared
 footer) with a health visual identity:
 
-- faint EKG pulse-line pattern along the edges (the health backdrop)
+- deep saturated teal gradient canvas (Brian 2026-10-06: the old near-white
+  base read as washed out — bold saturation now, clinical teal kept)
+- strong EKG pulse-line pattern along the edges (the health signature, felt)
 - kicker flanked by teal pulse glyphs
 - heart-with-pulse emblem standing watch top-right (the one emblem per meme)
-- soft teal glow behind the headline (vitality, not Cherenkov)
-- teal → sky → green headline gradient
+- bright cyan vitality glow behind the headline
+- electric green → cyan headline gradient with near-black teal 3D extrusion
 - garnet punchline with a teal edge (garnet = Brian's January birthstone)
 - tagline: "LIVED EXPERIENCE. REAL TALK." — the health desk's standing rule
   is lived experience, never prescription.
@@ -20,7 +22,7 @@ template's optional headline_size (starting point size, auto-shrinks).
 import sys
 sys.path.insert(0, "/home/hatch/workspace/successbrian-os/tools/audience")
 from meme_template import (background, headline_3d, photo_card, footer,
-                           font, _centered, grad_rounded, _gbar,
+                           font, _centered, grad_rounded, _gbar, icon,
                            HEALTH_BRAND as _HEALTH_BRAND,
                            INK, GRAY, FAINT, GARNET_BG, YELLOW,
                            W, H, FB, FR, BRAND)
@@ -30,12 +32,15 @@ HEALTH_BRAND = dict(_HEALTH_BRAND)
 HEALTH_BRAND.update({
     "tagline": "LIVED EXPERIENCE. REAL TALK.",
     "accent": "#00b894",
+    # dark-canvas wordmark: white + bright cyan (deep teal base needs light type)
+    "wordmark": [("SUCCESS", "#ffffff"), ("BRIAN", "#22d3ee")],
 })
 
 TEAL = "#00c98a"
 TEAL_DARK = "#009e6e"
 TEAL_EDGE = "#5eead4"
-HL_COLORS = ["#00e69a", "#00d9c0", "#22d3ee", "#38bdf8"]  # green -> turquoise -> cyan -> slight blue
+HL_COLORS = ["#00ffa3", "#00e5ff", "#38e1ff", "#5eead4"]  # electric green -> cyan
+HL_EXTRUSION = ((3, 34, 30, 255), (1, 18, 16, 255))  # near-black teal depth
 
 
 def _pulse_points(x0, y0, w, h):
@@ -47,14 +52,48 @@ def _pulse_points(x0, y0, w, h):
             (x0 + w, y0 + h * 0.55)]
 
 
+def health_background():
+    """Deep saturated teal gradient — the bold health canvas.
+
+    Brian 2026-10-06: the old near-white clinical base read as washed out.
+    This keeps the clinical teal identity but with saturation and presence:
+    rich surgical-teal top melting into deep teal at the bottom, with bold
+    cyan/emerald washes. White cards and the electric headline glow on it.
+    """
+    img = Image.new("RGB", (W, H), "#0c6e64")
+    d = ImageDraw.Draw(img)
+    for y in range(H):
+        t = y / H
+        # saturated teal: #14a893 top -> #0a4a42 bottom
+        r = int(20 - 10 * t); g = int(168 - 98 * t); b = int(147 - 81 * t)
+        d.line([(0, y), (W, y)], fill=(r, g, b))
+    glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    # bright cyan vitality wash, top-center
+    gd.ellipse([W // 2 - 480, -300, W // 2 + 480, 380],
+               fill=(0, 229, 255, 90))
+    # deep emerald pool, bottom
+    gd.ellipse([W // 2 - 620, H - 560, W // 2 + 620, H + 160],
+               fill=(0, 120, 95, 110))
+    # mint sheen, upper-left diagonal
+    gd.ellipse([-320, -160, 560, 560], fill=(94, 234, 212, 70))
+    img = Image.alpha_composite(img.convert("RGBA"),
+                                glow.filter(ImageFilter.GaussianBlur(60))).convert("RGB")
+    return img
+
+
 def pulse_backdrop(img):
-    """Faint EKG lines along the left/right edges — the health backdrop."""
+    """Strong EKG lines along the left/right edges — the health signature.
+
+    Brian 2026-10-06: make them FELT, not faint. Bright mint, high alpha,
+    thicker strokes.
+    """
     ov = Image.new("RGBA", img.size, (0, 0, 0, 0))
     d = ImageDraw.Draw(ov)
     for y in (180, 420, 660, 900):
-        d.line(_pulse_points(28, y, 130, 44), fill=(0, 205, 140, 50), width=3)
-        d.line(_pulse_points(W - 158, y + 60, 130, 44),
-               fill=(0, 205, 140, 50), width=3)
+        d.line(_pulse_points(24, y, 150, 48), fill=(0, 255, 190, 125), width=4)
+        d.line(_pulse_points(W - 174, y + 60, 150, 48),
+               fill=(0, 255, 190, 125), width=4)
     return Image.alpha_composite(img.convert("RGBA"), ov).convert("RGB")
 
 
@@ -72,10 +111,10 @@ def health_emblem(size=150):
     s = size
     im = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
-    # soft teal glow
+    # strong teal glow (reads on the deep canvas)
     glow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     ImageDraw.Draw(glow).ellipse([s * 0.08, s * 0.08, s * 0.92, s * 0.92],
-                                 fill=(0, 217, 192, 70))
+                                 fill=(0, 255, 200, 110))
     glow = glow.filter(ImageFilter.GaussianBlur(s * 0.08))
     im.alpha_composite(glow)
     d = ImageDraw.Draw(im)
@@ -98,25 +137,56 @@ def health_emblem(size=150):
 
 
 def kicker_health(img, y, text):
-    """Kicker flanked by teal pulse glyphs — the health template signature."""
+    """Kicker flanked by teal pulse glyphs — the health template signature.
+    White type on the deep teal canvas (Brian 2026-10-06: no washed out)."""
     d = ImageDraw.Draw(img)
     kf = font(FB, 25)
     tw = d.textlength(text, font=kf) + 3 * (len(text) - 1)
     cx = img.size[0] / 2
-    _centered(d, y, text, kf, TEAL_DARK, tracking=3)
+    _centered(d, y, text, kf, "#ffffff", tracking=3)
     for sx in (int(cx - tw / 2 - 62), int(cx + tw / 2 + 16)):
         sp = icon_pulse(36)
         img.paste(sp, (sx, y - 2), sp)
     return ImageDraw.Draw(img)
 
 
+def footer_health_dark(img, d, hashtag=None, dy=0, brand=None):
+    """Footer recolored for the deep teal canvas: light handles, white blog
+    URL, bright-teal hashtag line. Same rhythm as the shared footer()."""
+    b = brand or HEALTH_BRAND
+    tag = hashtag if hashtag is not None else b.get("hashtag")
+    d.line([(48, 840 + dy), (W - 48, 840 + dy)], fill=(94, 234, 212, 255),
+           width=3)
+    items = [(icon(kind, 48), handle) for kind, handle in b["handles"]]
+    widths = [48 + 12 + d.textlength(h, font=font(FR, 20)) for _, h in items]
+    total_w = sum(widths) + 36 * (len(items) - 1)
+    x = (W - total_w) / 2
+    y_ic = 852 + dy
+    for (ic, handle), wdt in zip(items, widths):
+        img.paste(ic, (int(x), y_ic), ic)
+        d.text((x + 48 + 12, y_ic + 9), handle, font=font(FR, 20),
+               fill="#e8f4f1")
+        x += wdt + 36
+    d = ImageDraw.Draw(img)
+    bic = icon("blog", 48)
+    url = b["blog_url"]
+    f_blog = font(FB, 30)
+    tw = d.textlength(url, font=f_blog)
+    bx = (W - (48 + 14 + tw)) / 2
+    img.paste(bic, (int(bx), 910 + dy), bic)
+    d.text((bx + 48 + 14, 912 + dy), url, font=f_blog, fill="#ffffff")
+    if tag:
+        _centered(d, 962 + dy, tag, font(FB, 28), "#5eead4")
+    return img, ImageDraw.Draw(img)
+
+
 def render_health_meme(content, photo_path=None, out_path="meme.png",
                        brand=None, headline_size=None):
     b = brand or HEALTH_BRAND
-    img = pulse_backdrop(background())
+    img = pulse_backdrop(health_background())
     d = ImageDraw.Draw(img)
 
-    # brand bar
+    # brand bar (light type on the deep teal canvas)
     pc = photo_card(photo_path)
     img.paste(pc, (48, 36), pc)
     x = 48 + 148 + 24
@@ -125,17 +195,17 @@ def render_health_meme(content, photo_path=None, out_path="meme.png",
         f = font(FB, 46)
         d.text((wx, 44), word, font=f, fill=color)
         wx += d.textlength(word, font=f) + 10
-    d.text((x, 104), b["tagline"], font=font(FR, 21), fill=GRAY)
+    d.text((x, 104), b["tagline"], font=font(FR, 21), fill="#d7f5ee")
 
     # health emblem standing watch, top right — the one emblem on the meme
     emb = health_emblem(150)
     img.paste(emb, (W - 30 - 150, 22), emb)
     d = ImageDraw.Draw(img)
 
-    # soft teal vitality glow behind the headline
+    # strong cyan vitality glow behind the headline
     glow = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    ImageDraw.Draw(glow).ellipse([W / 2 - 330, 180, W / 2 + 330, 430],
-                                 fill=(34, 211, 238, 42))
+    ImageDraw.Draw(glow).ellipse([W / 2 - 360, 170, W / 2 + 360, 450],
+                                 fill=(0, 229, 255, 85))
     img = Image.alpha_composite(img.convert("RGBA"),
                                 glow.filter(ImageFilter.GaussianBlur(40))).convert("RGB")
     d = ImageDraw.Draw(img)
@@ -153,7 +223,8 @@ def render_health_meme(content, photo_path=None, out_path="meme.png",
             break
         size -= 2
     colors = content.get("grad_colors", HL_COLORS)
-    hl, (lw, lh) = headline_3d(img, content["headline"], f_big, colors)
+    hl, (lw, lh) = headline_3d(img, content["headline"], f_big, colors,
+                               extrusion=HL_EXTRUSION)
     img.paste(hl, ((W - lw) // 2, 254), hl)
     # colorful gradient divider under headline
     div = grad_rounded((440, 9), HL_COLORS, 4)
@@ -210,23 +281,24 @@ def render_health_meme(content, photo_path=None, out_path="meme.png",
     dy = 0
     if cp:
         cs0, cs1 = 688, 758
-        d.rounded_rectangle([48, cs0, W - 48, cs1], 16, fill="#eef2f7",
-                            outline="#16213a", width=2)
+        d.rounded_rectangle([48, cs0, W - 48, cs1], 16, fill="#ffffff",
+                            outline="#5eead4", width=3)
         _centered(d, cs0 + 8, cp["label"], font(FB, 19), FAINT)
         _centered(d, cs0 + 34, cp["quote"], font(FB, 23), INK)
         dy = 68
 
-    # punchline strip (garnet — Brian's birthstone; teal edge for health)
+    # punchline strip (garnet — Brian's birthstone; strong teal edge for health)
     py0, py1 = 700 + dy, 782 + dy
     d.rounded_rectangle([48, py0, W - 48, py1], 18, fill=GARNET_BG,
-                        outline=TEAL_EDGE, width=2)
+                        outline=TEAL_EDGE, width=3)
     _centered(d, py0 + 22, content["punchline"], font(FB, 29), YELLOW)
 
     # curiosity line (replaces technical callouts)
     if content.get("curiosity"):
-        _centered(d, 804 + dy, content["curiosity"], font(FB, 26), INK)
+        _centered(d, 804 + dy, content["curiosity"], font(FB, 26), "#ffffff")
 
-    img, d = footer(img, d, hashtag=content.get("hashtag"), dy=dy, brand=b)
+    img, d = footer_health_dark(img, d, hashtag=content.get("hashtag"), dy=dy,
+                               brand=b)
 
     img.save(out_path)
     return out_path

@@ -92,7 +92,9 @@ BG_BOT = "#1a1a21"
 CARD_BG = "#1b1b23"
 INK_D = "#eceef4"          # body text on dark
 DIM_D = "#9aa0b4"          # dim text on dark
-HL_COLORS = ["#8ff2de", "#70c7ba", "#2fa08e"]  # bright teal -> Kaspa -> deep teal
+HL_COLORS = ["#8ff2de", "#4d7dc9", "#ffb700"]  # Kaspa teal -> Cardano blue -> BNB gold:
+# Brian's top-5 conviction order (Kaspa, Cardano, Solana, Bitcoin, BNB)
+# rendered as his portfolio in color form. Kaspa leads; gold closes.
 PHOTO = "/home/hatch/workspace/profile-images/brian-gina-together.jpg"
 
 

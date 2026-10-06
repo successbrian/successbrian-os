@@ -61,9 +61,9 @@ TG_POST = os.environ.get("TG_POST", "/home/successbrian/scripts/tg_post.py")
 RSS_FEEDS = [
     ("FoxNews-Politics", "http://feeds.foxnews.com/foxnews/politics"),
     ("CNN-Politics", "http://rss.cnn.com/rss/cnn_allpolitics.rss"),
+    ("NPR-Politics", "https://feeds.npr.org/1014/rss.xml"),
+    ("PBS-NewsHour", "https://www.pbs.org/newshour/feeds/rss/headlines"),
     ("BBC-US", "http://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml"),
-    ("Reuters-US", "https://www.reuters.com/rssfeed/usNews"),
-    ("AP-Politics", "https://apnews.com/hub/politics?format=rss"),
 ]
 
 UA = {"User-Agent": "Mozilla/5.0 (meme-idea-box/1.0)"}

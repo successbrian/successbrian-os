@@ -9,10 +9,13 @@ PURPOSE:
     simple — curiosity over complexity. The audience should think
     "wow, what is Brian telling me here?" and ask questions.
 
-    AI-template signature visuals (built in): a faint neural-network
-    constellation along the edges, the android emblem (glowing badge with
-    the humanoid android) standing watch top-right — exactly one robot
-    per meme — plus the kicker flanked by AI sparkles.
+    AI-template signature visuals (built in): a neural-network
+    constellation along the edges over holographic depth (blurred color
+    orbs + diagonal sheen), the android emblem (glowing badge with the
+    humanoid android, holographic chrome ring, orbiting sparkles)
+    standing watch top-right — exactly one robot per meme — the kicker
+    on a holographic pill flanked by AI sparkles, iridescent chrome
+    strips on the cards, and a glowing gradient divider.
 
 WHY:
     Brian's standing design rules: light background because readability
@@ -355,11 +358,18 @@ def android_emblem(size=170, ring="#38b6ff"):
     d = ImageDraw.Draw(im)
     d.ellipse([cx - s * 0.40, cy - s * 0.40, cx + s * 0.40, cy + s * 0.40],
               fill=(241, 246, 253, 255), outline="#c3d2e8", width=2)
-    d.ellipse([cx - s * 0.40, cy - s * 0.40, cx + s * 0.40, cy + s * 0.40],
-              outline=ring, width=max(3, int(s * 0.028)))
+    # holographic ring: the chrome shifts around the circle
+    _holo_ring(d, cx, cy, s * 0.40, max(3, int(s * 0.028)))
     r2 = s * 0.345
-    d.ellipse([cx - r2, cy - r2, cx + r2, cy + r2],
-              outline=(56, 182, 255, 170), width=2)
+    _holo_ring(d, cx, cy, r2, 2,
+               ("#e879f9", "#8b5cf6", "#3b82f6", "#22d3ee"))
+    # tiny orbiting sparkles on the glow field
+    for ang, scol in ((35, "#22d3ee"), (155, "#8b5cf6"), (275, "#e879f9")):
+        a = math.radians(ang)
+        ox = cx + math.cos(a) * s * 0.47
+        oy = cy + math.sin(a) * s * 0.47
+        sp = icon_spark(20, color=scol)
+        im.paste(sp, (int(ox - 10), int(oy - 10)), sp)
     bot = icon_robot(int(s * 0.60))
     im.paste(bot, (int(cx - bot.width / 2),
                    int(cy - bot.height / 2 - s * 0.015)), bot)
@@ -380,36 +390,103 @@ def icon_spark(size=44, color="#8b2bff"):
     return im
 
 
+def holo_pill(size, colors=("#22d3ee", "#3b82f6", "#8b5cf6", "#e879f9"),
+              radius=20, base_alpha=52):
+    """Horizontal holographic gradient pill with rounded corners (RGBA).
+
+    The AI template's iridescent chrome — used for the kicker pill, card
+    top accents, and the punchline's iridescent edge."""
+    w, h = size
+    grad = Image.new("RGB", (w, h))
+    gd = ImageDraw.Draw(grad)
+    n = len(colors)
+    for x in range(w):
+        t = x / max(1, w - 1)
+        seg = t * (n - 1)
+        i = int(seg)
+        f = seg - i
+        c1 = _hex(colors[i])
+        c2 = _hex(colors[min(i + 1, n - 1)])
+        gd.line([(x, 0), (x, h)],
+                fill=tuple(int(a + (b - a) * f) for a, b in zip(c1, c2)))
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, w, h], radius,
+                                           fill=base_alpha)
+    grad.putalpha(mask)
+    return grad.convert("RGBA")
+
+
+def _holo_ring(d, cx, cy, r, width,
+               colors=("#22d3ee", "#3b82f6", "#8b5cf6", "#e879f9")):
+    """Badge ring drawn as arc segments colored by angle — the ring itself
+    shifts cyan -> blue -> violet -> magenta around the circle."""
+    n = 72
+    for i in range(n):
+        a0 = 360 * i / n
+        a1 = 360 * (i + 1) / n + 1.5
+        t = i / max(1, n - 1)
+        seg = t * (len(colors) - 1)
+        j = int(seg)
+        f = seg - j
+        col = _mix(colors[j], colors[min(j + 1, len(colors) - 1)], f)
+        d.arc([cx - r, cy - r, cx + r, cy + r], start=a0, end=a1,
+              fill=col, width=width)
+
+
 def ai_backdrop(img):
-    """Faint neural-network constellation along the edges — AI texture
-    that never touches the readable middle."""
+    """Neural-network constellation + holographic depth — AI texture
+    that stays off the readable middle. v2: denser nodes, blurred color
+    orbs, and a faint diagonal holographic sheen for depth."""
     import random
     rnd = random.Random(73)
     w, h = img.size
     ov = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(ov)
     pts = []
-    for _ in range(9):
-        pts.append((rnd.randint(24, 190), rnd.randint(60, h - 60)))
-    for _ in range(9):
-        pts.append((rnd.randint(w - 190, w - 24), rnd.randint(60, h - 60)))
+    for _ in range(14):
+        pts.append((rnd.randint(24, 260), rnd.randint(60, h - 60)))
+    for _ in range(14):
+        pts.append((rnd.randint(w - 260, w - 24), rnd.randint(60, h - 60)))
     for i, (x1, y1) in enumerate(pts):
         for x2, y2 in pts[i + 1:]:
-            if ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5 < 300:
-                d.line([(x1, y1), (x2, y2)], fill=(160, 170, 225, 60), width=2)
+            if ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5 < 320:
+                d.line([(x1, y1), (x2, y2)], fill=(140, 150, 220, 85), width=2)
     for x, y in pts:
-        r = rnd.randint(4, 8)
-        d.ellipse([x - r, y - r, x + r, y + r], fill=(150, 130, 220, 85))
-    return Image.alpha_composite(img.convert("RGBA"), ov).convert("RGB")
+        r = rnd.randint(4, 9)
+        d.ellipse([x - r, y - r, x + r, y + r], fill=(130, 110, 220, 115))
+    img = Image.alpha_composite(img.convert("RGBA"), ov).convert("RGB")
+    # holographic depth: large blurred color orbs
+    orbs = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    od = ImageDraw.Draw(orbs)
+    od.ellipse([-160, 120, 320, 600], fill=(34, 211, 238, 38))
+    od.ellipse([w - 320, -80, w + 160, 400], fill=(232, 121, 249, 34))
+    od.ellipse([w - 420, h - 420, w + 60, h + 60], fill=(139, 92, 246, 36))
+    orbs = orbs.filter(ImageFilter.GaussianBlur(60))
+    img = Image.alpha_composite(img.convert("RGBA"), orbs).convert("RGB")
+    # faint diagonal holographic sheen
+    sheen = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(sheen)
+    sd.polygon([(w * 0.55, 0), (w * 0.85, 0), (w * 0.30, h), (w * 0.0, h)],
+               fill=(255, 255, 255, 26))
+    sd.polygon([(w * 0.88, 0), (w * 1.0, 0), (w * 0.45, h), (w * 0.33, h)],
+               fill=(190, 220, 255, 30))
+    sheen = sheen.filter(ImageFilter.GaussianBlur(30))
+    img = Image.alpha_composite(img.convert("RGBA"), sheen).convert("RGB")
+    return img
 
 
 def kicker_ai(img, y, text):
-    """Kicker flanked by AI sparkles — the AI template signature.
-    (The android appears exactly once per meme, as the emblem top-right.)"""
+    """Kicker on a holographic pill, flanked by AI sparkles — the AI
+    template signature. (The android appears exactly once per meme,
+    as the emblem top-right.)"""
     d = ImageDraw.Draw(img)
     kf = font(FB, 25)
     tw = d.textlength(text, font=kf) + 3 * (len(text) - 1)
     cx = img.size[0] / 2
+    pw, ph = int(tw) + 150, 52
+    pill = holo_pill((pw, ph), radius=26, base_alpha=52)
+    img.paste(pill, (int(cx - pw / 2), y - 8), pill)
+    d = ImageDraw.Draw(img)
     _centered(d, y, text, kf, "#0a7fd4", tracking=3)
     for sx in (int(cx - tw / 2 - 58), int(cx + tw / 2 + 20)):
         sp = icon_spark(36)
@@ -569,9 +646,18 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
     colors = content.get("grad_colors", ["#22d3ee", "#3b82f6", "#8b5cf6", "#e879f9"])
     hl, (lw, lh) = headline_3d(img, content["headline"], f_big, colors)
     img.paste(hl, ((W-lw)//2, 254), hl)
-    # colorful gradient divider under headline
+    # colorful gradient divider under headline, with a soft holographic glow
     div = grad_rounded((440, 9), ["#22d3ee", "#3b82f6", "#8b5cf6", "#e879f9"], 4)
+    glow = div.filter(ImageFilter.GaussianBlur(14))
+    img.paste(glow, ((W-440)//2, 398 - 5), glow)
     img.paste(div, ((W-440)//2, 398), div)
+    # scattered AI sparkles flanking the divider (deterministic)
+    for sx, sy, ss, scol in ((150, 390, 22, "#22d3ee"),
+                             (238, 402, 16, "#8b5cf6"),
+                             (842, 402, 16, "#e879f9"),
+                             (930, 390, 22, "#3b82f6")):
+        sp = icon_spark(ss, color=scol)
+        img.paste(sp, (sx, sy), sp)
     d = ImageDraw.Draw(img)
     # series progress dots (optional): CONTENT["series_day"] = 1..5
     if content.get("series_day"):
@@ -600,6 +686,12 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
         d.rounded_rectangle([x+6, cy0+10, x+cw+6, cy0+ch+10], 26, fill=(178, 188, 205, 255))
         d.rounded_rectangle([x, cy0, x+cw, cy0+ch], 26, fill=tint,
                             outline=(210, 218, 230, 255), width=2)
+        # holographic chrome strip along the card top + corner sparkle
+        strip = holo_pill((int(cw) - 8, 7), radius=3, base_alpha=220)
+        img.paste(strip, (int(x) + 4, int(cy0) + 6), strip)
+        csp = icon_spark(26, color="#8b5cf6")
+        img.paste(csp, (int(x + cw) - 30, int(cy0) - 12), csp)
+        d = ImageDraw.Draw(img)
         cx = x + cw/2
         for txt, fnt, col, yy in [
             (c["tag"], font(FB, 19), FAINT, cy0+24),
@@ -629,10 +721,13 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
         _centered(d, cs0 + 34, cp["quote"], font(FB, 23), INK)
         dy = 68
 
-    # punchline strip (garnet — Brian's birthstone)
+    # punchline strip (garnet — Brian's birthstone) with iridescent top edge
     py0, py1 = 700 + dy, 782 + dy
     d.rounded_rectangle([48, py0, W-48, py1], 18, fill=GARNET_BG,
                         outline=GARNET_EDGE, width=2)
+    edge = holo_pill((W - 96 - 8, 5), radius=2, base_alpha=200)
+    img.paste(edge, (48 + 4, py0 + 3), edge)
+    d = ImageDraw.Draw(img)
     _centered(d, py0+22, content["punchline"], font(FB, 29), YELLOW)
 
     # curiosity line (replaces technical callouts)

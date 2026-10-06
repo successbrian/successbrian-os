@@ -38,8 +38,8 @@ import math
 import sys
 
 sys.path.insert(0, "/home/hatch/workspace/successbrian-os/tools/audience")
-from meme_template import (background, headline_3d, photo_card, icon, BRAND,
-                           font, _centered, grad_rounded, ai_backdrop, footer,
+from meme_template import (background, headline_3d, photo_card, BRAND,
+                           font, _centered, ai_backdrop, footer,
                            INK, GRAY, GARNET_BG, YELLOW,
                            W, H, FB, FR)
 from PIL import Image, ImageDraw, ImageFilter, ImageChops

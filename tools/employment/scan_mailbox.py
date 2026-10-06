@@ -44,7 +44,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 KSSH = os.path.expanduser("~/workspace/bin/kssh")

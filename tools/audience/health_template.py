@@ -23,12 +23,12 @@ template's optional headline_size (starting point size, auto-shrinks).
 import sys
 from pathlib import Path
 sys.path.insert(0, "/home/hatch/workspace/successbrian-os/tools/audience")
-from meme_template import (background, headline_3d, photo_card, footer,
+from meme_template import (headline_3d, photo_card,
                            font, _centered, grad_rounded, _gbar, icon,
                            HEALTH_BRAND as _HEALTH_BRAND,
                            INK, GRAY, FAINT, GARNET_BG, YELLOW,
-                           W, H, FB, FR, BRAND)
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+                           W, H, FB, FR)
+from PIL import Image, ImageDraw, ImageFilter
 
 HEALTH_BRAND = dict(_HEALTH_BRAND)
 HEALTH_BRAND.update({

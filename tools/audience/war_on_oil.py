@@ -7,7 +7,7 @@ divider, enlisted-silver propeller.
 import sys
 sys.path.insert(0, "/home/hatch/workspace/successbrian-os/tools/audience")
 from political_meme import render_political_meme
-from meme_template import font, INK, GRAY, W, FB, FR
+from meme_template import font, INK, FB, FR
 from PIL import Image, ImageDraw
 
 PHOTO = "/home/hatch/workspace/profile-images/brian-gina-together.jpg"

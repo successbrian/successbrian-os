@@ -52,8 +52,8 @@ TIERS = [
      "url": "http://127.0.0.1:8084/v1/chat/completions",
      "model": "DeepSeek-V4-Flash-reap-150b", "timeout": 600, "max_tokens": 300},
 ]
-V4PRO_URL = "https://api.b.ai/v1/chat/completions"
-V4PRO_MODEL = "deepseek-v4-pro"
+V4PRO_URL = "https://api.deepseek.com/chat/completions"
+V4PRO_MODEL = "deepseek-chat"
 V4PRO_BALANCE_URL = "https://api.deepseek.com/user/balance"
 V4PRO_ENV_FILE = "/home/successbrian/.hermes/.env"
 V4PRO_KEY_NAME = "DEEPSEEK_API_KEY"

@@ -8,8 +8,8 @@ footer) with a health visual identity:
   base read as washed out — bold saturation now, clinical teal kept)
 - strong EKG pulse-line pattern along the edges (the health signature, felt)
 - kicker flanked by teal pulse glyphs
-- Oliabo Prima pillow-pack emblem top-right (cutaway: capsules visible;
-  visual branding only, no text — the one emblem per meme)
+- Oliabo Prima pillow-pack emblem top-right (REAL product photo, not a
+  drawing — the one emblem per meme)
 - bright cyan vitality glow behind the headline
 - electric green → cyan headline gradient with near-black teal 3D extrusion
 - garnet punchline with a teal edge (garnet = Brian's January birthstone)
@@ -21,6 +21,7 @@ CONTENT contract mirrors meme_template.render_meme, plus the political
 template's optional headline_size (starting point size, auto-shrinks).
 """
 import sys
+from pathlib import Path
 sys.path.insert(0, "/home/hatch/workspace/successbrian-os/tools/audience")
 from meme_template import (background, headline_3d, photo_card, footer,
                            font, _centered, grad_rounded, _gbar, icon,
@@ -182,14 +183,15 @@ def icon_glucometer(size=48):
 
 
 def packet_emblem(size=150):
-    """Oliabo Prima pillow-pack sachet with the capsules visible inside.
+    """Oliabo Prima pillow pack — REAL product photo.
 
-    Brian 2026-10-06: the heart badge wasn't reading — the big top-right
-    emblem is now the Prima pillow pack, CUTAWAY style: 4 capsules visible
-    through a front window (not the sealed exterior). Visual branding ONLY
-    — no text on the packet. Olive green + Mediterranean gold, subtle
-    olive-branch motif. Same presence as the old badge: top-right, the one
-    emblem per meme, teal glow + soft drop shadow.
+    Brian 2026-10-06: "not a drawing. the actual high resolution image of
+    it." The drawn sachet is gone. Loads oliabo-prima-packet.png (real
+    Oliabo product photography: transparent daily sachet, 4 capsules
+    visible inside), scales it into the emblem slot as a rounded product
+    badge with a gold ring + teal glow + soft drop shadow so it sits
+    naturally on the deep teal canvas — no white-box artifact. Top-right,
+    the one emblem per meme.
     """
     s = size
     im = Image.new("RGBA", (s, s), (0, 0, 0, 0))
@@ -198,87 +200,49 @@ def packet_emblem(size=150):
     ImageDraw.Draw(glow).ellipse([s * 0.08, s * 0.08, s * 0.92, s * 0.92],
                                  fill=(0, 255, 200, 90))
     im.alpha_composite(glow.filter(ImageFilter.GaussianBlur(s * 0.08)))
-    # soft drop shadow
+
+    photo = None
+    for cand in (
+        Path.home() / "workspace/your_files/memes/proofs/oliabo-prima-packet.png",
+        Path(__file__).resolve().parent.parent.parent.parent
+        / "your_files/memes/proofs/oliabo-prima-packet.png",
+    ):
+        if cand.exists():
+            photo = Image.open(cand).convert("RGB")
+            break
+    if photo is None:
+        # Brian rejected the drawing — never fall back to it. Fail visibly.
+        print("WARNING packet_emblem: oliabo-prima-packet.png not found")
+        return im
+
+    # fit the slot keeping aspect (photo is 335x265 landscape)
+    max_side = int(s * 0.88)
+    photo.thumbnail((max_side, max_side), Image.LANCZOS)
+    pw, ph = photo.size
+    bx, by = (s - pw) // 2, (s - ph) // 2
+
+    # soft drop shadow under the badge
+    rad = 22
     sh = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     ImageDraw.Draw(sh).rounded_rectangle(
-        [s * 0.24, s * 0.18, s * 0.76, s * 0.92], s * 0.05,
+        [bx + 5, by + 7, bx + pw + 5, by + ph + 7], radius=rad,
         fill=(0, 0, 0, 110))
-    im.alpha_composite(sh.filter(ImageFilter.GaussianBlur(s * 0.04)))
+    im.alpha_composite(sh.filter(ImageFilter.GaussianBlur(6)))
+
+    # rounded badge mask with a feathered edge — blends into the teal,
+    # no hard white-box cut
+    mask = Image.new("L", (pw, ph), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, pw, ph], radius=rad,
+                                           fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(1.4))
+    badge = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    badge.paste(photo, (bx, by), mask)
+    im.alpha_composite(badge)
+
+    # gold ring (Oliabo accent) defines the badge edge intentionally
     d = ImageDraw.Draw(im)
-
-    OLIVE = (107, 142, 35, 255)
-    OLIVE_DK = (74, 100, 24, 255)
-    GOLD = (212, 160, 23, 255)
-    GOLD_DK = (158, 112, 14, 255)
-    BRONZE = (90, 66, 10, 255)
-    CREAM = (243, 240, 222, 255)
-
-    x0, x1 = s * 0.24, s * 0.76
-    y0, y1 = s * 0.14, s * 0.90
-    crimp = s * 0.085
-
-    # packet body: olive green with gold edge
-    d.rounded_rectangle([x0, y0, x1, y1], radius=int(s * 0.05),
-                        fill=OLIVE, outline=GOLD, width=max(3, s // 40))
-    # puff sheen: diagonal light band (subtle)
-    d.polygon([(x0 + s * 0.06, y0 + crimp + s * 0.02),
-               (x0 + s * 0.14, y0 + crimp + s * 0.02),
-               (x0 + s * 0.06, y1 - crimp - s * 0.02),
-               (x0 - s * 0.01, y1 - crimp - s * 0.02)],
-              fill=(255, 255, 255, 26))
-
-    # crimped seals: gold bands + notch marks, top and bottom
-    for cy0, cy1 in ((y0, y0 + crimp), (y1 - crimp, y1)):
-        d.rectangle([x0, cy0, x1, cy1], fill=GOLD)
-        n = 9
-        for i in range(n):
-            nx = x0 + (x1 - x0) * (i + 0.5) / n
-            d.line([(nx, cy0 + 2), (nx, cy1 - 2)], fill=GOLD_DK, width=2)
-
-    # cutaway window: cream inset revealing the capsules
-    wx0, wx1 = x0 + s * 0.055, x1 - s * 0.055
-    wy0, wy1 = y0 + crimp + s * 0.028, y1 - crimp - s * 0.028
-    d.rounded_rectangle([wx0, wy0, wx1, wy1], radius=int(s * 0.03),
-                        fill=CREAM, outline=OLIVE_DK, width=2)
-
-    # 4 capsules, single column: horizontal two-tone (olive half / gold half)
-    # — horizontal reads as "capsule" at a glance; the two-tone split and
-    # gloss sell the 3D form even at small scale.
-    def capsule(cx0, cy0, cw, ch):
-        r = ch / 2
-        mid = cx0 + cw / 2
-        d.rounded_rectangle([cx0, cy0, cx0 + cw, cy0 + ch],
-                            radius=int(r), fill=GOLD)
-        d.rectangle([cx0, cy0, mid, cy0 + ch], fill=OLIVE)
-        d.ellipse([cx0, cy0, cx0 + ch, cy0 + ch], fill=OLIVE)
-        d.rounded_rectangle([cx0 + 2, cy0 + 2, cx0 + cw - 2, cy0 + ch * 0.40],
-                            radius=max(1, int(r * 0.5)),
-                            fill=(255, 255, 255, 70))
-        d.rounded_rectangle([cx0, cy0, cx0 + cw, cy0 + ch],
-                            radius=int(r), outline=OLIVE_DK, width=2)
-
-    gap = s * 0.028
-    cw = (wx1 - wx0) - gap * 2
-    ch = (wy1 - wy0 - gap * 5) / 4
-    for i in range(4):
-        capsule(wx0 + gap, wy0 + gap + i * (ch + gap), cw, ch)
-
-    # olive-branch motif on the bottom crimp: bronze stem, leaves, one olive
-    bx, by = x0 + s * 0.16, y1 - crimp / 2
-    d.line([(bx - s * 0.05, by + s * 0.012),
-            (bx + s * 0.05, by - s * 0.012)],
-           fill=BRONZE, width=max(2, s // 60))
-    for lx, ly, dx, dy in ((bx - s * 0.03, by, -s * 0.028, -s * 0.022),
-                           (bx + s * 0.005, by - s * 0.004, s * 0.004, -s * 0.032),
-                           (bx + s * 0.035, by - s * 0.008, s * 0.030, -s * 0.018)):
-        d.polygon([(lx, ly), (lx + dx * 0.55, ly + dy * 0.55 - s * 0.006),
-                   (lx + dx, ly + dy),
-                   (lx + dx * 0.45, ly + dy * 0.45 + s * 0.006)],
-                  fill=BRONZE)
-    orad = s * 0.016
-    d.ellipse([bx + s * 0.052 - orad, by - s * 0.006 - orad,
-               bx + s * 0.052 + orad, by - s * 0.006 + orad],
-              fill=BRONZE)
+    d.rounded_rectangle([bx, by, bx + pw, by + ph], radius=rad,
+                        outline=(212, 160, 23, 255), width=4)
     return im
 
 

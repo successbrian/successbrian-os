@@ -72,31 +72,36 @@ def draw_content(img, d, box):
     n = len(CARDS)
     gap = 14
     ch = (y1 - y0 - gap * (n - 1)) / n
+    # narrow-card layout: shrunken icon, text column, dedicated stat
+    # column on the right so nothing ever collides
     for i, (title, l1, l2, stat, icon) in enumerate(CARDS):
         cy = y0 + i * (ch + gap)
         d.rounded_rectangle([x0, cy, x1, cy + ch], 22, fill="white",
                             outline="#1e3fae", width=3)
         iw, ih = icon.size
-        img.paste(icon, (int(x0 + 22), int(cy + (ch - ih) / 2)), icon)
-        tx = x0 + 22 + iw + 22
-        # header line: title left, stat right — frees the body for facts
+        nw = 110
+        nh = int(ih * nw / iw)
+        icon_s = icon.resize((nw, nh), Image.LANCZOS)
+        img.paste(icon_s, (int(x0 + 18), int(cy + (ch - nh) / 2)), icon_s)
+        stat_w = 200
+        sx0 = x1 - 18 - stat_w
+        tx = x0 + 18 + nw + 16
         ty = cy + 8
-        d.text((tx, ty), title, font=font(FB, 28), fill=INK)
-        # facts as bullets, full width in the whitespace the stat vacated
-        fb = font(FR, 18)
-        d.text((tx, ty + 36), "•  " + l1, font=fb, fill="#414b5e")
-        d.text((tx, ty + 58), "•  " + l2, font=fb, fill="#414b5e")
-        # stat: as large as possible, uniform across cards, tiny black
-        # stroke so it pops off the card
-        fsize = 46
-        while fsize > 20:
+        d.text((tx, ty), title, font=font(FB, 24), fill=INK)
+        fb = font(FR, 16)
+        d.text((tx, ty + 34), "•  " + l1, font=fb, fill="#414b5e")
+        d.text((tx, ty + 56), "•  " + l2, font=fb, fill="#414b5e")
+        # stat: as large as its column allows, uniform, black stroke,
+        # vertically centered
+        fsize = 40
+        while fsize > 16:
             _f = font(FB, fsize)
-            if max(d.textlength(s, font=_f) for _, _, _, s, _ in CARDS) <= 330:
+            if max(d.textlength(s, font=_f) for _, _, _, s, _ in CARDS) <= stat_w:
                 break
             fsize -= 2
         fstat = font(FB, fsize)
         sw = d.textlength(stat, font=fstat)
-        d.text((x1 - 26 - sw, cy + ch / 2), stat, font=fstat,
+        d.text((sx0 + (stat_w - sw) / 2, cy + ch / 2), stat, font=fstat,
                fill="#d2202f", anchor="lm", stroke_width=2,
                stroke_fill="black")
         d = ImageDraw.Draw(img)

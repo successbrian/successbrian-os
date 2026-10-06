@@ -371,73 +371,81 @@ def political_stripes(img):
     return Image.alpha_composite(img.convert("RGBA"), waves).convert("RGB")
 
 
-def poll_trend_card(img, d, box, title, polls, dem_label, gop_label,
-                    footnote=None):
-    """Mini polling trend chart — one point per REAL poll, no invented data.
+# --- Election-season inset: compact countdown + race tracker ---------------
+# Standing until the midterms pass. One point per REAL published poll —
+# never invented daily points.
+ELECTION_DAY = "2026-11-03"
+MN_SENATE_POLLS = [  # (date_label, dem_pct, gop_pct), chronological
+    ("9/10", 48.9, 45.4),   # Quantus Insights
+    ("9/14", 42.0, 42.0),   # KSTP/SurveyUSA
+    ("9/15", 43.0, 42.0),   # co/efficient
+    ("9/29", 46.0, 45.0),   # InsiderAdvantage
+    ("9/30", 45.8, 43.6),   # Big Data Poll (with leaners)
+]
+MN_SENATE_DEM = "Flanagan (D)"
+MN_SENATE_GOP = "Tafoya (R)"
+MN_SENATE_FOOTER = "RCP AVG: FLANAGAN +1.6 • TOSS-UP"
 
-    polls: [(date_label, dem_pct, gop_pct), ...] in chronological order.
-    """
+
+def _days_until(post_date, election_day):
+    from datetime import date as _date
+    pd = post_date or _date.today()
+    if isinstance(pd, str):
+        pd = _date.fromisoformat(pd)
+    return (_date.fromisoformat(election_day) - pd).days
+
+
+def election_inset(img, d, box, post_date=None):
+    """Small inclusion inset: election countdown + MN Senate trend tracker,
+    drawn as a right-hand rail inside the content zone."""
     x0, y0, x1, y1 = box
-    d.rounded_rectangle([x0, y0, x1, y1], 22, fill="white",
+    days_left = _days_until(post_date, ELECTION_DAY)
+
+    # countdown card — big number, gold label
+    ch = 118
+    d.rounded_rectangle([x0, y0, x1, y0 + ch], 18, fill="#16213a")
+    num = str(max(0, days_left))
+    nf = font(FB, 62)
+    nw = d.textlength(num, font=nf)
+    d.text(((x0 + x1) / 2 - nw / 2, y0 + 4), num, font=nf, fill="white")
+    lf = font(FB, 17)
+    lab = ("DAY UNTIL ELECTION DAY" if days_left == 1
+           else "DAYS UNTIL ELECTION DAY")
+    lw = d.textlength(lab, font=lf)
+    d.text(((x0 + x1) / 2 - lw / 2, y0 + 76), lab, font=lf, fill="#f5c518")
+    d = ImageDraw.Draw(img)
+
+    # trend tracker card — sparkline of real polls
+    ty0 = y0 + ch + 12
+    d.rounded_rectangle([x0, ty0, x1, y1], 18, fill="white",
                         outline="#1e3fae", width=3)
-    d.text((x0 + 24, y0 + 14), title, font=font(FB, 26), fill=INK)
-    # legend, top-right
-    fl = font(FR, 17)
-    gl = f"{gop_label}"
-    dl = f"{dem_label}"
-    gw = d.textlength(gl, font=fl)
-    dw = d.textlength(dl, font=fl)
-    lx = x1 - 24 - gw - dw - 70
-    ly = y0 + 20
-    d.ellipse([lx, ly, lx + 14, ly + 14], fill="#2563eb")
-    d.text((lx + 20, ly - 3), dl, font=fl, fill=INK)
-    lx2 = lx + 34 + dw
-    d.ellipse([lx2, ly, lx2 + 14, ly + 14], fill="#dc2626")
-    d.text((lx2 + 20, ly - 3), gl, font=fl, fill=INK)
-
-    # chart area
-    cx0, cy0, cx1, cy1 = x0 + 64, y0 + 66, x1 - 100, y1 - 48
+    d.text((x0 + 16, ty0 + 10), "MN SENATE TREND", font=font(FB, 19),
+           fill=INK)
+    sx0, sy0, sx1, sy1 = x0 + 16, ty0 + 46, x1 - 16, y1 - 54
+    polls = MN_SENATE_POLLS
     vals = [v for _, a, b in polls for v in (a, b)]
-    vmin = math.floor(min(vals) - 1.5)
-    vmax = math.ceil(max(vals) + 1.5)
-    ff = font(FR, 15)
-    v = vmin - (vmin % 2)
-    while v <= vmax:
-        y = cy1 - (v - vmin) / (vmax - vmin) * (cy1 - cy0)
-        d.line([(cx0, y), (cx1, y)], fill=(226, 232, 240, 255), width=1)
-        lab = f"{v}%"
-        d.text((cx0 - 10 - d.textlength(lab, font=ff), y - 10), lab,
-               font=ff, fill=GRAY)
-        v += 2
+    vmin, vmax = math.floor(min(vals) - 1), math.ceil(max(vals) + 1)
     n = len(polls)
-    xs = [cx0 + i * (cx1 - cx0) / max(1, n - 1) for i in range(n)]
+    xs = [sx0 + i * (sx1 - sx0) / max(1, n - 1) for i in range(n)]
 
-    def y_of(val):
-        return cy1 - (val - vmin) / (vmax - vmin) * (cy1 - cy0)
+    def y_of(v):
+        return sy1 - (v - vmin) / (vmax - vmin) * (sy1 - sy0)
 
-    series = [([p[1] for p in polls], "#2563eb"),
-              ([p[2] for p in polls], "#dc2626")]
-    for ys, col in series:
-        pts = [(xs[i], y_of(ys[i])) for i in range(n)]
-        d.line(pts, fill=col, width=4, joint="curve")
+    for col, idx in (("#2563eb", 1), ("#dc2626", 2)):
+        pts = [(xs[i], y_of(p[idx])) for i, p in enumerate(polls)]
+        d.line(pts, fill=col, width=3, joint="curve")
         for x, y in pts:
-            d.ellipse([x - 6, y - 6, x + 6, y + 6], fill=col,
-                      outline="white", width=2)
-    # latest values, right of the chart
-    lf = font(FB, 20)
-    for ys, col in series:
-        y = y_of(ys[-1])
-        lab = f"{ys[-1]:.1f}%"
-        d.text((cx1 + 12, y - 13), lab, font=lf, fill=col)
-    # x labels (poll dates)
-    xf = font(FR, 14)
-    for i, p in enumerate(polls):
-        lab = p[0]
-        d.text((xs[i] - d.textlength(lab, font=xf) / 2, cy1 + 10), lab,
-               font=xf, fill=GRAY)
-    if footnote:
-        nf = font(FR, 14)
-        d.text((x0 + 24, y1 - 28), footnote, font=nf, fill=GRAY)
+            d.ellipse([x - 4, y - 4, x + 4, y + 4], fill=col)
+    vf = font(FB, 16)
+    dl = f"D {polls[-1][1]:.1f}%"
+    d.text((x0 + 16, y1 - 42), dl, font=vf, fill="#2563eb")
+    rl = f"R {polls[-1][2]:.1f}%"
+    d.text((x1 - 16 - d.textlength(rl, font=vf), y1 - 42), rl, font=vf,
+           fill="#dc2626")
+    ff = font(FR, 12)
+    fw = d.textlength(MN_SENATE_FOOTER, font=ff)
+    d.text(((x0 + x1) / 2 - fw / 2, y1 - 22), MN_SENATE_FOOTER, font=ff,
+           fill=GRAY)
     return img
 
 
@@ -445,10 +453,13 @@ def render_political_meme(content, draw_content, photo_path=None,
                           out_path="meme.png", brand=None, headline_size=None,
                           post_date=None, election_day="2026-11-03",
                           countdown=True):
-    """Render a political meme. Countdown strip appears under the divider
-    when countdown=True (standing until midterms pass): days until
-    election_day computed from post_date (default: today). Auto-hides
-    once election day has passed."""
+    """Render a political meme.
+
+    Election season (standing until midterms pass): when countdown=True and
+    election_day hasn't passed, a small inset rail (countdown + race tracker)
+    is drawn inside the content zone and the caller's content box narrows to
+    make room. post_date (default: today) drives the countdown math.
+    """
     b = brand or POL_BRAND
     img = background()
     ribbon(img)
@@ -520,34 +531,16 @@ def render_political_meme(content, draw_content, photo_path=None,
     img.paste(div, ((W - div_w) // 2, div_y), div)
     d = ImageDraw.Draw(img)
 
-    # countdown to election day — navy pill under the divider.
-    # Standing feature until the midterms pass; auto-hides after.
-    from datetime import date as _date
-    show_cd = bool(countdown)
-    days_left = None
-    if show_cd:
-        pd = post_date or _date.today()
-        if isinstance(pd, str):
-            pd = _date.fromisoformat(pd)
-        ed = _date.fromisoformat(election_day)
-        days_left = (ed - pd).days
-        show_cd = days_left >= 0
-    if show_cd:
-        label = ("ELECTION DAY IS TODAY" if days_left == 0
-                 else f"{days_left} DAYS UNTIL ELECTION DAY")
-        cf = font(FB, 22)
-        tw = d.textlength(label, font=cf)
-        pw, ph = tw + 60, 34
-        px0, py0 = (W - pw) / 2, div_y + 22
-        d.rounded_rectangle([px0, py0, px0 + pw, py0 + ph], 17,
-                            fill="#16213a")
-        d.text((px0 + 30, py0 + 6), label, font=cf, fill="white")
-        d = ImageDraw.Draw(img)
-
-    # content zone (caller paints it)
-    cz0 = div_y + (68 if show_cd else 30)
+    # content zone (caller paints it); the election inset rail narrows it
+    cz0 = div_y + 30
     cz1 = 748
-    draw_content(img, d, (48, cz0, W - 48, cz1))
+    content_box = (48, cz0, W - 48, cz1)
+    if countdown and _days_until(post_date, election_day) >= 0:
+        rx0 = W - 48 - 300
+        election_inset(img, d, (rx0, cz0, W - 48, cz1), post_date)
+        d = ImageDraw.Draw(img)
+        content_box = (48, cz0, rx0 - 16, cz1)
+    draw_content(img, d, content_box)
     d = ImageDraw.Draw(img)
 
     # punchline strip: maroon with gold edge, trefoil + propeller standing watch

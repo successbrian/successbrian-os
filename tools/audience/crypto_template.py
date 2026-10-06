@@ -4,7 +4,7 @@
 PURPOSE:
     Brian's crypto-desk brand: dark money-terminal maximalism. The only
     dark-background desk — political is patriotic light, AI is holographic
-    light, health is EKG light. Crypto owns the night: bitcoin-orange and
+    light, health is EKG light. Crypto owns the night: Kaspa teal and
     gold on deep charcoal, candlestick texture, the language of the charts
     (support / resistance / stack / hold).
 
@@ -12,11 +12,14 @@ WHY:
     Crypto content lives in dark mode — trading terminals, CoinMarketCap,
     exchange apps. A dark card stops the scroll against a feed of light
     memes and reads as "money talk" instantly. Brian's crypto rules are
-    baked into the identity: buy-and-hold (Kaspa, Bitcoin, Cardano, BNB,
-    Solana, HYPE), trading-only (Ethereum, Doge + high-liquidity movers),
-    buy long-term support, sell resistance, hold long. No meme coins
-    except DOGE. The desk tagline IS his strategy, so every meme teaches
-    it: "BUY SUPPORT • SELL RESISTANCE • HOLD LONG".
+    baked into the identity: buy-and-hold (Kaspa FIRST — his highest-
+    conviction hold, then Bitcoin, Cardano, BNB, Solana, HYPE),
+    trading-only (Ethereum — which he dislikes over gas fees, Doge +
+    high-liquidity movers), buy long-term support, sell resistance,
+    hold long. No meme coins except DOGE. The desk tagline IS his
+    strategy, so every meme teaches it: "BUY SUPPORT • SELL RESISTANCE
+    • HOLD LONG". The desk flies HIS flag — Kaspa teal leads, not
+    bitcoin-orange.
 
 CALLED BY:
     - Humans / agents: from crypto_template import render_crypto_meme
@@ -44,10 +47,10 @@ USAGE:
     CONTENT = {
         "kicker": "THE CRYPTO DESK IS OPEN",
         "headline": "BUY FEAR. SELL GREED.",
-        "grad_colors": [...],  # optional override; default gold->orange
+        "grad_colors": [...],  # optional override; default bright teal -> Kaspa -> deep teal
         "cards": [
-            {"tag": "BUY & HOLD", "title": "BITCOIN", "price": "STACK",
-             "sub": "digital gold • hold long",
+            {"tag": "BUY & HOLD", "title": "KASPA", "price": "STACK",
+             "sub": "fastest L1 • highest conviction",
              "bar_frac": 0.9, "bar_color": "#16c784", "tint": "#1b1b23"},
             ...
         ],
@@ -72,12 +75,14 @@ from PIL import Image, ImageDraw, ImageFilter
 # the dark canvas, own tagline (Brian's strategy), own hashtag.
 CRYPTO_BRAND = dict(BRAND)
 CRYPTO_BRAND.update({
-    "wordmark": [("SUCCESS", "#eceef4"), ("BRIAN", "#f7931a")],
+    "wordmark": [("SUCCESS", "#eceef4"), ("BRIAN", "#70c7ba")],
     "tagline": "BUY SUPPORT • SELL RESISTANCE • HOLD LONG",
     "hashtag": "FOLLOW #SuccessBrianCrypto",
 })
 
-BTC_ORANGE = "#f7931a"
+KASPA = "#70c7ba"        # Kaspa brand teal — Brian's highest-conviction hold
+KASPA_HI = "#8ff2de"     # bright teal for gradient faces
+KASPA_DK = "#2fa08e"     # deep teal for extrusion ring tones
 GOLD = "#ffb700"
 EMBER = "#ff8c00"
 CANDLE_GREEN = "#16c784"   # bullish — CoinMarketCap green
@@ -87,7 +92,7 @@ BG_BOT = "#1a1a21"
 CARD_BG = "#1b1b23"
 INK_D = "#eceef4"          # body text on dark
 DIM_D = "#9aa0b4"          # dim text on dark
-HL_COLORS = ["#ffd23f", "#f7931a", "#ff8c00"]  # gold -> bitcoin orange -> ember
+HL_COLORS = ["#8ff2de", "#70c7ba", "#2fa08e"]  # bright teal -> Kaspa -> deep teal
 PHOTO = "/home/hatch/workspace/profile-images/brian-gina-together.jpg"
 
 
@@ -101,11 +106,11 @@ def dark_background():
         t = y / H
         d.line([(0, y), (W, y)],
                fill=tuple(int(a + (b - a) * t) for a, b in zip(c1, c2)))
-    # faint warm glow top-center + cool ember wash bottom-right
+    # faint teal glow top-center + deeper teal wash bottom-right
     glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
-    gd.ellipse([W // 2 - 460, -280, W // 2 + 460, 360], fill=(246, 147, 26, 34))
-    gd.ellipse([W - 560, H - 460, W + 160, H + 120], fill=(255, 140, 0, 22))
+    gd.ellipse([W // 2 - 460, -280, W // 2 + 460, 360], fill=(112, 199, 186, 36))
+    gd.ellipse([W - 560, H - 460, W + 160, H + 120], fill=(47, 160, 142, 24))
     img = Image.alpha_composite(
         img.convert("RGBA"), glow.filter(ImageFilter.GaussianBlur(70))).convert("RGB")
     return img
@@ -120,7 +125,7 @@ def _candle_shape(d, x, yc, w, body_h, wick, fill):
 
 
 def crypto_backdrop(img):
-    """Faint candlestick-chart texture along the edges + a giant ghost ₿.
+    """Faint candlestick-chart texture along the edges + a giant ghost K.
     The crypto desk's signature backdrop — charts, not EKG/constellations."""
     rnd = random.Random(42)
     ov = Image.new("RGBA", img.size, (0, 0, 0, 0))
@@ -144,51 +149,40 @@ def crypto_backdrop(img):
             _candle_shape(d, x + rnd.randint(-8, 8), y, 26, bh,
                           rnd.randint(8, 20), col)
             y += bh + rnd.randint(26, 54)
-    # giant ghost ₿ watermark, center — barely there
+    # giant ghost K watermark, center — barely there (Kaspa's letter)
     f_big = font(FB, 640)
-    t = "B"
+    t = "K"
     tw = d.textlength(t, font=f_big)
     gx, gy = (W - tw) / 2, 330
-    d.text((gx, gy), t, font=f_big, fill=(246, 147, 26, 13))
-    sw = 26
-    d.line([(gx + tw * 0.32, gy + 40), (gx + tw * 0.32, gy + 560)],
-           fill=(246, 147, 26, 13), width=sw)
-    d.line([(gx + tw * 0.62, gy + 40), (gx + tw * 0.62, gy + 560)],
-           fill=(246, 147, 26, 13), width=sw)
+    d.text((gx, gy), t, font=f_big, fill=(112, 199, 186, 14))
     return Image.alpha_composite(img.convert("RGBA"), ov).convert("RGB")
 
 
 # ---------------- emblem + glyphs ----------------
 def coin_emblem(size=150):
-    """Bitcoin-orange coin badge with a hand-built ₿ — the one emblem,
-    standing watch top-right."""
+    """Kaspa-teal coin badge with a bold K — the one emblem, standing
+    watch top-right. Brian's flag: Kaspa first."""
     s = size
     im = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     cx = cy = s / 2
     glow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     ImageDraw.Draw(glow).ellipse(
         [cx - s * 0.47, cy - s * 0.47, cx + s * 0.47, cy + s * 0.47],
-        fill=(246, 147, 26, 80))
+        fill=(112, 199, 186, 80))
     im.alpha_composite(glow.filter(ImageFilter.GaussianBlur(s * 0.08)))
     d = ImageDraw.Draw(im)
     # coin face
-    d.ellipse([s * 0.10, s * 0.10, s * 0.90, s * 0.90], fill=BTC_ORANGE)
+    d.ellipse([s * 0.10, s * 0.10, s * 0.90, s * 0.90], fill=KASPA)
     d.ellipse([s * 0.10, s * 0.10, s * 0.90, s * 0.90],
-              outline="#c26a0a", width=max(3, s // 40))
+              outline="#3d8a7c", width=max(3, s // 40))
     r2 = s * 0.335
     d.ellipse([cx - r2, cy - r2, cx + r2, cy + r2],
               outline=(255, 255, 255, 110), width=2)
-    # the ₿: bold B + two vertical strokes
+    # the K: bold, white, centered
     f = font(FB, int(s * 0.52))
-    t = "B"
+    t = "K"
     tw = d.textlength(t, font=f)
-    bx, by = cx - tw / 2, cy - s * 0.30
-    d.text((bx, by), t, font=f, fill="white")
-    sw = max(4, s // 26)
-    for fx in (0.36, 0.60):
-        sx = cx - tw / 2 + tw * fx
-        d.line([(sx, cy - s * 0.30), (sx, cy + s * 0.30)],
-               fill="white", width=sw)
+    d.text((cx - tw / 2, cy - s * 0.32), t, font=f, fill="white")
     return im
 
 
@@ -208,7 +202,7 @@ def kicker_crypto(img, y, text):
     kf = font(FB, 25)
     tw = d.textlength(text, font=kf) + 3 * (len(text) - 1)
     cx = img.size[0] / 2
-    _centered(d, y, text, kf, BTC_ORANGE, tracking=3)
+    _centered(d, y, text, kf, KASPA, tracking=3)
     g, r = icon_candle(36, up=True), icon_candle(36, up=False)
     img.paste(g, (int(cx - tw / 2 - 62), y - 2), g)
     img.paste(r, (int(cx + tw / 2 + 16), y - 2), r)
@@ -235,8 +229,8 @@ def headline_3d_dark(base, text, fnt, colors, depth=7):
     d = ImageDraw.Draw(layer)
 
     for i in range(depth, 0, -1):
-        d.text((ox + i, oy + i), text, font=fnt, fill=(30, 19, 8, 255))
-    d.text((ox + depth, oy + depth), text, font=fnt, fill=(12, 7, 2, 255))
+        d.text((ox + i, oy + i), text, font=fnt, fill=(16, 38, 34, 255))
+    d.text((ox + depth, oy + depth), text, font=fnt, fill=(6, 16, 14, 255))
 
     n = len(colors)
     face = Image.new("RGBA", (tw + 8, th + 8), (0, 0, 0, 0))
@@ -291,7 +285,7 @@ def footer_dark(img, d, hashtag=None, dy=0, brand=None):
     img.paste(bic, (int(bx), 910 + dy), bic)
     d.text((bx + 48 + 14, 912 + dy), url, font=f_blog, fill="#f2f4fa")
     if tag:
-        _centered(d, 962 + dy, tag, font(FB, 28), BTC_ORANGE)
+        _centered(d, 962 + dy, tag, font(FB, 28), KASPA)
     return img, ImageDraw.Draw(img)
 
 
@@ -307,7 +301,7 @@ def render_crypto_meme(content, photo_path=None, out_path="meme.png",
     img.paste(pc, (48, 36), pc)
     # gold ring over the photo card (replaces the shared cyan ring)
     d.rounded_rectangle([48, 36, 48 + 148, 36 + 148], 28,
-                        outline=BTC_ORANGE, width=4)
+                        outline=KASPA, width=4)
     x = 48 + 148 + 24
     wx = x
     for word, color in b["wordmark"]:
@@ -321,10 +315,10 @@ def render_crypto_meme(content, photo_path=None, out_path="meme.png",
     img.paste(emb, (W - 30 - 150, 22), emb)
     d = ImageDraw.Draw(img)
 
-    # warm ember glow behind the headline
+    # teal glow behind the headline
     glow = Image.new("RGBA", img.size, (0, 0, 0, 0))
     ImageDraw.Draw(glow).ellipse([W / 2 - 330, 180, W / 2 + 330, 430],
-                                 fill=(246, 147, 26, 36))
+                                 fill=(112, 199, 186, 38))
     img = Image.alpha_composite(img.convert("RGBA"),
                                 glow.filter(ImageFilter.GaussianBlur(40))).convert("RGB")
     d = ImageDraw.Draw(img)
@@ -358,7 +352,7 @@ def render_crypto_meme(content, photo_path=None, out_path="meme.png",
             _cx = _sx + _r + _i * (_r * 2 + _gap)
             if _i < _sd:
                 d.ellipse([_cx - _r, 416 - _r, _cx + _r, 416 + _r],
-                          fill=BTC_ORANGE)
+                          fill=KASPA)
             else:
                 d.ellipse([_cx - _r, 416 - _r, _cx + _r, 416 + _r],
                           outline="#4a4a58", width=2)
@@ -399,7 +393,7 @@ def render_crypto_meme(content, photo_path=None, out_path="meme.png",
     if cp:
         cs0, cs1 = 688, 758
         d.rounded_rectangle([48, cs0, W - 48, cs1], 16, fill="#20202a",
-                            outline=BTC_ORANGE, width=2)
+                            outline=KASPA, width=2)
         _centered(d, cs0 + 8, cp["label"], font(FB, 19), DIM_D)
         _centered(d, cs0 + 34, cp["quote"], font(FB, 23), INK_D)
         dy = 68
@@ -407,7 +401,7 @@ def render_crypto_meme(content, photo_path=None, out_path="meme.png",
     # punchline strip (garnet — Brian's birthstone; gold edge for crypto)
     py0, py1 = 700 + dy, 782 + dy
     d.rounded_rectangle([48, py0, W - 48, py1], 18, fill=GARNET_BG,
-                        outline=BTC_ORANGE, width=2)
+                        outline=KASPA, width=2)
     _centered(d, py0 + 22, content["punchline"], font(FB, 29), YELLOW)
 
     # curiosity line
@@ -427,12 +421,12 @@ if __name__ == "__main__":
             "kicker": "THE CRYPTO DESK IS OPEN",
             "headline": "BUY FEAR. SELL GREED.",
             "cards": [
-                {"tag": "BUY & HOLD", "title": "BITCOIN",
-                 "price": "STACK", "sub": "digital gold • hold long",
+                {"tag": "BUY & HOLD", "title": "KASPA",
+                 "price": "STACK", "sub": "fastest L1 • highest conviction",
                  "bar_frac": 0.9, "bar_color": CANDLE_GREEN},
                 {"tag": "TRADING ONLY", "title": "ETHEREUM",
-                 "price": "TRADE", "sub": "liquidity • catch movers",
-                 "bar_frac": 0.55, "bar_color": BTC_ORANGE},
+                 "price": "TRADE", "sub": "liquidity • gas fees kill it",
+                 "bar_frac": 0.55, "bar_color": KASPA},
             ],
             "counterpoint": {
                 "label": "THE SKEPTICS — EVERY SINGLE BEAR MARKET",
@@ -442,5 +436,5 @@ if __name__ == "__main__":
             "series_day": 1,
         },
         photo_path=PHOTO,
-        out_path="/home/hatch/workspace/your_files/memes/proofs/crypto-desk-proof-2026-10-06.png")
-    print("wrote ~/workspace/your_files/memes/proofs/crypto-desk-proof-2026-10-06.png")
+        out_path="/home/hatch/workspace/your_files/memes/proofs/crypto-desk-proof-v2-2026-10-06.png")
+    print("wrote ~/workspace/your_files/memes/proofs/crypto-desk-proof-v2-2026-10-06.png")

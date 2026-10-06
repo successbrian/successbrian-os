@@ -48,7 +48,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageChops
 # hashtag slot — Brian will name the political hashtag later; until then the
 # footer prints no hashtag line on political memes.
 POL_BRAND = dict(BRAND)
-POL_BRAND["hashtag"] = None
+POL_BRAND["hashtag"] = "FOLLOW #MAGAUSNavyVet"  # Brian's crowd, his flag (2026-10-06)
 
 GOLD = "#d4af37"
 NAVY = "#0a1f44"

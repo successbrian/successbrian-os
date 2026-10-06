@@ -8,8 +8,8 @@ footer) with a health visual identity:
   base read as washed out — bold saturation now, clinical teal kept)
 - strong EKG pulse-line pattern along the edges (the health signature, felt)
 - kicker flanked by teal pulse glyphs
-- Oliabo Prima pillow-pack emblem top-right (REAL product photo, not a
-  drawing — the one emblem per meme)
+- Oliabo Prima capsule specimen badge top-right (REAL capsule photos,
+  packet removed per Brian — the one emblem per meme)
 - bright cyan vitality glow behind the headline
 - electric green → cyan headline gradient with near-black teal 3D extrusion
 - garnet punchline with a teal edge (garnet = Brian's January birthstone)
@@ -182,69 +182,100 @@ def icon_glucometer(size=48):
     return _icon_shadow(im)
 
 
-def packet_emblem(size=150):
-    """Oliabo Prima pillow pack — REAL product photo.
+def capsule_emblem(w=440, h=156):
+    """Oliabo Prima capsules — REAL product photography, packet removed.
 
-    Brian 2026-10-06: "not a drawing. the actual high resolution image of
-    it." The drawn sachet is gone. Loads oliabo-prima-packet.png (real
-    Oliabo product photography: transparent daily sachet, 4 capsules
-    visible inside), scales it into the emblem slot as a rounded product
-    badge with a gold ring + teal glow + soft drop shadow so it sits
-    naturally on the deep teal canvas — no white-box artifact. Top-right,
-    the one emblem per meme.
+    Brian 2026-10-06: "i want just the capsules without the pillow pack"
+    + each capsule IDENTIFIED. Four real capsule cutouts from Oliabo's own
+    product photography on a horizontal white specimen badge:
+      2 large dark-green softgels = HP-EVOO + rosemary  -> "HP-EVOO x2"
+      green/white capsule         = OLIVECTIN (olive leaf + fruit)
+      red/white capsule           = ROSSA (lycopene + grape seed)
+    Gold ring + teal glow + drop shadow, same emblem language. Top-right,
+    the one emblem per meme — sits above the kicker/headline, clear of
+    both, and clear of the wordmark.
     """
-    s = size
-    im = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     # teal glow behind (template glow language)
-    glow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    ImageDraw.Draw(glow).ellipse([s * 0.08, s * 0.08, s * 0.92, s * 0.92],
-                                 fill=(0, 255, 200, 90))
-    im.alpha_composite(glow.filter(ImageFilter.GaussianBlur(s * 0.08)))
-
-    photo = None
-    for cand in (
-        Path.home() / "workspace/your_files/memes/proofs/oliabo-prima-packet.png",
-        Path(__file__).resolve().parent.parent.parent.parent
-        / "your_files/memes/proofs/oliabo-prima-packet.png",
-    ):
-        if cand.exists():
-            photo = Image.open(cand).convert("RGB")
-            break
-    if photo is None:
-        # Brian rejected the drawing — never fall back to it. Fail visibly.
-        print("WARNING packet_emblem: oliabo-prima-packet.png not found")
-        return im
-
-    # fit the slot keeping aspect (photo is 335x265 landscape)
-    max_side = int(s * 0.88)
-    photo.thumbnail((max_side, max_side), Image.LANCZOS)
-    pw, ph = photo.size
-    bx, by = (s - pw) // 2, (s - ph) // 2
+    glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).rounded_rectangle(
+        [8, 8, w - 8, h - 8], radius=26, fill=(0, 255, 200, 90))
+    im.alpha_composite(glow.filter(ImageFilter.GaussianBlur(10)))
 
     # soft drop shadow under the badge
-    rad = 22
-    sh = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    sh = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     ImageDraw.Draw(sh).rounded_rectangle(
-        [bx + 5, by + 7, bx + pw + 5, by + ph + 7], radius=rad,
-        fill=(0, 0, 0, 110))
+        [10, 14, w - 6, h - 2], radius=24, fill=(0, 0, 0, 110))
     im.alpha_composite(sh.filter(ImageFilter.GaussianBlur(6)))
 
-    # rounded badge mask with a feathered edge — blends into the teal,
-    # no hard white-box cut
-    mask = Image.new("L", (pw, ph), 0)
-    ImageDraw.Draw(mask).rounded_rectangle([0, 0, pw, ph], radius=rad,
-                                           fill=255)
-    mask = mask.filter(ImageFilter.GaussianBlur(1.4))
-    badge = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    badge.paste(photo, (bx, by), mask)
-    im.alpha_composite(badge)
+    # white specimen badge
+    d = ImageDraw.Draw(im)
+    d.rounded_rectangle([6, 6, w - 6, h - 6], radius=24, fill=(255, 255, 255, 255))
+
+    def load(name):
+        for cand in (
+            Path.home() / f"workspace/your_files/memes/proofs/capsule_{name}.png",
+            Path(__file__).resolve().parent.parent.parent.parent
+            / f"your_files/memes/proofs/capsule_{name}.png",
+        ):
+            if cand.exists():
+                return Image.open(cand).convert("RGBA")
+        print(f"WARNING capsule_emblem: capsule_{name}.png not found")
+        return None
+
+    evoo1, evoo2 = load("evoo"), load("evoo_b")
+    oliv, rossa = load("olivectin"), load("rossa")
+    if not all([evoo1, evoo2, oliv, rossa]):
+        return im
+
+    # scale: softgels to h=88, olivectin to w=88, rossa to h=72
+    def scale(img, *, h=None, w=None):
+        iw, ih = img.size
+        s = (h / ih) if h else (w / iw)
+        return img.resize((int(iw * s), int(ih * s)), Image.LANCZOS)
+
+    evoo1, evoo2 = scale(evoo1, h=88), scale(evoo2, h=88)
+    oliv, rossa = scale(oliv, w=88), scale(rossa, h=72)
+
+    # baseline-align the capsules like specimens on a shelf
+    cap_top, cap_bot = 16, 104
+    items = [evoo1, evoo2, oliv, rossa]
+    gap = 18
+    total = sum(i.size[0] for i in items) + gap * (len(items) - 1)
+    x = (w - total) // 2
+    centers = []
+    for it in items:
+        iw, ih = it.size
+        im.alpha_composite(it, (int(x), cap_bot - ih))
+        centers.append(x + iw / 2)
+        x += iw + gap
+
+    # labels — dark green on white, must read at a glance
+    d = ImageDraw.Draw(im)
+    GREEN = "#14532d"
+    f1, f2 = font(FB, 24), font(FB, 16)
+    ly = cap_bot + 8
+    # "HP-EVOO x2" spans the softgel pair
+    t = "HP-EVOO \u00d72"
+    tw = d.textlength(t, font=f1)
+    d.text(((centers[0] + centers[1]) / 2 - tw / 2, ly), t, font=f1, fill=GREEN)
+    # OLIVECTIN / ROSSA under their capsules — nudged apart so the long
+    # OLIVECTIN label never touches ROSSA
+    l_oliv, l_rossa = "OLIVECTIN\u2122", "ROSSA\u2122"
+    tw_o = d.textlength(l_oliv, font=f2)
+    tw_r = d.textlength(l_rossa, font=f2)
+    xo, xr = centers[2] - tw_o / 2, centers[3] - tw_r / 2
+    if xo + tw_o + 6 > xr:
+        shift = (xo + tw_o + 6 - xr) / 2
+        xo -= shift
+        xr += shift
+    d.text((xo, ly + 4), l_oliv, font=f2, fill=GREEN)
+    d.text((xr, ly + 4), l_rossa, font=f2, fill=GREEN)
 
     # gold ring (Oliabo accent) defines the badge edge intentionally
-    d = ImageDraw.Draw(im)
-    d.rounded_rectangle([bx, by, bx + pw, by + ph], radius=rad,
+    d.rounded_rectangle([6, 6, w - 6, h - 6], radius=24,
                         outline=(212, 160, 23, 255), width=4)
     return im
-
 
 def kicker_health(img, y, text):
     """Kicker flanked by teal pulse glyphs — the health template signature.
@@ -307,9 +338,9 @@ def render_health_meme(content, photo_path=None, out_path="meme.png",
         wx += d.textlength(word, font=f) + 10
     d.text((x, 104), b["tagline"], font=font(FR, 21), fill="#d7f5ee")
 
-    # Prima pillow-pack emblem, top right — the one emblem on the meme
-    emb = packet_emblem(150)
-    img.paste(emb, (W - 30 - 150, 22), emb)
+    # Prima capsule specimen badge, top right — the one emblem on the meme
+    emb = capsule_emblem()
+    img.paste(emb, (W - 20 - 440, 30), emb)
     d = ImageDraw.Draw(img)
 
     # strong cyan vitality glow behind the headline

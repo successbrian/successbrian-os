@@ -35,6 +35,12 @@ NOTES:
       even if the Hatch link is dead. The Hatch 18:45 chat read is the
       primary interactive path (he picks numbers in chat); duplicates
       across Telegram + chat are acceptable, missing the ideas is not.
+    - TWO-STAGE GENERATION (Brian's routing principle: Sonic does what it
+      can, V4 Pro assists): step 1, Sonic drafts the 4 contrasts;
+      step 2, maybe_sharpen_with_v4pro() sends the drafts for a polish
+      pass ONLY when tools/state/model-tiers.json says v4pro_credits=true
+      (currently dry). Any V4 Pro failure returns the Sonic drafts
+      unchanged — the job never fails because V4 Pro is missing.
     - RSS parsing is dependency-free (urllib + ElementTree). Feeds die;
       failures are skipped, never fatal.
     - Sonic JSON is parsed defensively (code fences, brace matching) —
@@ -51,6 +57,7 @@ import sys
 import time
 import urllib.request
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 DBNAME = os.environ.get("MEME_IDEA_DB", "ecosystem_central")
 SONIC_URL = os.environ.get("SONIC_URL", "http://localhost:11439/v1/chat/completions")
@@ -292,6 +299,109 @@ data for a claim, say so in the angle and keep the idea commentary-driven.
 - Output ONLY the JSON array, no prose before or after."""
 
 
+# ------------------------------------------------- V4 Pro polish
+V4PRO_URL = "https://api.b.ai/v1/chat/completions"
+V4PRO_MODEL = "deepseek-v4-pro"
+V4PRO_ENV_FILE = "/home/successbrian/.hermes/.env"
+V4PRO_KEY_NAME = "DEEPSEEK_API_KEY"
+
+
+def _tiers_flag_path():
+    # <repo>/tools/audience/meme_idea_box.py -> <repo>/tools/state/model-tiers.json
+    return (Path(__file__).resolve().parent.parent
+            / "state" / "model-tiers.json")
+
+
+def v4pro_available():
+    """Source of truth: tools/state/model-tiers.json v4pro_credits flag."""
+    try:
+        return bool(json.loads(_tiers_flag_path().read_text())
+                    .get("v4pro_credits"))
+    except Exception:
+        return False
+
+
+def _read_v4pro_key():
+    """Rental key from k11's .env — in memory only, never logged."""
+    try:
+        with open(V4PRO_ENV_FILE) as f:
+            for line in f:
+                s = line.strip()
+                if s.startswith(V4PRO_KEY_NAME + "="):
+                    return (s.split("=", 1)[1].strip()
+                            .strip('"').strip("'") or None)
+    except Exception:
+        pass
+    return None
+
+
+SHARPEN_SYSTEM = """You sharpen political meme concepts drafted by a smaller \
+model for Brian, a MAGA Navy veteran (enlisted MMN, USS George Washington). \
+His brand voice: blunt, plain-spoken, accusatory toward the left, \
+data-backed, maximalist. His crowd: MAGA, veterans, people feeling it at \
+the gas pump.
+
+You will receive EXACTLY 4 draft ideas as a JSON array. Return EXACTLY 4 \
+sharpened ideas as a JSON array with the same keys: "headline", "angle", \
+"punchline", "why_it_works", "sources".
+
+Rules:
+- Keep every fact from the drafts. NEVER invent poll numbers, statistics, \
+or quotes. If a draft says data was unavailable, keep it that way.
+- Make headlines punchier, punchlines harder, angles tighter. Cut filler.
+- Do not soften the voice or hedge the accusations — sharpen, don't tame.
+- Output ONLY the JSON array, no prose before or after."""
+
+
+def maybe_sharpen_with_v4pro(ideas):
+    """Optional V4 Pro polish pass over Sonic's drafts.
+
+    Returns (ideas, sharpened_bool). On ANY failure — flag off, no key,
+    API error, bad JSON — returns the original Sonic drafts unchanged.
+    The job must never fail because V4 Pro is missing.
+    """
+    if not ideas:
+        return ideas, False
+    if not v4pro_available():
+        print("V4 Pro skipped (rental flag off) — shipping Sonic drafts")
+        return ideas, False
+    key = _read_v4pro_key()
+    if not key:
+        print("V4 Pro skipped (no rental key on this host) "
+              "— shipping Sonic drafts")
+        return ideas, False
+    try:
+        body = json.dumps({
+            "model": V4PRO_MODEL,
+            "messages": [
+                {"role": "system", "content": SHARPEN_SYSTEM},
+                {"role": "user",
+                 "content": "Sharpen these 4 drafts. Return EXACTLY 4 "
+                            "as a JSON array:\n\n"
+                            + json.dumps(ideas, indent=1)},
+            ],
+            "temperature": 0.6,
+            "max_tokens": 2200,
+            "stream": False,
+        }).encode()
+        req = urllib.request.Request(
+            V4PRO_URL, data=body,
+            headers={"Content-Type": "application/json",
+                     "Authorization": "Bearer " + key})
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            payload = json.loads(resp.read().decode())
+        sharpened = extract_json_array(
+            payload["choices"][0]["message"]["content"])[:4]
+        if not sharpened:
+            raise ValueError("empty sharpened list")
+        print(f"V4 Pro sharpened {len(sharpened)} ideas")
+        return sharpened, True
+    except Exception as e:
+        print(f"V4 Pro sharpen skipped ({type(e).__name__}) "
+              "— shipping Sonic drafts")
+        return ideas, False
+
+
 def write_ideas_file(idea_date, ideas, headlines, raw_lines,
                      failed=False, fail_reason=""):
     """Dated markdown archive — Brian's fallback read if chat is down."""
@@ -351,24 +461,9 @@ def deliver_telegram(idea_date, ideas, failed=False):
         print(f"telegram delivery failed: {e}", file=sys.stderr)
 
 
-def cmd_generate(args):
-    idea_date = args.date or dt.date.today().isoformat()
-
-    def log(msg):
-        print(f"[{idea_date}] {msg}", flush=True)
-
-    log("fetching RSS headlines...")
-    headlines = fetch_rss_headlines()
-    log(f"got {len(headlines)} headlines")
-
-    try:
-        raw = db_list(idea_date, kind="raw")
-    except Exception as e:
-        log(f"DB read failed ({e}) — continuing without raw ideas")
-        raw = []
-    raw_lines = [f"- {r[3]}" for r in raw]
-    log(f"got {len(raw_lines)} raw ideas from the box")
-
+def synthesize_with_sonic(idea_date, headlines, raw_lines, log):
+    """STAGE 1 — Sonic drafts the 4 contrasts. Returns (ideas, last_err).
+    Distinct step so the optional V4 Pro polish pass has clean input."""
     user_prompt = (
         f"Today is {idea_date}. Election day is 2026-11-03."
         "\n\nTODAY'S HEADLINES:\n" +
@@ -397,14 +492,45 @@ def cmd_generate(args):
         if attempt == 1:
             log("retrying in 60s...")
             time.sleep(60)
+    return ideas, last_err
 
-    if not ideas:
+
+def cmd_generate(args):
+    idea_date = args.date or dt.date.today().isoformat()
+
+    def log(msg):
+        print(f"[{idea_date}] {msg}", flush=True)
+
+    log("fetching RSS headlines...")
+    headlines = fetch_rss_headlines()
+    log(f"got {len(headlines)} headlines")
+
+    try:
+        raw = db_list(idea_date, kind="raw")
+    except Exception as e:
+        log(f"DB read failed ({e}) — continuing without raw ideas")
+        raw = []
+    raw_lines = [f"- {r[3]}" for r in raw]
+    log(f"got {len(raw_lines)} raw ideas from the box")
+
+    # STAGE 1: Sonic drafts
+    drafts, last_err = synthesize_with_sonic(idea_date, headlines,
+                                             raw_lines, log)
+
+    if not drafts:
         # Never silently fail: dated fallback note + telegram, then stop.
         log(f"GENERATION FAILED after 2 attempts: {last_err}")
         write_ideas_file(idea_date, [], headlines, raw_lines,
                          failed=True, fail_reason=str(last_err))
         deliver_telegram(idea_date, [], failed=True)
         return []
+
+    # STAGE 2: V4 Pro sharpens Sonic's drafts (active while the rental is
+    # live; degrades gracefully to Sonic-only if it dries up again)
+    ideas, sharpened = maybe_sharpen_with_v4pro(drafts)
+    gen_tag = "sonic+v4pro" if sharpened else "sonic"
+    if sharpened:
+        log("finals sharpened by DeepSeek V4 Pro")
 
     if len(ideas) != 4:
         log(f"WARNING: model returned {len(ideas)} ideas, expected 4")
@@ -419,7 +545,9 @@ def cmd_generate(args):
                 why=it.get("why_it_works", ""),
                 sources=it.get("sources", ""),
                 kind="final", status="new", idea_date=idea_date,
-                metadata={"generator": "sonic", "model": SONIC_MODEL})
+                metadata={"generator": gen_tag,
+                          "model": SONIC_MODEL +
+                          ("+deepseek-v4-pro" if sharpened else "")})
             ids.append(nid)
         except Exception as e:
             log(f"DB insert failed ({e}) — delivering from memory")

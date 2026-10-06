@@ -371,8 +371,84 @@ def political_stripes(img):
     return Image.alpha_composite(img.convert("RGBA"), waves).convert("RGB")
 
 
+def poll_trend_card(img, d, box, title, polls, dem_label, gop_label,
+                    footnote=None):
+    """Mini polling trend chart — one point per REAL poll, no invented data.
+
+    polls: [(date_label, dem_pct, gop_pct), ...] in chronological order.
+    """
+    x0, y0, x1, y1 = box
+    d.rounded_rectangle([x0, y0, x1, y1], 22, fill="white",
+                        outline="#1e3fae", width=3)
+    d.text((x0 + 24, y0 + 14), title, font=font(FB, 26), fill=INK)
+    # legend, top-right
+    fl = font(FR, 17)
+    gl = f"{gop_label}"
+    dl = f"{dem_label}"
+    gw = d.textlength(gl, font=fl)
+    dw = d.textlength(dl, font=fl)
+    lx = x1 - 24 - gw - dw - 70
+    ly = y0 + 20
+    d.ellipse([lx, ly, lx + 14, ly + 14], fill="#2563eb")
+    d.text((lx + 20, ly - 3), dl, font=fl, fill=INK)
+    lx2 = lx + 34 + dw
+    d.ellipse([lx2, ly, lx2 + 14, ly + 14], fill="#dc2626")
+    d.text((lx2 + 20, ly - 3), gl, font=fl, fill=INK)
+
+    # chart area
+    cx0, cy0, cx1, cy1 = x0 + 64, y0 + 66, x1 - 100, y1 - 48
+    vals = [v for _, a, b in polls for v in (a, b)]
+    vmin = math.floor(min(vals) - 1.5)
+    vmax = math.ceil(max(vals) + 1.5)
+    ff = font(FR, 15)
+    v = vmin - (vmin % 2)
+    while v <= vmax:
+        y = cy1 - (v - vmin) / (vmax - vmin) * (cy1 - cy0)
+        d.line([(cx0, y), (cx1, y)], fill=(226, 232, 240, 255), width=1)
+        lab = f"{v}%"
+        d.text((cx0 - 10 - d.textlength(lab, font=ff), y - 10), lab,
+               font=ff, fill=GRAY)
+        v += 2
+    n = len(polls)
+    xs = [cx0 + i * (cx1 - cx0) / max(1, n - 1) for i in range(n)]
+
+    def y_of(val):
+        return cy1 - (val - vmin) / (vmax - vmin) * (cy1 - cy0)
+
+    series = [([p[1] for p in polls], "#2563eb"),
+              ([p[2] for p in polls], "#dc2626")]
+    for ys, col in series:
+        pts = [(xs[i], y_of(ys[i])) for i in range(n)]
+        d.line(pts, fill=col, width=4, joint="curve")
+        for x, y in pts:
+            d.ellipse([x - 6, y - 6, x + 6, y + 6], fill=col,
+                      outline="white", width=2)
+    # latest values, right of the chart
+    lf = font(FB, 20)
+    for ys, col in series:
+        y = y_of(ys[-1])
+        lab = f"{ys[-1]:.1f}%"
+        d.text((cx1 + 12, y - 13), lab, font=lf, fill=col)
+    # x labels (poll dates)
+    xf = font(FR, 14)
+    for i, p in enumerate(polls):
+        lab = p[0]
+        d.text((xs[i] - d.textlength(lab, font=xf) / 2, cy1 + 10), lab,
+               font=xf, fill=GRAY)
+    if footnote:
+        nf = font(FR, 14)
+        d.text((x0 + 24, y1 - 28), footnote, font=nf, fill=GRAY)
+    return img
+
+
 def render_political_meme(content, draw_content, photo_path=None,
-                          out_path="meme.png", brand=None, headline_size=None):
+                          out_path="meme.png", brand=None, headline_size=None,
+                          post_date=None, election_day="2026-11-03",
+                          countdown=True):
+    """Render a political meme. Countdown strip appears under the divider
+    when countdown=True (standing until midterms pass): days until
+    election_day computed from post_date (default: today). Auto-hides
+    once election day has passed."""
     b = brand or POL_BRAND
     img = background()
     ribbon(img)
@@ -444,8 +520,32 @@ def render_political_meme(content, draw_content, photo_path=None,
     img.paste(div, ((W - div_w) // 2, div_y), div)
     d = ImageDraw.Draw(img)
 
+    # countdown to election day — navy pill under the divider.
+    # Standing feature until the midterms pass; auto-hides after.
+    from datetime import date as _date
+    show_cd = bool(countdown)
+    days_left = None
+    if show_cd:
+        pd = post_date or _date.today()
+        if isinstance(pd, str):
+            pd = _date.fromisoformat(pd)
+        ed = _date.fromisoformat(election_day)
+        days_left = (ed - pd).days
+        show_cd = days_left >= 0
+    if show_cd:
+        label = ("ELECTION DAY IS TODAY" if days_left == 0
+                 else f"{days_left} DAYS UNTIL ELECTION DAY")
+        cf = font(FB, 22)
+        tw = d.textlength(label, font=cf)
+        pw, ph = tw + 60, 34
+        px0, py0 = (W - pw) / 2, div_y + 22
+        d.rounded_rectangle([px0, py0, px0 + pw, py0 + ph], 17,
+                            fill="#16213a")
+        d.text((px0 + 30, py0 + 6), label, font=cf, fill="white")
+        d = ImageDraw.Draw(img)
+
     # content zone (caller paints it)
-    cz0 = div_y + 30
+    cz0 = div_y + (68 if show_cd else 30)
     cz1 = 748
     draw_content(img, d, (48, cz0, W - 48, cz1))
     d = ImageDraw.Draw(img)

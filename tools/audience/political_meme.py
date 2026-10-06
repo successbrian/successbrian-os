@@ -42,7 +42,7 @@ from meme_template import (background, headline_3d, photo_card, icon, BRAND,
                            font, _centered, grad_rounded, ai_backdrop, footer,
                            INK, GRAY, GARNET_BG, YELLOW,
                            W, H, FB, FR)
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageChops
 
 # Political template brand: same handles/blog as the AI brand, but its own
 # hashtag slot — Brian will name the political hashtag later; until then the
@@ -301,38 +301,42 @@ def _star_points(cx, cy, r_out, r_in, rot=-90):
 
 
 def political_backdrop(img):
-    """3D stars + wavy stripes — patriotic texture, not a flag.
+    """Wavy stripes left, 3D stars right — patriotic texture, not a flag.
 
     Very faint by design: Brian's audience is global (Canada, UK, Australia
     and beyond), so this reads 'veteran' without shouting 'America-first'.
+    The star emphasis ramps like a gradient: soft near the center,
+    stronger toward the right edge.
     """
-    import math
     import random
     rnd = random.Random(1776)
     w, h = img.size
     ov = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(ov)
-    # wavy stripes: faint red sine bands — white stripes are the bg showing through
-    for i, y_base in enumerate([130, 330, 530, 730, 930]):
-        pts = [(x, y_base + 26 * math.sin(x / 130 + i * 1.3))
-               for x in range(0, w + 1, 12)]
-        d.line(pts, fill=(30, 63, 174, 15), width=52)
-    # 3D stars: light blue emboss — deeper blue shadow under a pale star
-    for _ in range(14):
-        cx = rnd.choice([rnd.randint(30, 200), rnd.randint(w - 200, w - 30)])
+
+    # RIGHT: 3D stars with navy borders — distinctness ramps up left->right
+    for _ in range(13):
+        cx = rnd.randint(int(w * 0.56), w - 30)
         cy = rnd.randint(90, h - 90)
         r = rnd.randint(18, 44)
+        t = (cx - w * 0.56) / (w * 0.44)  # 0 soft -> 1 distinct
+        t = max(0.0, min(1.0, t))
         pts = _star_points(cx, cy, r, r * 0.42)
-        d.polygon([(x + 3, y + 4) for x, y in pts], fill=(90, 110, 165, 80))
-        d.polygon(pts, fill=(178, 198, 235, 150))
-    # fireworks: soft multicolor bursts scattered among the stars —
+        sh = int(2 + t * 3)
+        d.polygon([(x + sh, y + sh + 1) for x, y in pts],
+                  fill=(90, 110, 165, int(50 + t * 60)))
+        d.polygon(pts, fill=(178, 198, 235, int(110 + t * 70)),
+                  outline=(30, 58, 138, int(60 + t * 120)),
+                  width=1 + int(t * 2.5))
+
+    # fireworks: soft multicolor bursts among the right-side stars —
     # deliberately fainter than the stars so they never steal the show;
     # colors weighted red/white/blue with a whisper of gold and teal
     fw_colors = [(178, 34, 52), (240, 240, 245), (60, 59, 110),
                  (178, 34, 52), (240, 240, 245), (60, 59, 110),
                  (212, 175, 55), (45, 212, 191)]
-    for _ in range(9):
-        cx = rnd.choice([rnd.randint(40, 230), rnd.randint(w - 230, w - 40)])
+    for _ in range(8):
+        cx = rnd.randint(int(w * 0.60), w - 40)
         cy = rnd.randint(110, h - 110)
         r = rnd.randint(13, 24)
         col = rnd.choice(fw_colors)
@@ -344,6 +348,27 @@ def political_backdrop(img):
             d.ellipse([x2 - 2, y2 - 2, x2 + 2, y2 + 2], fill=col + (36,))
         d.ellipse([cx - 3, cy - 3, cx + 3, cy + 3], fill=col + (44,))
     return Image.alpha_composite(img.convert("RGBA"), ov).convert("RGB")
+
+
+def political_stripes(img):
+    """Soft red/white wavy stripes on the left — white is the bg showing
+    through. Applied AFTER the Cherenkov glow so the blue wash doesn't
+    bury them; alpha fades left -> right so they melt out past mid-canvas.
+    """
+    w, h = img.size
+    waves = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    wd = ImageDraw.Draw(waves)
+    for i, y_base in enumerate([130, 330, 530, 730, 930]):
+        pts = [(x, y_base + 26 * math.sin(x / 130 + i * 1.3))
+               for x in range(0, w + 1, 12)]
+        wd.line(pts, fill=(178, 34, 52, 42), width=56)
+    fade = Image.new("L", (w, 1), 0)
+    fp = fade.load()
+    for x in range(w):
+        fp[x, 0] = int(255 * max(0.0, 1 - (x / w) * 1.35))
+    fade = fade.resize((w, h))
+    waves.putalpha(ImageChops.multiply(waves.split()[3], fade))
+    return Image.alpha_composite(img.convert("RGBA"), waves).convert("RGB")
 
 
 def render_political_meme(content, draw_content, photo_path=None,
@@ -386,8 +411,10 @@ def render_political_meme(content, draw_content, photo_path=None,
         img.paste(anc, (sx, 194), anc)
     d = ImageDraw.Draw(img)
 
-    # Cherenkov reactor-blue glow behind the headline, then the headline
+    # Cherenkov reactor-blue glow behind the headline, then the headline.
+    # Stripes go on AFTER the glow so the blue wash doesn't bury them.
     img = cherenkov_glow(img)
+    img = political_stripes(img)
     d = ImageDraw.Draw(img)
 
     # headline: patriotic gradient + 3D, auto-fit single line

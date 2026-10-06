@@ -59,13 +59,17 @@ def health_background():
     This keeps the clinical teal identity but with saturation and presence:
     rich surgical-teal top melting into deep teal at the bottom, with bold
     cyan/emerald washes. White cards and the electric headline glow on it.
+
+    Brian 2026-10-06 (v3): lighten a touch for contrast — lifted endpoints
+    so the EKG lines, glows, and headline separate from the canvas more.
+    Palette unchanged (his words: "i love the colors").
     """
-    img = Image.new("RGB", (W, H), "#0c6e64")
+    img = Image.new("RGB", (W, H), "#147a6e")
     d = ImageDraw.Draw(img)
     for y in range(H):
         t = y / H
-        # saturated teal: #14a893 top -> #0a4a42 bottom
-        r = int(20 - 10 * t); g = int(168 - 98 * t); b = int(147 - 81 * t)
+        # saturated teal, lifted a touch: #20b8a4 top -> #105a54 bottom
+        r = int(32 - 16 * t); g = int(184 - 94 * t); b = int(164 - 80 * t)
         d.line([(0, y), (W, y)], fill=(r, g, b))
     glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
@@ -104,6 +108,76 @@ def icon_pulse(size=36):
     d.line(_pulse_points(4, 4, size * 2 - 8, size - 8),
            fill=(0, 158, 110, 255), width=max(3, size // 10))
     return im
+
+
+def _icon_shadow(im):
+    """Soft dark-teal drop shadow so white icons lift off the canvas."""
+    sh = Image.new("RGBA", im.size, (0, 0, 0, 0))
+    alpha = im.split()[3]
+    solid = Image.new("RGBA", im.size, (5, 45, 40, 120))
+    sh.paste(solid, (0, 3), alpha)
+    sh = sh.filter(ImageFilter.GaussianBlur(3))
+    return Image.alpha_composite(sh, im)
+
+
+def icon_stethoscope(size=48):
+    """Hand-built stethoscope: binaural arc + tube + chestpiece.
+
+    Brian 2026-10-06: relevant health icons, built in PIL like the
+    heart emblem. White with a soft shadow — reads on the teal canvas.
+    """
+    s = size
+    im = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    w = max(4, s // 12)
+    ink = (255, 255, 255, 255)
+    # binaural headset: top-half arc
+    d.arc([s * 0.28, s * 0.06, s * 0.72, s * 0.50], start=180, end=360,
+          fill=ink, width=w)
+    # eartips
+    r = w // 2 + 1
+    for ex in (s * 0.28, s * 0.72):
+        d.ellipse([ex - r, s * 0.28 - r, ex + r, s * 0.28 + r], fill=ink)
+    # tube: straight stem from headset to chestpiece
+    d.line([(s * 0.5, s * 0.28), (s * 0.5, s * 0.62)], fill=ink, width=w)
+    # chestpiece: white disc with teal diaphragm dot
+    cx, cy, cr = s * 0.5, s * 0.74, s * 0.12
+    d.ellipse([cx - cr, cy - cr, cx + cr, cy + cr], fill=ink)
+    d.ellipse([cx - cr * 0.45, cy - cr * 0.45, cx + cr * 0.45, cy + cr * 0.45],
+              fill=(10, 110, 95, 255))
+    return _icon_shadow(im)
+
+
+def icon_glucometer(size=48):
+    """Hand-built blood-sugar meter: body + screen + test strip + blood drop.
+
+    Brian 2026-10-06: relevant health icons, built in PIL like the
+    heart emblem. White body, teal screen, red drop — reads instantly.
+    """
+    s = size
+    im = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    ink = (255, 255, 255, 255)
+    screen = (11, 110, 98, 255)
+    # test strip sticking out the top
+    d.rounded_rectangle([s * 0.43, s * 0.08, s * 0.57, s * 0.34],
+                        radius=max(2, s // 24), fill=ink)
+    # blood drop on the strip tip
+    cx, cy, r = s * 0.5, s * 0.12, s * 0.055
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(230, 57, 70, 255))
+    d.polygon([(cx - r * 0.9, cy - r * 0.2), (cx + r * 0.9, cy - r * 0.2),
+               (cx, cy - r * 1.9)], fill=(230, 57, 70, 255))
+    # meter body
+    d.rounded_rectangle([s * 0.24, s * 0.30, s * 0.76, s * 0.96],
+                        radius=int(s * 0.07), fill=ink)
+    # screen
+    d.rounded_rectangle([s * 0.33, s * 0.40, s * 0.67, s * 0.60],
+                        radius=int(s * 0.035), fill=screen)
+    # button
+    br = s * 0.05
+    d.ellipse([s * 0.5 - br, s * 0.78 - br, s * 0.5 + br, s * 0.78 + br],
+              fill=screen)
+    return _icon_shadow(im)
 
 
 def health_emblem(size=150):
@@ -229,6 +303,12 @@ def render_health_meme(content, photo_path=None, out_path="meme.png",
     # colorful gradient divider under headline
     div = grad_rounded((440, 9), HL_COLORS, 4)
     img.paste(div, ((W - 440) // 2, 398), div)
+    # relevant icons flanking the divider — stethoscope left, glucometer
+    # right (Brian 2026-10-06). 48px, clear of EKG edges and card tops.
+    _isz, _iy = 48, 374
+    _st, _gm = icon_stethoscope(_isz), icon_glucometer(_isz)
+    img.paste(_st, (236, _iy), _st)
+    img.paste(_gm, (796, _iy), _gm)
     d = ImageDraw.Draw(img)
     # series progress dots (optional): CONTENT["series_day"] = 1..5
     if content.get("series_day"):

@@ -284,16 +284,30 @@ veteran (enlisted MMN, USS George Washington). His brand voice: blunt, \
 plain-spoken, accusatory toward the left, data-backed, maximalist. \
 His crowd: MAGA, veterans, people feeling it at the gas pump.
 
-You MUST return EXACTLY 4 ideas as a JSON array. Each idea is an object \
-with these keys: "headline" (short, punchy, meme-headline style), \
-"angle" (2-4 sentences: the contrast — what the other side's narrative \
-claims vs what the data / Brian's take actually shows), "punchline" \
-(one hard-hitting line in Brian's voice), "why_it_works" (one sentence \
-on why this will spark engagement), "sources" (where the facts came \
-from, or "no fresh data — angle is commentary" if none).
+Work in three phases before writing:
+
+1. TRUTH OF THE DAY: from the headlines and fed ideas, separate verified \
+facts from partisan narrative. Note what the left claims, what the right \
+claims, and what is actually established. Flag anything unverified.
+2. GAPS: identify what the left is ignoring, what the right is ignoring, \
+and what NO ONE is covering. A gap is an opportunity — an uncovered angle \
+is a meme only Brian can own.
+3. ENGAGEMENT HEAT: score each candidate angle 1-10 on raw engagement \
+potential (controversy, tribal identity, shareability, comment-bait). \
+The hottest fodder wins.
+
+Then return EXACTLY 4 ideas as a JSON array, ordered hottest first. Each \
+idea is an object with: "headline" (short, punchy, meme-headline style), \
+"angle" (2-4 sentences: the contrast — their narrative vs the truth, or \
+the gap nobody is covering), "punchline" (one hard-hitting line in \
+Brian's voice), "why_it_works" (one sentence on why this will spark \
+engagement), "sources" (where the facts came from, or "no fresh data — \
+angle is commentary" if none), "heat" (your 1-10 engagement score).
 
 Rules:
 - EXACTLY 4 ideas. No more, no fewer.
+- At least ONE idea must exploit a gap — an angle the other side is not \
+covering.
 - NEVER invent poll numbers, statistics, or quotes. If you have no real \
 data for a claim, say so in the angle and keep the idea commentary-driven.
 - Vary the 4 angles — not 4 versions of the same story.
@@ -348,7 +362,8 @@ the gas pump.
 
 You will receive EXACTLY 4 draft ideas as a JSON array. Return EXACTLY 4 \
 sharpened ideas as a JSON array with the same keys: "headline", "angle", \
-"punchline", "why_it_works", "sources".
+"punchline", "why_it_works", "sources", "heat" (keep each idea's heat \
+score, adjusting only if your sharpening clearly raises or lowers it).
 
 Rules:
 - Keep every fact from the drafts. NEVER invent poll numbers, statistics, \
@@ -551,6 +566,7 @@ def cmd_generate(args):
                 sources=it.get("sources", ""),
                 kind="final", status="new", idea_date=idea_date,
                 metadata={"generator": gen_tag,
+                          "heat": it.get("heat"),
                           "model": SONIC_MODEL +
                           (V4PRO_MODEL if sharpened else "")})
             ids.append(nid)

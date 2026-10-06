@@ -188,10 +188,11 @@ def render_health_meme(content, photo_path=None, out_path="meme.png",
         d.rounded_rectangle([x, cy0, x + cw, cy0 + ch], 26, fill=tint,
                             outline=(210, 218, 230, 255), width=2)
         cx = x + cw / 2
+        _psz = c.get("price_size", 66)
         for txt, fnt, col, yy in [
             (c["tag"], font(FB, 19), FAINT, cy0 + 24),
             (c["title"], font(FB, 30), INK, cy0 + 54),
-            (c["price"], font(FB, 66), c["bar_color"], cy0 + 96),
+            (c["price"], font(FB, _psz), c["bar_color"], cy0 + 96),
         ]:
             tw = d.textlength(txt, font=fnt)
             d.text((cx - tw / 2, yy), txt, font=fnt, fill=col)

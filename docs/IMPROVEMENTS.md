@@ -2,6 +2,10 @@
 
 Every day, this repo gets a little better. Each entry: what changed and why.
 
+## 2026-10-07
+- Docstring compliance pass (CODE-STANDARDS rubric): added WHY: + CALLED BY: + NOTES: to tools/audience/health_template.py (health desk's lived-experience lane, Oliabo emblem rule, deployment-checkout sys.path note), WHY: + CALLED BY: to tools/audience/political_meme.py (Navy identity non-negotiable, #MAGAUSNavyVet, self-retiring election_inset rail), WHY: + CALLED BY: to tools/audience/war_on_oil.py (reference render proving the political chrome), CALLED BY: to tools/audience/meme_template.py (4 importing siblings), and CALLED BY: to tools/ventures/goals.py + scoring.py (both imported by ideas.py's flesh step). Docstring-only, 54 insertions, zero behavior change, py_compile clean, committed+pushed.
+- Survey: py_compile clean on all 93 modules, no TODO/FIXME/HACK markers, no removable unused imports (only `__future__` directives, intentional), the /home/hatch/workspace/successbrian-os sys.path inserts in tools/audience/ remain the second checkout's deployment convention (left alone per 2026-10-06), the two empty crypto-intel __init__.py files stay intentionally minimal, /home/successbrian paths are intentional k11-alpha deployment targets, README/docs current — nothing else qualified.
+
 ## 2026-09-27
 - Added `docs/CODE-STANDARDS.md` — module docstring format (PURPOSE / WHY / CALLED BY / NOTES) so future agents know the why, not just the what.
 - Documented every module in `tools/` and `tools/automate/` with the new format — the WHY is now explicit everywhere.

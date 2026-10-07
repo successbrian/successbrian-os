@@ -3,6 +3,15 @@
 Full content cards with icons (refinery+flames, refinery+X, tanker),
 framed ribbon top/bottom, blue 3D stars, wavy red stripes, tricolor
 divider, enlisted-silver propeller.
+
+WHY:
+    The reference render proving the political chrome end to end on a real
+    content card — ribbon, stars, stripes, propeller, and the full
+    render_political_meme pipeline. If the chrome breaks, this is the
+    file that shows it.
+
+CALLED BY:
+    Nobody — run directly as a script; writes /tmp/pol_proper_proof.png.
 """
 import sys
 sys.path.insert(0, "/home/hatch/workspace/successbrian-os/tools/audience")

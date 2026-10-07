@@ -8,6 +8,10 @@ WHY:
 
 Transparent on purpose: every point is traceable to a profile field.
 The score PROPOSES, Brian DECIDES. Bands, not verdicts.
+
+CALLED BY:
+    tools/ventures/ideas.py — the flesh step imports score_profile to
+    score each fleshed-out profile before drafting the goal.
 """
 
 BANDS = [(70, "strong"), (45, "consider"), (0, "reshape-or-shelve")]

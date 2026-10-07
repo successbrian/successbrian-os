@@ -31,6 +31,12 @@ USAGE:
     from meme_template import render_meme
     render_meme(CONTENT, photo_path="/path/they.jpg", out_path="meme.png")
 
+CALLED BY:
+    tools/audience/political_meme.py, health_template.py, crypto_template.py,
+    war_on_oil.py — the template siblings import its shared primitives
+    (background, headline_3d, photo_card, font, _centered, grad_rounded,
+    _gbar, icon, BRAND constants) rather than reinventing them.
+
     CONTENT = {
         "kicker": "SMALL CAPS HOOK",
         "headline": "THE $620 RAM SCAM",   # gradient+3D applied automatically

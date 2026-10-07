@@ -19,6 +19,24 @@ footer) with a health visual identity:
 
 CONTENT contract mirrors meme_template.render_meme, plus the political
 template's optional headline_size (starting point size, auto-shrinks).
+
+WHY:
+    Brian's health desk gives his lived-experience health content
+    (diabetes/GLP-1/weight-loss — his standing content lane per 2026-10-04)
+    a branded visual lane distinct from the AI and political desks. The
+    Oliabo Prima capsule emblem ties the lane to his Oliabo business, and
+    the tagline "LIVED EXPERIENCE. REAL TALK." encodes his standing rule:
+    lived experience, never prescription.
+
+CALLED BY:
+    Imported via render_health_meme for health-desk renders; run directly
+    as a script to self-render a proof card to /tmp/health_template_proof.png.
+
+NOTES:
+    The sys.path insert points at the /home/hatch/workspace/successbrian-os
+    deployment checkout — leave it alone (deployment convention). The Prima
+    emblem must use REAL capsule photos per Brian 2026-10-06 (packet removed,
+    exactly one emblem per meme).
 """
 import sys
 from pathlib import Path

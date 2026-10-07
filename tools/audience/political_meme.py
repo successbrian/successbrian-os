@@ -32,6 +32,19 @@ USAGE:
         "curiosity": "Think my count is off? Go read them yourself.",
     }
     # draw_content(img, draw, box) paints the middle zone (x0, y0, x1, y1).
+
+WHY:
+    Brian's political desk is his patriotic lane: Navy identity is
+    non-negotiable (enlisted MMN, CVN-73 — propeller in enlisted silver,
+    never officer's gold) and the standing hashtag is #MAGAUSNavyVet. The
+    election_inset countdown rail auto-computes from the post date and
+    retires itself after election day, so the template never ships stale
+    urgency.
+
+CALLED BY:
+    tools/audience/war_on_oil.py (reference one-off render proving the
+    chrome end to end). Future political meme scripts import
+    render_political_meme with their own draw_content callback.
 """
 
 import math

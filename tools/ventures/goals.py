@@ -9,6 +9,10 @@ WHY:
 
 The draft stays 'draft' until Brian (or the entrepreneur) approves it;
 Spencer then creates the real tracked goal from it.
+
+CALLED BY:
+    tools/ventures/ideas.py — the flesh step imports draft_goal to build
+    the draft from a scored profile.
 """
 
 

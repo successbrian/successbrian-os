@@ -1,0 +1,40 @@
+# fleet-fabric.conf — inventory for the NVMe-oF fabric
+# PURPOSE: single source of truth for which hosts export what and who consumes it.
+# WHY: every fabric script reads this file; no hostnames/IPs hardcoded in scripts.
+# CALLED BY: target/nvmet-export.sh, initiator/nvme-fabric-connect.sh,
+#            sync/model-sync.sh, health/fabric-health.sh
+# NOTES: copy to fleet-fabric.conf (same dir) and fill in. One file per node is fine
+#        as long as EXPORTERS lists every exporter; consumers only need their own
+#        section plus EXPORTERS. Keep this file on each node at
+#        /opt/fleet-fabric/fleet-fabric.conf (scripts default to ./fleet-fabric.conf
+#        then /opt/fleet-fabric/fleet-fabric.conf).
+
+# --- This node's fabric IP (the address nvmet listens on / initiators use) ---
+FABRIC_IP="10.20.30.11"
+
+# --- This node's role: exporter, consumer, or both ---
+NODE_ROLE="exporter"
+
+# --- Exporter settings (ignored unless NODE_ROLE includes exporter) ---
+# NQN base for subsystems created on this host
+NQN_BASE="nqn.2026-10.fleet"
+# Namespaces to export: "name:/dev/device" pairs, space separated.
+# Example: model namespaces backed by NVMe, plus an SSD namespace.
+EXPORT_NAMESPACES="model-150b:/dev/nvme0n1 model-qwen:/dev/nvme1n1 ssd-bulk:/dev/sda"
+# TCP port for nvmet (standard)
+NVMET_PORT="4420"
+
+# --- Consumer settings (ignored unless NODE_ROLE includes consumer) ---
+# Exporter IPs to connect to, space separated. Multipath handles failover.
+EXPORTERS="10.20.30.11 10.20.30.12 10.20.30.13 10.20.30.14"
+# Subsystem NQNs to connect (must match exporters' NQN_BASE + namespace name)
+SUBSYSTEMS="nqn.2026-10.fleet:model-150b nqn.2026-10.fleet:model-qwen"
+
+# --- Model sync settings (used by sync/model-sync.sh) ---
+# Host holding the source-of-truth weights
+MODEL_SOURCE_HOST="k11-alpha"
+MODEL_SOURCE_USER="successbrian"
+# "local_path:remote_subdir" pairs. Replicas land under /srv/fleet-models/<subdir>.
+MODEL_DIRS="/home/successbrian/AION-CORE/models/DeepSeek-V4-Flash-reap-150b:deepseek-150b"
+# Replica hosts (user@host), space separated
+REPLICA_HOSTS="successbrian@mantis-1 successbrian@mantis-2 successbrian@mantis-3 successbrian@mantis-4"

@@ -1,0 +1,17 @@
+[Unit]
+Description=Fleet fabric NVMe/TCP initiator connect
+# PURPOSE: reconnect fabric namespaces at boot with multipath.
+# WHY: consumers must regain their Colibri storage tier automatically after reboot.
+# CALLED BY: systemd.
+# NOTES: place at /etc/systemd/system/nvme-fabric.service, then
+#        systemctl daemon-reload && systemctl enable --now nvme-fabric
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/fleet-fabric/initiator/nvme-fabric-connect.sh /opt/fleet-fabric/fleet-fabric.conf
+
+[Install]
+WantedBy=multi-user.target

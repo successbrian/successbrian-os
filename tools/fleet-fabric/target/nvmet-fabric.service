@@ -1,0 +1,18 @@
+[Unit]
+Description=Fleet fabric NVMe-oF target export
+# PURPOSE: re-export nvmet namespaces at boot (configfs does not persist).
+# WHY: exporters must come back automatically after restarts — Brian takes hosts
+#      down for maintenance and the fleet must not need manual recovery.
+# CALLED BY: systemd.
+# NOTES: place at /etc/systemd/system/nvmet-fabric.service, then
+#        systemctl daemon-reload && systemctl enable --now nvmet-fabric
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/fleet-fabric/target/nvmet-export.sh /opt/fleet-fabric/fleet-fabric.conf
+
+[Install]
+WantedBy=multi-user.target

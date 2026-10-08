@@ -20,9 +20,16 @@ forks the harness.
 
 ## Session choreography
 
+0. **Evening needs-pass** (prior evening, ~20:00): each seat gets one short
+   discovery call — "what do you need to know to make tomorrow's calls?"
+   NEEDS lines go into `board-needs-<tag>.jsonl` in the inbox. Overnight
+   research (Altair's routines) marks them answered. The morning brief's
+   shared context includes the answers, so calls compound on fuller state
+   day over day. The needs-pass waits on the model API like the session does.
 1. **Brief** (≤15 min): BriefBuilder runs the pullers named in the seats'
-   `brief_keys` plus shared context (night-shift report, recent decisions).
-   Missing state → explicit `NOT INSTRUMENTED`, never fiction.
+   `brief_keys` plus shared context (night-shift report, recent decisions,
+   overnight research answers). Missing state → explicit `NOT INSTRUMENTED`,
+   never fiction.
 2. **Wave 1**: each seat gets one stateless call (system = role prompt from
    title/domain/mandate/constraints; user = brief). Sequential with a hard
    barrier — a seat FULLY completes before the next starts. Transport errors

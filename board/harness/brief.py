@@ -108,6 +108,28 @@ def pull_marketer_watch_offers() -> str:
         return f"PULLER ERROR (marketer_watch --offers): {e}"
 
 
+def pull_overnight_answers() -> str:
+    """Answers to last evening's seat NEEDS, researched overnight.
+
+    Brian 2026-10-08: each seat is asked the evening before what it needs to
+    know; overnight research fills the answers; the morning brief carries
+    them so today's calls are made on fuller state. Reads
+    board-needs-<today>.jsonl from the inbox (written by board.harness.needs).
+    """
+    from datetime import datetime
+    tag = "board-" + datetime.now().strftime("%Y%m%d")
+    inbox = os.path.expanduser("~/workspace/altair-brain/inbox")
+    try:
+        from board.harness.needs import read_answered_needs
+    except ImportError:
+        from harness.needs import read_answered_needs  # noqa
+    answered = read_answered_needs(tag, inbox)
+    if not answered:
+        return "No overnight research answers yet (needs queue empty or unanswered)."
+    lines = [f"- [{d['seat']}] Q: {d['need']}\n  A: {d['answer']}" for d in answered]
+    return "\n".join(lines)
+
+
 def stub_puller(domain: str):
     """Generic fallback: marks the domain as not instrumented."""
 
@@ -122,6 +144,7 @@ def stub_puller(domain: str):
 PULLERS: dict[str, callable] = {
     "night_shift": pull_night_shift_report,
     "recent_decisions": pull_recent_decisions,
+    "overnight_answers": pull_overnight_answers,
     # Brian's domain pullers: bent stubs for now — each returns NOT
     # INSTRUMENTED until a real data source is wired. The board flags these.
     "blog_pipeline": stub_puller("blog_pipeline"),
@@ -162,9 +185,11 @@ class BriefBuilder:
             [
                 "[night_shift]\n" + self._run("night_shift"),
                 "[recent_decisions]\n" + self._run("recent_decisions"),
+                "[overnight_answers]\n" + self._run("overnight_answers"),
             ]
         )
-        sections = {k: self._run(k) for k in brief_keys if k not in ("night_shift", "recent_decisions")}
+        sections = {k: self._run(k) for k in brief_keys
+                    if k not in ("night_shift", "recent_decisions", "overnight_answers")}
         return Brief(shared=shared, sections=sections)
 
     def _run(self, key: str) -> str:

@@ -24,10 +24,13 @@ NOTES:
       topic's mlm_company (Le-Vel = gated until corporate compliance lifts).
     - Affiliate lane check reuses the competition-graph logic: flags if the
       lane shares an edge with any MLM product.
-    - Score = (demand x 2) + speed + ease (each high/fast=3, medium=2,
-      low/slow=1). Demand is double-weighted per Brian 2026-10-08: "if the
-      ease is low, but the seriousness is unbelievable i learn it."
-      Max score 12.
+    - Score = (demand x 2) + (ecosystem_fit x 2) + speed + ease
+      (each high/fast=3, medium=2, low/slow=1). Demand is double-weighted
+      per Brian 2026-10-08 ("if the ease is low, but the seriousness is
+      unbelievable i learn it"). Ecosystem fit is double-weighted per Brian
+      2026-10-08: how much a topic relates to his ecosystem derives its
+      monetization potential and why he needs the leads.
+      Max score 18.
 """
 
 import argparse
@@ -92,24 +95,23 @@ def _lane_competes(affiliate_lane):
 def cmd_score(_args):
     """Score all candidate topics; set gated status; compute scores."""
     topics = _rows("SELECT id, topic, demand, speed, brian_ease,"
-                   " mlm_product, mlm_company, affiliate_lane"
+                   " ecosystem_fit, mlm_product, mlm_company, affiliate_lane"
                    " FROM successbrian_os.blog_topics"
                    " WHERE status = 'candidate';")
     scored, gated = 0, 0
     for t in topics:
-        tid, topic, demand, speed, ease, prod, comp, lane = \
-            (t.split("|") + [""] * 8)[:8]
+        tid, topic, demand, speed, ease, eco, prod, comp, lane = \
+            (t.split("|") + [""] * 9)[:9]
         if _is_gated(comp):
             _rows("UPDATE successbrian_os.blog_topics SET status='gated',"
                   " gated_reason='MLM company %s is gated'"
                   " WHERE id=%s;" % (comp.replace("'", "''"), tid))
             gated += 1
             continue
-        # Demand double-weighted: unbelievable seriousness beats low ease
-        # (Brian 2026-10-08: "if the ease is low, but the seriousness is
-        # unbelievable i learn it")
-        s = (SCORE_MAP.get(demand, 2) * 2 + SCORE_MAP.get(speed, 2) +
-             SCORE_MAP.get(ease, 2))
+        # Demand and ecosystem fit double-weighted (Brian 2026-10-08):
+        # seriousness beats low ease; ecosystem fit drives monetization.
+        s = (SCORE_MAP.get(demand, 2) * 2 + SCORE_MAP.get(eco, 2) * 2 +
+             SCORE_MAP.get(speed, 2) + SCORE_MAP.get(ease, 2))
         lane_flag = ""
         hits = _lane_competes(lane)
         if hits:
@@ -126,17 +128,18 @@ def cmd_score(_args):
 def cmd_list(_args):
     """Show ranked ungated topics (Brian sees these)."""
     rows = _rows("SELECT topic, niche, score, demand, speed, brian_ease,"
-                 " mlm_product, affiliate_lane FROM successbrian_os.blog_topics"
+                 " mlm_product, affiliate_lane, ecosystem_fit"
+                 " FROM successbrian_os.blog_topics"
                  " WHERE status = 'candidate' ORDER BY score DESC, topic;")
     if not rows:
         print("no ungated candidates -- add topics first")
         return
-    print("%-32s %5s %-8s %-8s %-8s %s" %
-          ("topic", "score", "demand", "speed", "ease", "funnels to"))
+    print("%-32s %5s %-8s %-6s %-8s %-8s %s" %
+          ("topic", "score", "demand", "eco", "speed", "ease", "funnels to"))
     for r in rows:
-        f = (r.split("|") + [""] * 8)[:8]
-        print("%-32s %5s %-8s %-8s %-8s %s" %
-              (f[0][:32], f[2], f[3], f[4], f[5], f[6] or "-"))
+        f = (r.split("|") + [""] * 9)[:9]
+        print("%-32s %5s %-8s %-6s %-8s %-8s %s" %
+              (f[0][:32], f[2], f[3], f[8], f[4], f[5], f[6] or "-"))
     print("(%d ungated topics)" % len(rows))
 
 
@@ -156,18 +159,20 @@ def cmd_gated(_args):
 
 def cmd_add(args):
     _rows("INSERT INTO successbrian_os.blog_topics"
-          " (topic, niche, demand, speed, brian_ease,"
+          " (topic, niche, demand, speed, brian_ease, ecosystem_fit,"
           "  mlm_product, mlm_company, affiliate_lane, notes)"
-          " VALUES ('%s','%s','%s','%s','%s','%s','%s','%s','%s')"
+          " VALUES ('%s','%s','%s','%s','%s','%s','%s','%s','%s','%s')"
           " ON CONFLICT (topic) DO UPDATE SET"
           " niche=EXCLUDED.niche, demand=EXCLUDED.demand,"
           " speed=EXCLUDED.speed, brian_ease=EXCLUDED.brian_ease,"
+          " ecosystem_fit=EXCLUDED.ecosystem_fit,"
           " mlm_product=EXCLUDED.mlm_product, mlm_company=EXCLUDED.mlm_company,"
           " affiliate_lane=EXCLUDED.affiliate_lane, notes=EXCLUDED.notes,"
           " status='candidate', gated_reason='';"
           % tuple(a.replace("'", "''") for a in
                   [args.topic, args.niche or "", args.demand or "medium",
                    args.speed or "medium", args.ease or "medium",
+                   args.eco or "medium",
                    args.mlm_product or "", args.mlm_company or "",
                    args.affiliate_lane or "", args.notes or ""]))
     print("topic upserted: %s (run score next)" % args.topic)
@@ -196,6 +201,9 @@ def main():
                    default="medium")
     p.add_argument("--ease", choices=["high", "medium", "low"],
                    default="medium")
+    p.add_argument("--eco", choices=["high", "medium", "low"],
+                   default="medium",
+                   help="ecosystem fit: how much it feeds Brian's businesses")
     p.add_argument("--mlm-product", default="")
     p.add_argument("--mlm-company", default="")
     p.add_argument("--affiliate-lane", default="")

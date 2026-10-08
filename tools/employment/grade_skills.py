@@ -22,6 +22,9 @@ NOTES:
     - Idempotent: only grades rows where skill_gaps IS NULL. Re-runs are
       safe; skill_gap_signals has a UNIQUE(job_tracking_id, skill).
     - coding_fit: 'vibe_fit' | 'hand_code_heavy' | 'mixed' | NULL.
+    - Gap rule (fixed 2026-10-08 per board): a skill is a gap only on
+      genuine mismatch — required 'high' vs Brian developing/weak, or
+      required 'stated' vs Brian weak. Developing covers basic needs.
       A freelance 'target' that is hand_code_heavy is a STRETCH, not a
       clean target — the briefing worker treats it that way.
     - DB writes go through ~/workspace/bin/kssh -> psql on k11.
@@ -102,7 +105,13 @@ def grade_row(text, lex):
         rlevel = "high" if HIGH_RE.search(text) else "stated"
         required.append({"skill": entry["skill"],
                          "required_level": rlevel})
-        if entry["level"] in ("developing", "weak"):
+        # Gap only on genuine mismatch (Brian 2026-10-08 board fix):
+        # "developing" covers basic ("stated") requirements; it is only a gap
+        # when the job demands "high". "weak" is a gap at any required level.
+        blevel = entry["level"]
+        is_gap = (rlevel == "high" and blevel in ("developing", "weak")) or \
+                 (rlevel == "stated" and blevel == "weak")
+        if is_gap:
             gaps.append({"skill": entry["skill"],
                          "required_level": rlevel,
                          "gap_kind": "underqualified"})

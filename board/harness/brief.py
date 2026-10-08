@@ -120,14 +120,21 @@ def pull_overnight_answers() -> str:
     tag = "board-" + datetime.now().strftime("%Y%m%d")
     inbox = os.path.expanduser("~/workspace/altair-brain/inbox")
     try:
-        from board.harness.needs import read_answered_needs
+        from board.harness.needs import read_answered_needs, read_open_reports
     except ImportError:
-        from harness.needs import read_answered_needs  # noqa
-    answered = read_answered_needs(tag, inbox)
-    if not answered:
-        return "No overnight research answers yet (needs queue empty or unanswered)."
-    lines = [f"- [{d['seat']}] Q: {d['need']}\n  A: {d['answer']}" for d in answered]
-    return "\n".join(lines)
+        from harness.needs import read_answered_needs, read_open_reports  # noqa
+    answered = [d for d in read_answered_needs(tag, inbox) if d.get("answer")]
+    reports = read_open_reports(tag, inbox)
+    parts = []
+    if answered:
+        lines = [f"- [{d['seat']}] Q: {d['need']}\n  A: {d['answer']}" for d in answered]
+        parts.append("Overnight research answers:\n" + "\n".join(lines))
+    else:
+        parts.append("No overnight research answers yet (needs queue empty or unanswered).")
+    if reports:
+        lines = [f"- [{d['seat']}] {d['need']} (status: {d.get('status')})" for d in reports]
+        parts.append("New reports requested — instrumentation backlog:\n" + "\n".join(lines))
+    return "\n\n".join(parts)
 
 
 def stub_puller(domain: str):

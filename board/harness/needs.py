@@ -5,9 +5,12 @@ needs to know.
 WHY (Brian 2026-10-08):
     Seats should bring what they need to know to the table. The morning
     session is for decisions, not discovery — so the evening before, each
-    seat gets one short call: "what do you need to know to make your calls
-    tomorrow?" The answers go into a research queue; overnight research
-    (Altair's routines) fills them; the morning brief carries the answers.
+    seat gets one short call analyzing its domain: "is there a NEW type of
+    report I need?" (REPORT:) and "what news/trends do I want MORE DETAIL on?"
+    (DETAIL:). The answers go into a research queue; overnight research
+    (Altair's routines) fills DETAILs; REPORTs become instrumentation requests
+    (new pullers/reports to build). The morning brief carries answered DETAILs
+    plus the open REPORT backlog.
 
 CALLED BY:
     - New evening cron (~20:00): python3 -m board.harness.needs board/config/brian.yaml
@@ -34,30 +37,46 @@ from .seats import Seat, load_config
 from .worker import ModelWorker
 
 NEEDS_RE = re.compile(r"^\s*NEEDS\s*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+REPORT_RE = re.compile(r"^\s*REPORT\s*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+DETAIL_RE = re.compile(r"^\s*DETAIL\s*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 
 
 @dataclass
 class SeatNeeds:
     seat_title: str
-    needs: list[str] = field(default_factory=list)
+    needs: list[dict] = field(default_factory=list)  # [{kind, need}]
     raw: str = ""
 
 
-def parse_needs(raw: str) -> list[str]:
+def _clean_need(text: str) -> str:
+    text = (text or "").strip()
+    if not text or re.match(r"^(nothing|none|n/a)\b", text, re.I):
+        return ""
+    return text if len(text) >= 8 else ""
+
+
+def parse_needs(raw: str) -> list[dict]:
+    """Parse a seat's discovery output into [{kind, need}].
+    kind = 'report' (REPORT: — a NEW type of report the seat wants built) or
+           'detail' (DETAIL: or NEEDS: — news/trends/topics it wants more on).
+    """
     out = []
-    for m in NEEDS_RE.finditer(raw or ""):
-        need = (m.group(1) or "").strip()
-        if not need or re.match(r"^(nothing|none|n/a)\b", need, re.I):
-            continue
-        if len(need) < 8:
-            continue
-        out.append(need)
+    for m in REPORT_RE.finditer(raw or ""):
+        need = _clean_need(m.group(1))
+        if need:
+            out.append({"kind": "report", "need": need})
+    for pattern in (DETAIL_RE, NEEDS_RE):
+        for m in pattern.finditer(raw or ""):
+            need = _clean_need(m.group(1))
+            if need:
+                out.append({"kind": "detail", "need": need})
     # Deduplicate, preserve order.
     seen, uniq = set(), []
-    for n in out:
-        if n.lower() not in seen:
-            seen.add(n.lower())
-            uniq.append(n)
+    for d in out:
+        key = (d["kind"], d["need"].lower())
+        if key not in seen:
+            seen.add(key)
+            uniq.append(d)
     return uniq[:5]  # cap: 5 needs per seat per evening
 
 
@@ -89,13 +108,17 @@ class NeedsCollector:
         return (
             f"You are the {seat.title}. Your mandate: {seat.mandate}\n\n"
             f"Tomorrow morning you sit on the board of directors and make "
-            f"2-3 binding calls in your domain. Tonight, look at YOUR domain "
-            f"only and say what you need: 'I need a report on X' or 'I need "
-            f"to know more about Y' — the specific facts, figures, or "
-            f"statuses that would sharpen tomorrow's calls.\n"
-            f"List up to 5 items, one per line, each starting with 'NEEDS:'.\n"
-            f"Be specific (a metric, a report, a status — not a topic).\n"
-            f"If your domain is fully covered, write 'NEEDS: nothing'."
+            f"2-3 binding calls in your domain. Tonight, analyze YOUR domain "
+            f"and tell us what would sharpen those calls — two kinds of "
+            f"things:\n"
+            f"(1) NEW REPORTS: is there a type of report you need that does "
+            f"not exist yet? One per line starting with 'REPORT:'.\n"
+            f"(2) DEEPER DETAIL: what news, trends, or topics in your domain "
+            f"do you want to know more about? One per line starting with "
+            f"'DETAIL:'.\n"
+            f"Up to 5 items total. Be specific (a metric, a report, a trend — "
+            f"not a vague topic). If your domain is fully covered, write "
+            f"'NEEDS: nothing'."
         )
 
     def collect(self) -> list[SeatNeeds]:
@@ -129,11 +152,12 @@ class NeedsCollector:
         path = os.path.join(self.out_dir, f"board-needs-{self.tag}.jsonl")
         with open(path, "w") as f:
             for r in results:
-                for need in r.needs:
+                for d in r.needs:
                     f.write(json.dumps({
                         "session_tag": self.tag,
                         "seat": r.seat_title,
-                        "need": need,
+                        "kind": d["kind"],
+                        "need": d["need"],
                         "status": "new",
                         "answer": "",
                     }) + "\n")
@@ -143,7 +167,19 @@ class NeedsCollector:
 
 
 def read_answered_needs(tag: str, inbox_dir: str) -> list[dict]:
-    """Read answered needs for a session tag (morning brief puller)."""
+    """Read answered DETAIL needs for a session tag (morning brief puller)."""
+    return read_needs(tag, inbox_dir, kind="detail", status="answered")
+
+
+def read_open_reports(tag: str, inbox_dir: str) -> list[dict]:
+    """Read REPORT needs not yet built (instrumentation backlog)."""
+    out = read_needs(tag, inbox_dir, kind="report")
+    return [d for d in out if d.get("status") in ("new", "acknowledged")]
+
+
+def read_needs(tag: str, inbox_dir: str, kind: str | None = None,
+               status: str | None = None) -> list[dict]:
+    """Read needs for a session tag, optionally filtered."""
     path = os.path.join(os.path.expanduser(inbox_dir),
                         f"board-needs-{tag}.jsonl")
     out = []
@@ -154,8 +190,11 @@ def read_answered_needs(tag: str, inbox_dir: str) -> list[dict]:
                 if not line:
                     continue
                 d = json.loads(line)
-                if d.get("status") == "answered" and d.get("answer"):
-                    out.append(d)
+                if kind and d.get("kind", "detail") != kind:
+                    continue
+                if status and d.get("status") != status:
+                    continue
+                out.append(d)
     except (OSError, json.JSONDecodeError):
         pass
     return out

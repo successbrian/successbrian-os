@@ -36,20 +36,11 @@ import sys
 KSSH = os.path.expanduser("~/workspace/bin/kssh")
 
 
-def _psql(sql):
-    out = subprocess.run(
-        [KSSH, "psql -h localhost -U successbrian -d ecosystem_central -t -A -F '|' -c \"%s\"" % sql],
-        capture_output=True, text=True, shell=False)
-    # kssh takes the full command as one arg
-    return out
-
-
 def _rows(sql):
-    # shell out via bash -c to keep quoting simple
-    cmd = "%s %s" % (KSSH, subprocess.list2cmdline(
-        ["psql", "-h", "localhost", "-U", "successbrian", "-d",
-         "ecosystem_central", "-t", "-A", "-F", "|", "-c", sql]))
-    out = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+    cmd = ("psql -h localhost -U successbrian -d ecosystem_central"
+           " -t -A -F '|' -c \"%s\"" % sql.replace('"', '\\"'))
+    out = subprocess.run(["bash", KSSH, cmd],
+                         capture_output=True, text=True, timeout=60)
     if out.returncode != 0:
         print("db error: %s" % out.stderr.strip()[:200], file=sys.stderr)
         sys.exit(2)

@@ -26,6 +26,8 @@ forks the harness.
    research (Altair's routines) marks them answered. The morning brief's
    shared context includes the answers, so calls compound on fuller state
    day over day. The needs-pass waits on the model API like the session does.
+   Each seat is asked independently against its own domain ("I need a report
+   on X" / "I need to know more about Y"), up to 5 needs per seat.
 1. **Brief** (≤15 min): BriefBuilder runs the pullers named in the seats'
    `brief_keys` plus shared context (night-shift report, recent decisions,
    overnight research answers). Missing state → explicit `NOT INSTRUMENTED`,

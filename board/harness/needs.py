@@ -58,7 +58,7 @@ def parse_needs(raw: str) -> list[str]:
         if n.lower() not in seen:
             seen.add(n.lower())
             uniq.append(n)
-    return uniq[:3]  # cap: 3 needs per seat per evening
+    return uniq[:5]  # cap: 5 needs per seat per evening
 
 
 class NeedsCollector:
@@ -89,11 +89,13 @@ class NeedsCollector:
         return (
             f"You are the {seat.title}. Your mandate: {seat.mandate}\n\n"
             f"Tomorrow morning you sit on the board of directors and make "
-            f"2-3 binding calls in your domain. Tonight, one question only:\n"
-            f"what do you NEED TO KNOW to make those calls well?\n"
-            f"List up to 3 items, one per line, each starting with 'NEEDS:'.\n"
-            f"Be specific (a metric, a fact, a status — not a topic).\n"
-            f"If you have everything you need, write 'NEEDS: nothing'."
+            f"2-3 binding calls in your domain. Tonight, look at YOUR domain "
+            f"only and say what you need: 'I need a report on X' or 'I need "
+            f"to know more about Y' — the specific facts, figures, or "
+            f"statuses that would sharpen tomorrow's calls.\n"
+            f"List up to 5 items, one per line, each starting with 'NEEDS:'.\n"
+            f"Be specific (a metric, a report, a status — not a topic).\n"
+            f"If your domain is fully covered, write 'NEEDS: nothing'."
         )
 
     def collect(self) -> list[SeatNeeds]:

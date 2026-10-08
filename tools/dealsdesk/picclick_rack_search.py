@@ -63,7 +63,8 @@ E5_CORES = {
 # Title must look like a server, not a part.
 PART_STOPLIST = re.compile(
     r"motherboard|riser|hard drive|chassis only|media bay|backplane|"
-    r"power switch|rail kit|heatsink|cable|tray\b|bezel|fan module",
+    r"power switch|rail kit|heatsink|cable|tray\b|bezel|fan module|"
+    r"memory ram for|ram kit|^\d+\s*GB\s*\d*x\d+GB\s*DDR",  # RAM kits, not servers
     re.I,
 )
 

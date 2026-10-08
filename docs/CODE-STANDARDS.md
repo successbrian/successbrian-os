@@ -45,3 +45,26 @@ is logged. Quarantine-never-delete still applies to everything else.
 each tracked repo and documents them in `docs/IMPROVEMENTS.md` (date + what +
 why). 90% rule applies: only autonomous-safe changes get committed; anything
 uncertain is noted, not committed.
+
+## Commit hygiene (all coders — Brian 2026-10-08, standing)
+
+Every coder in this ecosystem — Spencer, Altair, the Coding Box, any future
+agent — follows this contract. (Why it exists: 2026-10-07, a week of
+staged-but-uncommitted work including accidental doc deletions piled up behind
+two unmerged paths nobody fixed. The repo looked vandalized; nothing was lost,
+but it took a full investigation to untangle.)
+
+1. **Never leave staged-but-uncommitted work overnight.** Commit it or unstage
+   it before you stop. The index is not a parking lot.
+2. **`git add` specific files only.** Never `git add -A` / `git add .` when the
+   worktree has unrelated changes — you will sweep up someone else's mess.
+3. **Fix a commit blocker the moment you hit it.** Unmerged paths, auth
+   failures, whatever stops the commit — resolve it now, don't work around it
+   and leave it for later.
+4. **Never stage deletions of docs, specs, LICENSE, or .gitignore entries**
+   without Brian's explicit go-ahead. Code cleanup never means doc deletion.
+5. **`tools/repo_hygiene_checker.py`** (system cron daily 07:00 CDT) probes
+   every tracked repo and writes to `successbrian_os.repo_hygiene_history`.
+   Healthy = no unmerged paths AND no staged-but-uncommitted changes. If your
+   repo goes unhealthy you get a knowledge_bridge alert the same day — fix it
+   that day.

@@ -53,8 +53,10 @@ Deployed: `/home/dealsdesk/scripts/` on k11-alpha (same pattern as budget_guard)
 DDL: `tools/erp/schema.sql` (run once, needs CREATE on successbrian_os).
 Suggested timers: need_from_task hourly, needs_intake every 15 min,
 sourcing_worker hourly, need_status_sync every 30 min.
-DEPLOYED 2026-10-08: daily 06:00 CDT cron on k11-alpha runs all four in order
-(task -> intake -> source -> sync), logging to ~/logs/erp-loop.log.
+DEPLOYED 2026-10-08: daily staggered cron on k11-alpha (Brian: don't stack
+everything at 6am — stagger to avoid the thundering herd that kills the board
+meeting): 06:00 need_from_task, 06:20 needs_intake, 06:40 sourcing_worker,
+07:00 need_status_sync. Logs to ~/logs/erp-loop.log.
 
 ## PROVENANCE
 Built 2026-10-08 per Brian: "code this integration so it's not AI inference

@@ -91,23 +91,86 @@ def cmd_new_program(args):
     _psql(
         "INSERT INTO successbrian_os.aff_programs"
         " (slug, name, terms, commission_summary, cookie_days,"
-        "  payout_minimum, status, my_role, notes) VALUES"
+        "  payout_minimum, status, my_role, notes,"
+        "  commission_type, commission_rate_pct, commission_flat_usd,"
+        "  commission_flat_max_usd, is_recurring, recurring_period) VALUES"
         " (:'slug', :'name', :'terms', :'comm', :'cookie'::int,"
-        "  :'payout'::numeric, :'status', :'role', :'notes')"
+        "  :'payout'::numeric, :'status', :'role', :'notes',"
+        "  :'ctype', :'rate'::numeric, :'flat'::numeric,"
+        "  :'flatmax'::numeric, :'recur'::boolean, :'period')"
         " ON CONFLICT (slug) DO UPDATE SET name=EXCLUDED.name,"
         " terms=EXCLUDED.terms,"
         " commission_summary=EXCLUDED.commission_summary,"
         " cookie_days=EXCLUDED.cookie_days,"
         " payout_minimum=EXCLUDED.payout_minimum,"
         " status=EXCLUDED.status, my_role=EXCLUDED.my_role,"
-        " notes=EXCLUDED.notes;",
+        " notes=EXCLUDED.notes,"
+        " commission_type=EXCLUDED.commission_type,"
+        " commission_rate_pct=EXCLUDED.commission_rate_pct,"
+        " commission_flat_usd=EXCLUDED.commission_flat_usd,"
+        " commission_flat_max_usd=EXCLUDED.commission_flat_max_usd,"
+        " is_recurring=EXCLUDED.is_recurring,"
+        " recurring_period=EXCLUDED.recurring_period;",
         {"slug": args.slug, "name": args.name, "terms": args.terms or "",
          "comm": args.commission_summary or "",
          "cookie": args.cookie_days or "",
          "payout": args.payout_minimum or "",
          "status": args.status or "active", "role": args.my_role or "",
-         "notes": args.notes or ""})
+         "notes": args.notes or "",
+         "ctype": args.commission_type or "unknown",
+         "rate": args.commission_rate_pct or "",
+         "flat": args.commission_flat_usd or "",
+         "flatmax": args.commission_flat_max_usd or "",
+         "recur": args.is_recurring or "false",
+         "period": args.recurring_period or ""})
     print("program upserted: %s" % args.slug)
+
+
+def _fmt_commission(r):
+    """Standardized one-line commission rendering from structured fields."""
+    ctype, rate, flat, flatmax, recur, period, summary = r
+    parts = []
+    if ctype == "percentage" and rate:
+        parts.append("%s%%" % rate)
+    elif ctype == "flat" and flat:
+        parts.append("$%s" % flat)
+    elif ctype == "hybrid":
+        if flat:
+            parts.append("$%s%s/sale" % (flat, ("-$%s" % flatmax) if flatmax else ""))
+        if rate:
+            parts.append("%s%%" % rate)
+    elif ctype == "tiered":
+        parts.append("tiered")
+    if recur == "t" or recur is True:
+        parts.append("recurring%s" % (" (%s)" % period if period else ""))
+    if parts:
+        return " ".join(parts)
+    return summary or "?"
+
+
+def cmd_compare(_args):
+    rows = _rows("SELECT slug, name, status, commission_type,"
+                " commission_rate_pct, commission_flat_usd,"
+                " commission_flat_max_usd, is_recurring, recurring_period,"
+                " commission_summary, cookie_days, payout_minimum,"
+                " (SELECT COALESCE(SUM(earnings),0) FROM"
+                "  successbrian_os.aff_metrics m"
+                "  WHERE m.program_id = p.id)"
+                " FROM successbrian_os.aff_programs p ORDER BY slug;")
+    if not rows:
+        print("no programs yet -- run new-program first")
+        return
+    print("%-18s %-8s %-28s %6s %7s %s" %
+          ("program", "status", "commission", "cookie", "earned", "recurring"))
+    for r in rows:
+        f = (r.split("\t") + [""] * 13)[:13]
+        slug, name, status = f[0], f[1], f[2]
+        comm = _fmt_commission((f[3], f[4], f[5], f[6], f[7], f[8], f[9]))
+        cookie, earned = f[10] or "?", f[12] or "0"
+        recur = "yes" if f[7] in ("t", True) else "-"
+        print("%-18s %-8s %-28s %6s $%6s %s" %
+              (slug, status, comm[:28], cookie, earned, recur))
+    print("(%d programs, standardized commission view)" % len(rows))
 
 
 def cmd_list_programs(_args):
@@ -297,9 +360,17 @@ def main():
     p = sub.add_parser("new-program", help="register an affiliate program")
     p.add_argument("slug"); p.add_argument("--name", required=True)
     p.add_argument("--terms"); p.add_argument("--commission-summary")
+    p.add_argument("--commission-type",
+                   choices=["percentage", "flat", "tiered", "recurring", "hybrid"])
+    p.add_argument("--commission-rate-pct"); p.add_argument("--commission-flat-usd")
+    p.add_argument("--commission-flat-max-usd"); p.add_argument("--is-recurring")
+    p.add_argument("--recurring-period")
     p.add_argument("--cookie-days"); p.add_argument("--payout-minimum")
     p.add_argument("--status"); p.add_argument("--my-role"); p.add_argument("--notes")
     p.set_defaults(func=cmd_new_program)
+
+    sub.add_parser("compare", help="standardized commission comparison")\
+        .set_defaults(func=cmd_compare)
 
     sub.add_parser("list-programs", help="list affiliate programs")\
         .set_defaults(func=cmd_list_programs)

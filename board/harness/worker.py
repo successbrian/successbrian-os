@@ -5,10 +5,13 @@ OpenAI-compatible chat completions endpoint.
 WHY:
     Each chief is an EPHEMERAL FOCUSED worker: one prompt in, one judgment
     out, no conversation state. Stateless HTTP keeps that honest — there is
-    nowhere for stale opinions to accumulate between meetings. Retry-once +
-    fluff detection exists because the Sep 2026 failure mode was sessions that
-    "completed" with empty summaries; a worker that returns nothing useful
-    must be flagged, never silently accepted.
+    nowhere for stale opinions to accumulate between meetings. Per 2026-10-08
+    the worker WAITS on the model API: transport errors and thin outputs
+    retry with exponential backoff (30s base, 300s cap), unbounded — a seat
+    never fails just because the API was slow. Fluff is still never silently
+    accepted: attempts are logged and the wait is visible in the minutes.
+    Retry-once was the Sep 2026 behavior; the Oct 2026 failure mode was
+    sessions "completing" with seats missing because the API was slow.
 
 CALLED BY:
     board.harness.session (BoardSession runs wave-1 then wave-2 seats).
@@ -60,6 +63,8 @@ class ModelWorker:
     temperature: float = 0.7
     via: str = "direct"  # "direct" | "kssh"
     kssh_bin: str = "~/workspace/bin/kssh"
+    retry_base_s: float = 30.0  # first wait between attempts; doubles each retry
+    retry_cap_s: float = 300.0  # max wait between attempts (5 min)
 
     def _payload(self, system: str, user: str) -> bytes:
         return json.dumps(
@@ -103,7 +108,11 @@ class ModelWorker:
     def run_seat(
         self, seat: Seat, brief_text: str, extra_context: str = ""
     ) -> SeatResult:
-        """Run one seat. Retries once on failure/empty; never silently accepts fluff."""
+        """Run one seat. BLOCKS until the seat completes: transport errors and
+        thin/unparseable outputs are retried with exponential backoff, no
+        attempt cap. Per Brian 2026-10-08: if we're waiting on the model API,
+        we WAIT — a seat never fails just because the API was slow, and the
+        next seat never starts until this one is done."""
         import time
 
         user = f"BRIEF:\n{brief_text}"
@@ -111,32 +120,31 @@ class ModelWorker:
             user += f"\n\nPRIOR WAVE OUTPUT (other chiefs have spoken; build on it):\n{extra_context}"
         user += "\n\nYour 2-3 calls:"
 
-        last_raw, last_note, attempts = "", "", 0
+        attempt, backoff = 0, self.retry_base_s
         start = time.time()
-        for attempt in (1, 2):
-            attempts = attempt
+        while True:
+            attempt += 1
             try:
                 raw = self._post(self._payload(seat.system_prompt(), user))
-            except Exception as e:  # noqa: BLE001 - transport failure is a seat failure
-                last_note = f"transport error: {e}"
-                last_raw = ""
+            except Exception as e:  # noqa: BLE001 - transport failure -> wait, retry
+                elapsed = time.time() - start
+                print(f"[{seat.title}] attempt {attempt}: transport error "
+                      f"({e}); waiting {backoff:.0f}s then retrying "
+                      f"(elapsed {elapsed:.0f}s)", flush=True)
+                time.sleep(backoff)
+                backoff = min(backoff * 2, self.retry_cap_s)
                 continue
             calls = parse_calls(raw)
             if len(calls) >= 2:
                 return SeatResult(
-                    seat.title, calls, raw, True, time.time() - start, attempts
+                    seat.title, calls, raw, True, time.time() - start, attempt
                 )
-            last_raw, last_note = raw, f"only {len(calls)} usable call(s) parsed"
-        return SeatResult(
-            seat.title,
-            parse_calls(last_raw),
-            last_raw,
-            False,
-            time.time() - start,
-            attempts,
-            note=f"FAILED after {attempts} attempts: {last_note}. "
-            "Flagged as board-health failure; not silently accepted.",
-        )
+            elapsed = time.time() - start
+            print(f"[{seat.title}] attempt {attempt}: only {len(calls)} usable "
+                  f"call(s) parsed; waiting {backoff:.0f}s then retrying "
+                  f"(elapsed {elapsed:.0f}s)", flush=True)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, self.retry_cap_s)
 
 
 def parse_calls(raw: str) -> list[tuple[str, str]]:

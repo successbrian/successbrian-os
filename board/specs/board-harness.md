@@ -24,8 +24,11 @@ forks the harness.
    `brief_keys` plus shared context (night-shift report, recent decisions).
    Missing state → explicit `NOT INSTRUMENTED`, never fiction.
 2. **Wave 1**: each seat gets one stateless call (system = role prompt from
-   title/domain/mandate/constraints; user = brief). Sequential — iGPU
-   inference serializes anyway. Retry once on failure/empty.
+   title/domain/mandate/constraints; user = brief). Sequential with a hard
+   barrier — a seat FULLY completes before the next starts. Transport errors
+   and thin outputs are retried with exponential backoff (30s → 300s cap),
+   unbounded: if we're waiting on the model API, we WAIT (2026-10-08). A new
+   session never starts while the previous one is still running (lockfile).
 3. **Wave 2**: seats with `depends_on` receive formatted wave-1 outputs as
    extra context (e.g. CFO consolidates money after the revenue chiefs).
 4. **Gate**: chair scores every call (base 0.95; penalties for external

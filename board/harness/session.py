@@ -18,7 +18,11 @@ NOTES:
     Seats run SEQUENTIALLY even across waves — iGPU inference serializes
     concurrent requests anyway, and sequential keeps latencies predictable
     (~75s/seat on Morpheus). Wave-2 seats receive the formatted wave-1
-    outputs as extra context. A session with zero usable calls is a FAILED
+    outputs as extra context. Per 2026-10-08: each seat FULLY completes
+    (blocking retries with backoff, unbounded) before the next starts, and
+    if the model API is slow the session WAITS rather than failing the seat.
+    An overlap guard (lockfile) prevents a new session piling onto a
+    still-running one. A session with zero usable calls is a FAILED
     session and says so in the minutes; a verify count below the recorded
     count is a PIPELINE failure and says so too. Neither is silent.
 """
@@ -65,6 +69,7 @@ def make_sink(cfg: dict) -> DecisionSink:
 
 def make_worker(cfg: dict) -> ModelWorker:
     m = cfg.get("model", {})
+    r = cfg.get("retry", {})
     return ModelWorker(
         base_url=m.get("base_url", "http://127.0.0.1:11437"),
         model=m.get("name", "morpheus"),
@@ -72,7 +77,29 @@ def make_worker(cfg: dict) -> ModelWorker:
         max_tokens=int(m.get("max_tokens", 400)),
         temperature=float(m.get("temperature", 0.7)),
         via=m.get("via", "direct"),
+        retry_base_s=float(r.get("base_s", 30)),
+        retry_cap_s=float(r.get("cap_s", 300)),
     )
+
+
+def acquire_session_lock() -> bool:
+    """Overlap guard: if yesterday's session is still running (waiting on the
+    API), the new cron invocation exits instead of piling on. Returns True if
+    this process holds the lock."""
+    import fcntl
+    lock_path = os.path.expanduser("~/.board-session.lock")
+    f = open(lock_path, "w")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("Another board session is still running; exiting (no pileup).")
+        return False
+    # Keep the file object alive for the process lifetime via a global.
+    global _session_lock_fh  # noqa: PLW0603
+    _session_lock_fh = f
+    f.write(str(os.getpid()))
+    f.flush()
+    return True
 
 
 class BoardSession:
@@ -101,9 +128,14 @@ class BoardSession:
                 extra = ""
                 if seat.depends_on:
                     extra = self._format_wave_outputs(wave_outputs, seat.depends_on)
+                # BARRIER: this seat fully completes (blocking retries inside)
+                # before the next seat starts. No step proceeds on partial seats.
+                print(f"[wave {wave}] starting seat: {seat.title}", flush=True)
                 sr = self.worker.run_seat(seat, brief.for_seat(seat.brief_keys), extra)
                 wave_outputs[seat.title] = sr
                 res.seat_results.append(sr)
+                print(f"[wave {wave}] seat complete: {seat.title} "
+                      f"({sr.latency_s:.0f}s, {sr.attempts} attempt(s))", flush=True)
                 if not sr.ok:
                     res.failed_seats.append(seat.title)
                     res.health_notes.append(f"{seat.title}: {sr.note}")
@@ -193,6 +225,8 @@ class BoardSession:
 if __name__ == "__main__":
     import sys
 
+    if not acquire_session_lock():
+        sys.exit(2)
     cfg_path = sys.argv[1] if len(sys.argv) > 1 else "board/config/brian.yaml"
     result = BoardSession(cfg_path).run()
     print(f"session={result.session_tag} seats={len(result.seat_results)} "

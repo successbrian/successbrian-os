@@ -9,10 +9,16 @@
      etc.); (3) no prices in planning docs. -->
 
 ## Phase 0 — UP AND RUNNING (now)
-Defined in fleet-map.md critical path: X79s built, DL380s Proxmox-sliced, Colibri
-resurrected on k11-alpha, multi-gig switch + fabric cabled, fabric scripts deployed,
-first 150B slice live streaming from the fabric.
-EXIT: one 150B slice serving jobs over the fabric.
+SUPER HIGH PRIORITY per Brian 2026-10-08: **the X79 factories come online ASAP.**
+Build order inside this phase:
+1. X79s built FIRST — Mantis-1 (image/video), Mantis-2 (text, Shakespeare 70B),
+   Mantis-3 (analysis/strategy), Mantis-4 (training). NVMe + 2.5GbE NICs in every
+   box as part of the build (this also brings the fabric exporters online).
+2. DL380s: SSDs in, Proxmox on, 3 slices each (2x 150B + remainder).
+3. Colibri resurrection on k11-alpha, tier traffic measured.
+4. Multi-gig switch + fabric cabled; fabric scripts deployed.
+5. First 150B slice live streaming from the fabric.
+EXIT: X79 factories producing + one 150B slice serving jobs over the fabric.
 
 ## Phase 1 — VALIDATE
 Measure everything the later phases depend on:
@@ -30,12 +36,10 @@ EXIT: numbers recorded, fabric proven under load and failure.
 - Gen9s as DealsDesk finds the right units (DDR4, native NVMe, ideal exporters)
 TRIGGER: measured demand + revenue gate (scale-up spend only when making money).
 
-## Phase 3 — FACTORIES ONLINE
-The X79s' real jobs, now with inference behind them:
-- Mantis-1: image/video factory (+ GPUs when the factory needs them)
-- Mantis-2: text factory (Shakespeare 70B on dual M40)
-- Mantis-3: analysis/strategy box
-- Mantis-4: training machine (QLoRA datasets -> local training)
+## Phase 3 — FACTORIES AT FULL RATE
+X79 factories already online from Phase 0; this phase scales them:
+- Mantis-1: + GPUs for the image/video factory as demand requires
+- Mantis-2: text factory at full rate (Shakespeare 70B)
 - Blog network content pipeline running on local inference
 EXIT: the 100-blog content engine fed by the fleet, not by rented APIs.
 

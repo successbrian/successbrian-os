@@ -7,8 +7,11 @@ WHY (Brian 2026-10-08):
     session is for decisions, not discovery — so the evening before, each
     seat gets one short call analyzing its domain: "is there a NEW type of
     report I need?" (REPORT:) and "what news/trends do I want MORE DETAIL on?"
-    (DETAIL:). The answers go into a research queue; overnight research
-    (Altair's routines) fills DETAILs; REPORTs become instrumentation requests
+    (DETAIL:). Before asking new things, the seat REVIEWS its previous
+    requests: SATISFIED: lines close out answers/reports that met its goal;
+    anything that missed gets honed with a refined REPORT:/DETAIL: follow-up.
+    The answers go into a research queue; overnight research (Altair's
+    routines) fills DETAILs; REPORTs become instrumentation requests
     (new pullers/reports to build). The morning brief carries answered DETAILs
     plus the open REPORT backlog.
 
@@ -37,6 +40,7 @@ from .seats import Seat, load_config
 from .worker import ModelWorker
 
 NEEDS_RE = re.compile(r"^\s*NEEDS\s*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+SATISFIED_RE = re.compile(r"^\s*SATISFIED\s*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 REPORT_RE = re.compile(r"^\s*REPORT\s*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 DETAIL_RE = re.compile(r"^\s*DETAIL\s*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 
@@ -104,21 +108,32 @@ class NeedsCollector:
         self.out_dir = os.path.expanduser(
             self.cfg.get("minutes_dir", "~/workspace/altair-brain/inbox"))
 
-    def _needs_prompt(self, seat: Seat) -> str:
+    def _needs_prompt(self, seat: Seat, previous: list[dict]) -> str:
+        prev_lines = []
+        for d in previous[-10:]:
+            status = d.get("status", "new")
+            ans = (d.get("answer") or "")[:160]
+            prev_lines.append(
+                f"- [{d.get('kind', 'detail')}] {d.get('need')} "
+                f"(status: {status}{'; answer: ' + ans if ans else ''})")
+        prev_block = ("\nYOUR PREVIOUS REQUESTS (review each):\n" + "\n".join(prev_lines)
+                      if prev_lines else
+                      "\nYou have no previous requests.")
         return (
-            f"You are the {seat.title}. Your mandate: {seat.mandate}\n\n"
+            f"You are the {seat.title}. Your mandate: {seat.mandate}\n"
+            f"{prev_block}\n\n"
             f"Tomorrow morning you sit on the board of directors and make "
-            f"2-3 binding calls in your domain. Tonight, analyze YOUR domain "
-            f"and tell us what would sharpen those calls — two kinds of "
-            f"things:\n"
-            f"(1) NEW REPORTS: is there a type of report you need that does "
-            f"not exist yet? One per line starting with 'REPORT:'.\n"
-            f"(2) DEEPER DETAIL: what news, trends, or topics in your domain "
-            f"do you want to know more about? One per line starting with "
-            f"'DETAIL:'.\n"
-            f"Up to 5 items total. Be specific (a metric, a report, a trend — "
-            f"not a vague topic). If your domain is fully covered, write "
-            f"'NEEDS: nothing'."
+            f"2-3 binding calls in your domain. Two jobs tonight:\n"
+            f"(1) REVIEW: for each previous request above, did the answer or "
+            f"built report meet your goal? If yes, write 'SATISFIED: <short "
+            f"ref>'. If it missed the mark, hone it with a new REPORT:/DETAIL: "
+            f"line below.\n"
+            f"(2) NEW: analyze YOUR domain — is there a NEW type of report "
+            f"you need that does not exist ('REPORT: ...')? What news, "
+            f"trends, or topics do you want to know MORE about ('DETAIL: ...')?\n"
+            f"Up to 5 REPORT:/DETAIL: items total. Be specific. If your "
+            f"domain is fully covered and all previous requests satisfied, "
+            f"write 'NEEDS: nothing'."
         )
 
     def collect(self) -> list[SeatNeeds]:
@@ -126,6 +141,7 @@ class NeedsCollector:
         results = []
         for seat in self.seats:
             print(f"[needs] asking {seat.title} ...", flush=True)
+            previous = read_recent_needs(seat.title, self.out_dir)
             # Blocking wait like the morning session: a slow API is waited
             # on, never skipped (Brian 2026-10-08).
             attempt, backoff = 0, self.worker.retry_base_s
@@ -135,15 +151,28 @@ class NeedsCollector:
                 try:
                     raw = self.worker._post(
                         self.worker._payload(seat.system_prompt(),
-                                             self._needs_prompt(seat)))
+                                             self._needs_prompt(seat, previous)))
                     break
-                except Exception as e:  # noqa: BLE001 - wait, retry
+                except Exception:  # noqa: BLE001 - wait, retry
                     print(f"[needs] {seat.title}: attempt {attempt} transport "
                           f"error; waiting {backoff:.0f}s", flush=True)
                     time.sleep(backoff)
                     backoff = min(backoff * 2, self.worker.retry_cap_s)
             needs = parse_needs(raw)
-            print(f"[needs] {seat.title}: {len(needs)} need(s)", flush=True)
+            # Review step: SATISFIED lines close out previous requests whose
+            # answers/reports met the seat's goal.
+            satisfied_n = 0
+            files = []
+            for d in previous:
+                if d["_file"] not in files:
+                    files.append(d["_file"])
+            for ref in parse_satisfied(raw):
+                for path in files:
+                    if mark_satisfied(path, ref):
+                        satisfied_n += 1
+                        break
+            print(f"[needs] {seat.title}: {len(needs)} need(s), "
+                  f"{satisfied_n} previous marked satisfied", flush=True)
             results.append(SeatNeeds(seat.title, needs, raw))
         return results
 
@@ -175,6 +204,82 @@ def read_open_reports(tag: str, inbox_dir: str) -> list[dict]:
     """Read REPORT needs not yet built (instrumentation backlog)."""
     out = read_needs(tag, inbox_dir, kind="report")
     return [d for d in out if d.get("status") in ("new", "acknowledged")]
+
+
+def parse_satisfied(raw: str) -> list[str]:
+    """Parse SATISFIED: lines — refs to previous needs that met the seat's goal."""
+    out = []
+    for m in SATISFIED_RE.finditer(raw or ""):
+        ref = _clean_need(m.group(1))
+        if ref:
+            out.append(ref)
+    return out
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
+
+
+_STOP = {"the", "a", "an", "of", "on", "for", "to", "in", "and", "or", "my"}
+
+
+def _tokens(s: str) -> set[str]:
+    return {t for t in _norm(s).split() if t and t not in _STOP}
+
+
+def _match_score(ref: str, need: str) -> float:
+    """Token recall: fraction of the ref's significant tokens found in need."""
+    rt, nt = _tokens(ref), _tokens(need)
+    if not rt:
+        return 0.0
+    return len(rt & nt) / len(rt)
+
+
+def read_recent_needs(seat_title: str, inbox_dir: str, days: int = 7) -> list[dict]:
+    """All needs this seat raised in recent queue files (for the review step)."""
+    import glob
+    out = []
+    pattern = os.path.join(os.path.expanduser(inbox_dir), "board-needs-*.jsonl")
+    for path in sorted(glob.glob(pattern))[-days:]:
+        for d in read_needs(os.path.basename(path)[len("board-needs-"):-len(".jsonl")],
+                            inbox_dir):
+            if d.get("seat") == seat_title:
+                d["_file"] = path
+                out.append(d)
+    return out
+
+
+def mark_satisfied(path: str, ref: str) -> bool:
+    """Mark the need in path best matching ref as satisfied. Returns True if matched."""
+    nref = _norm(ref)
+    try:
+        with open(path) as f:
+            lines = [l for l in f if l.strip()]
+    except OSError:
+        return False
+    best, best_key = -1, None
+    parsed = []
+    for i, line in enumerate(lines):
+        try:
+            d = json.loads(line)
+        except json.JSONDecodeError:
+            parsed.append((line, None))
+            continue
+        parsed.append((line, d))
+        if not d or d.get("status") == "satisfied":
+            continue
+        score = _match_score(ref, d.get("need", ""))
+        if score >= 0.6 and score > best:
+            best, best_key = score, i
+    if best_key is None:
+        return False
+    line, d = parsed[best_key]
+    d["status"] = "satisfied"
+    parsed[best_key] = (json.dumps(d) + "\n", d)
+    with open(path, "w") as f:
+        for new_line, _ in parsed:
+            f.write(new_line if new_line.endswith("\n") else new_line + "\n")
+    return True
 
 
 def read_needs(tag: str, inbox_dir: str, kind: str | None = None,

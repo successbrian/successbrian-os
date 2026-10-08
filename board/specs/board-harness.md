@@ -23,7 +23,9 @@ forks the harness.
 0. **Evening needs-pass** (prior evening, ~20:00): each seat analyzes its
    own domain and names what would sharpen tomorrow's calls — two kinds:
    `REPORT:` (a NEW type of report it wants built) and `DETAIL:` (news,
-   trends, or topics it wants to know more about), up to 5 per seat.
+   trends, or topics it wants to know more about), up to 5 per seat. First
+   it REVIEWS its previous requests: `SATISFIED:` closes out answers/reports
+   that met its goal; misses get honed with refined follow-ups.
    DETAILs go into the overnight research queue; REPORTs become the
    instrumentation backlog (new pullers/reports to build — the board's
    standing "recommend instrumenting it" rule, now with a paper trail).

@@ -38,11 +38,7 @@ DealsDesk: already sourcing 64GB+ racks; Gen8 floor E5-2650 v2+.
 DDR4, native NVMe, 2.5GbE+ onboard. Both exporter AND inference in one box.
 Replaces the Gen8 "consumer-only" limitation. DealsDesk: Gen9 floor E5-2650 v4+.
 
-### 3. Cold-spare X79 board — de-risk the experimental fleet
-Four undocumented aftermarket boards with no spare. One spare board on the shelf
-turns a board death from a crisis into a swap. Cheap insurance.
-
-### 4. Backup box — fleet backups need a home
+### 3. Backup box — fleet backups need a home
 The old plan put fleet backup on DL380 #2; it's inference now. A HDD-heavy box
 (big slow spinning disks, 1GbE fine) as the backup target for Proxmox dumps,
 PostgreSQL dumps, and model weight archives.
@@ -66,10 +62,18 @@ As the scraper fleet grows past Mantis-5..8, more dual-2011 builds or Z240 SFFs.
 Egress stays on the free IPs (gamma, node zero, k11-alpha) until revenue.
 
 ## Priority order (Spencer's read — Brian decides)
-1. Cold-spare X79 (insurance, before a failure teaches the lesson)
+1. Get the current fleet UP AND RUNNING (below) — everything else waits
 2. Fabric coordinator on existing Aoostar (near-zero cost, unlocks autonomy)
 3. More Gen8s (linear inference lanes, known pattern)
 4. Backup box (unblocks Proxmox dumps safely)
 5. Gen9s (when DealsDesk finds the right units — quality over speed)
 6. Router (when manual placement hurts)
 7. Mantis-1 GPUs, scraping scale-out (demand-driven)
+
+## Critical path to UP AND RUNNING (2026-10-08)
+1. X79s built (Mantis-1..4) with NVMe + 2.5GbE NICs
+2. DL380s: SSDs in, Proxmox on, 3 slices each (2x 150B + remainder)
+3. Colibri resurrection on k11-alpha — MEASURE NVMe tier traffic per worker
+4. Multi-gig switch in place, fabric cabled (3x 1GbE DL380s, 2.5GbE exporters)
+5. Deploy tools/fleet-fabric (fill conf per node, export, connect, sync, verify)
+6. First 150B slice live on DL380, streaming from the fabric

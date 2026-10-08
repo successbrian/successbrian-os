@@ -2,6 +2,10 @@
 
 Every day, this repo gets a little better. Each entry: what changed and why.
 
+## 2026-10-08
+- Removed stale root `knowledge_hygiene.py` — a broken duplicate (IndentationError at line 134, botched `if a.expire:` block) of the older pre-`--dry-run` variant; the canonical, improved version lives in its own repo (`successbrian/second-brain-for-agents`) and nothing in this repo imports or references the duplicate. Kept the repo py_compile-clean.
+- Survey: py_compile clean on all 104 remaining modules, no TODO/FIXME/HACK markers, zero missing module docstrings, no removable unused imports, `/home/successbrian` paths are intentional k11-alpha deployment targets (left alone), README/docs current — nothing else qualified.
+
 ## 2026-10-07
 - Docstring compliance pass (CODE-STANDARDS rubric): added WHY: + CALLED BY: + NOTES: to tools/audience/health_template.py (health desk's lived-experience lane, Oliabo emblem rule, deployment-checkout sys.path note), WHY: + CALLED BY: to tools/audience/political_meme.py (Navy identity non-negotiable, #MAGAUSNavyVet, self-retiring election_inset rail), WHY: + CALLED BY: to tools/audience/war_on_oil.py (reference render proving the political chrome), CALLED BY: to tools/audience/meme_template.py (4 importing siblings), and CALLED BY: to tools/ventures/goals.py + scoring.py (both imported by ideas.py's flesh step). Docstring-only, 54 insertions, zero behavior change, py_compile clean, committed+pushed.
 - Survey: py_compile clean on all 93 modules, no TODO/FIXME/HACK markers, no removable unused imports (only `__future__` directives, intentional), the /home/hatch/workspace/successbrian-os sys.path inserts in tools/audience/ remain the second checkout's deployment convention (left alone per 2026-10-06), the two empty crypto-intel __init__.py files stay intentionally minimal, /home/successbrian paths are intentional k11-alpha deployment targets, README/docs current — nothing else qualified.

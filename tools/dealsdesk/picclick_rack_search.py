@@ -37,11 +37,50 @@ import json
 import logging
 import re
 import sys
+import time
 import urllib.parse
 import urllib.request
+from http.cookiejar import CookieJar
 
 sys.path.insert(0, __import__("os").path.dirname(__file__))
 import rack_server_scorer as scorer
+import seller_blocklist
+
+# SSD sourcing presets (Brian 2026-10-08: find SSD-heavy listings and
+# outstanding SSD sources; build intel on good sellers).
+SSD_QUERIES = [
+    "enterprise SSD 2.5 SATA lot",
+    "Samsung 870 EVO 1TB new",
+    "Micron 5300 PRO SSD",
+]
+
+_DETAIL_OPENER = None
+
+
+def detail_opener():
+    """Cookie-jar opener: PicClick 403s detail pages without the search cookie."""
+    global _DETAIL_OPENER
+    if _DETAIL_OPENER is None:
+        _DETAIL_OPENER = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(CookieJar()))
+    return _DETAIL_OPENER
+
+
+def fetch_seller(listing_url, referer):
+    """Best-effort seller username from a PicClick detail page. '' if unknown."""
+    try:
+        req = urllib.request.Request(
+            listing_url,
+            headers=dict(UA, Referer=referer or BASE + "/"))
+        with detail_opener().open(req, timeout=25) as r:
+            html_text = r.read().decode("utf-8", "replace")
+        m = re.search(
+            r'<a[^>]*id="seller"[^>]*href="/seller/([^"/]+)"', html_text)
+        if m:
+            return ihtml.unescape(m.group(1)).strip()
+    except Exception as e:  # noqa: BLE001 - one bad page must not kill the run
+        LOG.warning("seller fetch failed for %s: %s", listing_url[:60], str(e)[:60])
+    return ""
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [picclick] %(message)s")
 LOG = logging.getLogger("picclick")
@@ -165,6 +204,12 @@ def extract_specs(title):
     if spec["cores"]:
         spec["threads"] = spec["cores"] * 2
 
+    # CPU model + version for the floor check ("2x E5-2680 v3" -> v3)
+    m = re.search(r"E5[-\s]?(\d{4})\s*v\s?(3|4)", t, re.I)
+    if m:
+        spec["cpu_model"] = "E5-%sv%s" % (m.group(1), m.group(2))
+        spec["cpu_version"] = "v" + m.group(2)
+
     if re.search(r"NVMe", t, re.I):
         spec["nvme"] = True
 
@@ -202,13 +247,33 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="PicClick rack-server search + score.")
     ap.add_argument("--query", default="HP DL380 Gen9 server 64GB",
                     help="PicClick search query")
+    ap.add_argument("--preset", choices=["servers", "ssd"], default="servers",
+                    help="ssd: run the SSD-sourcing query set instead of --query")
     ap.add_argument("--top", type=int, default=25)
     ap.add_argument("--out", help="write candidate JSON here")
     ap.add_argument("--score", action="store_true",
                     help="rank candidates with rack_server_scorer and print")
+    ap.add_argument("--with-sellers", action="store_true",
+                    help="fetch each detail page for the seller username and "
+                         "drop blacklisted sellers (slower, one HTTP per listing)")
     args = ap.parse_args(argv)
 
-    cands = search(args.query, top=args.top)
+    queries = SSD_QUERIES if args.preset == "ssd" else [args.query]
+    cands = []
+    for q in queries:
+        cands.extend(search(q, top=args.top))
+
+    if args.with_sellers:
+        search_url = BASE + "/?q=" + urllib.parse.quote_plus(queries[0])
+        # seed the cookie jar through the same opener (PicClick 403s otherwise)
+        req = urllib.request.Request(search_url, headers=UA)
+        detail_opener().open(req, timeout=25).read()
+        for c in cands:
+            c["seller"] = fetch_seller(c["url"], search_url)
+            time.sleep(0.5)
+        cands, dropped = seller_blocklist.filter_blocked(cands)
+        LOG.info("seller check: %d kept, %d blacklisted dropped", len(cands), dropped)
+
     if args.out:
         with open(args.out, "w") as f:
             json.dump(cands, f, indent=2)

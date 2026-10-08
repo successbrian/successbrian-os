@@ -74,6 +74,21 @@ def residency_tier(ram_gb):
             "model streams from SSD/NVMe tier (est. ~1 tok/s; acceptable)")
 
 
+def cpu_floor_ok(c):
+    """Brian 2026-10-08: Gen8 -> 2650v2 and up (2x8C+), Gen9 -> 2650v4 and
+    up (2x12C+). Returns (ok, note). Unknown CPU -> cores-only check."""
+    gen = c.get("generation")
+    ver = str(c.get("cpu_version") or "").lower()
+    cores = int(c.get("cores", 0) or 0)
+    if gen == 8:
+        ok = cores >= 16 and (not ver or ver == "v2")
+        return ok, "Gen8 floor: 2650v2+ (dual 8C+)"
+    if gen and gen >= 9:
+        ok = cores >= 24 and (not ver or ver == "v4")
+        return ok, "Gen9 floor: 2650v4+ (dual 12C+)"
+    return True, ""
+
+
 def score_candidate(c):
     """Score one candidate dict. Returns the dict with scoring fields added."""
     price = float(c.get("price", 0) or 0)
@@ -82,6 +97,16 @@ def score_candidate(c):
     ram_gen = str(c.get("ram_gen", "DDR3")).upper()
     nvme = bool(c.get("nvme", False))
     gen = int(c.get("generation", 0) or 0)
+
+    cpu_ok, cpu_note = cpu_floor_ok(c)
+    if not cpu_ok:
+        c["tier"] = "reject"
+        c["tier_note"] = "CPU below floor: " + cpu_note
+        c["score"] = -1.0
+        c["verdict"] = "REJECT"
+        c["dollar_per_gb_ram"] = round(price / ram_gb, 2) if ram_gb else None
+        c["dollar_per_core"] = round(price / cores, 2) if cores else None
+        return c
 
     tier, tier_note = residency_tier(ram_gb)
     c["tier"] = tier

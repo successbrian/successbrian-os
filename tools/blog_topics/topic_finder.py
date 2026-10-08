@@ -24,7 +24,10 @@ NOTES:
       topic's mlm_company (Le-Vel = gated until corporate compliance lifts).
     - Affiliate lane check reuses the competition-graph logic: flags if the
       lane shares an edge with any MLM product.
-    - Score = demand + speed + ease (each high/fast=3, medium=2, low/slow=1).
+    - Score = (demand x 2) + speed + ease (each high/fast=3, medium=2,
+      low/slow=1). Demand is double-weighted per Brian 2026-10-08: "if the
+      ease is low, but the seriousness is unbelievable i learn it."
+      Max score 12.
 """
 
 import argparse
@@ -102,7 +105,10 @@ def cmd_score(_args):
                   " WHERE id=%s;" % (comp.replace("'", "''"), tid))
             gated += 1
             continue
-        s = (SCORE_MAP.get(demand, 2) + SCORE_MAP.get(speed, 2) +
+        # Demand double-weighted: unbelievable seriousness beats low ease
+        # (Brian 2026-10-08: "if the ease is low, but the seriousness is
+        # unbelievable i learn it")
+        s = (SCORE_MAP.get(demand, 2) * 2 + SCORE_MAP.get(speed, 2) +
              SCORE_MAP.get(ease, 2))
         lane_flag = ""
         hits = _lane_competes(lane)

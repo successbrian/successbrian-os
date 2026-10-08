@@ -153,7 +153,12 @@ def main(argv=None):
         LOG.info("no open task-raised hardware needs")
         return 0
 
-    for need_id, subject, description, max_cost in rows:
+    for row in rows:
+        # psql omits the trailing separator when the last column is NULL — pad.
+        while len(row) < 4:
+            row.append("")
+        need_id, subject, description, max_cost = row
+        max_cost = max_cost or None
         LOG.info("sourcing need %s: %s", need_id, subject)
         options = source_need(need_id, subject, description, max_cost, args.top,
                               args.dry_run)

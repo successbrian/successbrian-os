@@ -396,6 +396,7 @@ MN_SENATE_POLLS = [  # (date_label, dem_pct, gop_pct), chronological
     ("9/30", 45.8, 43.6),   # Big Data Poll (with leaners)
     ("10/4", 53.0, 44.0),   # GQR (D), top-two ballot, Oct 1-4
     ("10/7", 48.0, 45.0),   # Rasmussen Reports, LV n=856, Oct 5-7
+    ("10/7b", 45.0, 41.0),  # Morning Consult (D), RV n=1000, Oct 2-7
 ]
 MN_SENATE_DEM = "Flanagan (D)"
 MN_SENATE_GOP = "Tafoya (R)"

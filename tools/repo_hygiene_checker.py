@@ -23,7 +23,6 @@ NOTES:
     not fatal.
 """
 
-import datetime
 import subprocess
 import sys
 

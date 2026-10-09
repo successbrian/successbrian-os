@@ -54,3 +54,6 @@ Every day, this repo gets a little better. Each entry: what changed and why.
 ## 2026-10-06
 - Removed unused imports: `background`, `footer`, `BRAND` + `ImageFont` from tools/audience/health_template.py; `icon`, `grad_rounded` from tools/audience/political_meme.py; `GRAY`, `W` from tools/audience/war_on_oil.py; `import sys` from tools/employment/extract_entities.py and tools/employment/scan_mailbox.py; `import copy` from tools/focus/intel.py. Verified each name has zero references outside its import line, py_compile + import smoke test clean.
 - Survey: py_compile clean on all modules, no TODO/FIXME/HACK markers, module docstrings complete per CODE-STANDARDS (WHY present everywhere), the /home/hatch/workspace/successbrian-os sys.path inserts in tools/audience/ are a second checkout's deployment convention — changing them could break deployed crons, so left alone as noted-unsafe. README/docs current — nothing else qualified.
+
+## 2026-10-09
+- Removed unused imports: `datetime` in tools/repo_hygiene_checker.py, `shutil` in tools/v4pro_status.py — dead weight, verified no references anywhere in either file before removal; both modules still py_compile clean. Why it matters: lint-clean imports keep the 07:00 repo-hygiene checker and the V4 Pro status reader (Altair's code paths) tidy for the next agent who reads them cold.

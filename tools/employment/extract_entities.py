@@ -27,6 +27,11 @@ NOTES:
       company_confidence='masked' instead (learning 2026-10-04).
     - Extracted schedule/hours info is appended to the tracking row's notes
       and clears the hours_unknown gap the scan recorded.
+    - Slow-model resilience (2026-10-09): per-row model calls are wrapped so
+      one timeout can't kill the run; curl -m 240 / subprocess timeout 300
+      because Penny/Morpheus on CPU can take 90s+ per extraction prompt.
+      WHY: before this, a single slow Morpheus call raised an unhandled
+      RuntimeError and the 600+ row enrichment backlog never drained.
 """
 import argparse
 import base64
@@ -85,7 +90,7 @@ def load_profile():
 
 def kssh(cmd):
     p = subprocess.run(["bash", KSSH, cmd], capture_output=True, text=True,
-                       timeout=180)
+                       timeout=300)
     if p.returncode != 0:
         raise RuntimeError("kssh failed: " + p.stderr.strip()[-300:])
     return p.stdout
@@ -111,7 +116,7 @@ def model_extract(url, subject, body, profile):
     }
     b64 = base64.b64encode(json.dumps(payload).encode()).decode()
     out = kssh(
-        "echo %s | base64 -d | curl -s -m 120 -X POST %s "
+        "echo %s | base64 -d | curl -s -m 240 -X POST %s "
         "-H 'Content-Type: application/json' -d @-" % (b64, url))
     try:
         data = json.loads(out)
@@ -356,11 +361,17 @@ def main():
             stats["skipped"] += 1
             continue
 
-        ent = model_extract(PENNY_URL, subject, body, profile)
+        try:
+            ent = model_extract(PENNY_URL, subject, body, profile)
+        except Exception:
+            ent = None
         if ent:
             stats["penny_ok"] += 1
         else:
-            ent = model_extract(MORPHEUS_URL, subject, body, profile)
+            try:
+                ent = model_extract(MORPHEUS_URL, subject, body, profile)
+            except Exception:
+                ent = None
             if ent:
                 stats["morpheus_ok"] += 1
         if not ent:

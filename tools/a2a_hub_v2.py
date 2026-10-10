@@ -45,7 +45,6 @@ import json
 import os
 import threading
 import time
-from datetime import datetime, timezone
 
 import psycopg2
 
@@ -62,10 +61,6 @@ PG_DSN = os.environ.get(
 # ── Ephemeral presence state (in-memory, like v1) ──────────────────
 agents = {}  # agent_id -> {host, role, status, registered_at, last_heartbeat}
 lock = threading.Lock()
-
-
-def now_iso():
-    return datetime.now(timezone.utc).isoformat()
 
 
 def pg_conn():

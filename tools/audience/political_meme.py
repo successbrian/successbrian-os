@@ -282,16 +282,6 @@ def cherenkov_glow(img):
     ).convert("RGB")
 
 
-def star(d, cx, cy, r, fill):
-    """Five-point star."""
-    pts = []
-    for i in range(10):
-        ang = -math.pi / 2 + i * math.pi / 5
-        rr = r if i % 2 == 0 else r * 0.42
-        pts.append((cx + rr * math.cos(ang), cy + rr * math.sin(ang)))
-    d.polygon(pts, fill=fill)
-
-
 def ribbon(img):
     """Red/white/blue stripes across the very top."""
     d = ImageDraw.Draw(img)

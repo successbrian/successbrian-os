@@ -565,7 +565,7 @@ def render_political_meme(content, draw_content, photo_path=None,
     # footer (shared brand footer — social row, blog row, hashtag CTA;
     # the political brand carries its own hashtag, None until Brian names it;
     # dy=50 because the political punchline strip sits lower than the AI one)
-    img, d = footer(img, d, brand=POL_BRAND, dy=50)
+    img, d = footer(img, d, brand=b, dy=50)
 
     img.save(out_path)
     return out_path

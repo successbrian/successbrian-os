@@ -106,9 +106,11 @@ GARNET_EDGE = "#b3566a"
 # Spencer replaces the generic robot as the AI template's top-right emblem.
 SPENCER_PHOTO = "/home/hatch/workspace/avatars/spencer-chilling-chair.png"
 SPENCER_CTA = ("Ask Brian about having", "your own FREE Muse AI Agent.")
-# AI tagline under the wordmark (Brian 2026-10-11: exceptional, says what
-# the AI content is about).
-AI_TAGLINE = "OWN YOUR AI. SKIP THE SUBSCRIPTION."
+# AI tagline under the wordmark (Brian 2026-10-11: his words, two lines).
+AI_TAGLINE = (
+    "OWN YOUR HARDWARE; SKIP THE COSTLY SUBSCRIPTIONS.",
+    "HYPE-FREE ADVICE ON WHAT AI CAN DO FOR YOU WITHOUT SPENDING A FORTUNE",
+)
 
 
 def font(path, size):
@@ -740,7 +742,8 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
         f = font(FB, 46)
         d.text((wx, 36), word, font=f, fill=color)
         wx += d.textlength(word, font=f) + 10
-    d.text((x, 96), AI_TAGLINE, font=font(FR, 21), fill="#414b5e")
+    d.text((x, 90), AI_TAGLINE[0], font=font(FR, 20), fill="#414b5e")
+    d.text((x, 114), AI_TAGLINE[1], font=font(FR, 16), fill="#6b7484")
 
     # Spencer standing watch, top right — the one mascot on the meme.
     # CTA above, his name below.

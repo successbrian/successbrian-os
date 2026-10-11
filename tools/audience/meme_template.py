@@ -732,8 +732,8 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
     d.text((_scx - _nw / 2, 182), "SPENCER", font=_nf, fill=INK)
     d = ImageDraw.Draw(img)
 
-    # kicker up in the header now, centered on the page
-    img = kicker_ai(img, 135, content["kicker"])
+    # kicker in the header, tucked just above the headline (classic spot)
+    img = kicker_ai(img, 158, content["kicker"])
     d = ImageDraw.Draw(img)
 
     # headline: gradient + 3D, always (auto-fit so the extrusion never clips)

@@ -11,6 +11,13 @@ WHY:
     (Brian 2026-10-02: successbrian-os should help the entrepreneur choose
     focus channels, grow them, and track weekly growth.)
 
+    Multi-audience (2026-10-11): one user, many crowds. Audiences declare
+    WHO they are and what axis they measure on; campaigns belong to one
+    audience with one goal; channels link to audiences many-to-many; the
+    creative (images, memes, posts, video briefs) is tracked per campaign
+    so every asset is tailored to its crowd. `report --audience` restricts
+    the growth report to that crowd's channels.
+
 CALLED BY:
     CLI (`python3 audience.py <command>`) run by an agent session or the
     entrepreneur directly. A weekly cron can call `report` to feed the
@@ -41,13 +48,22 @@ from common import pg_password
 
 PG = {"host": "localhost", "dbname": "ecosystem_central",
       "user": "successbrian"}
-PG["password"] = pg_password(PG["host"], PG["dbname"], PG["user"])
+
+_PG_PASSWORD = None
+
+
+def _pg_password():
+    """Credential fetched lazily so --help and imports work without a DB."""
+    global _PG_PASSWORD
+    if _PG_PASSWORD is None:
+        _PG_PASSWORD = pg_password(PG["host"], PG["dbname"], PG["user"])
+    return _PG_PASSWORD
 
 
 def _psql(sql, variables=None, field_sep="\t"):
     """Run SQL via the psql CLI. Values go through -v variables so nothing
     is interpolated into SQL by hand."""
-    env = dict(os.environ, PGPASSWORD=PG["password"])
+    env = dict(os.environ, PGPASSWORD=_pg_password())
     cmd = ["psql", "-h", PG["host"], "-U", PG["user"], "-d", PG["dbname"],
            "-v", "ON_ERROR_STOP=1", "-t", "-A", "-F", field_sep]
     for k, v in (variables or {}).items():
@@ -148,23 +164,36 @@ def cmd_report(args):
     if not week:
         print("no snapshots logged yet")
         return
+    aud_filter, aud_vars, aud_label = "", {}, ""
+    if args.audience:
+        if not _audience_id(args.audience):
+            raise SystemExit("unknown audience slug '%s'" % args.audience)
+        aud_filter = (
+            " AND slug IN (SELECT ch.slug"
+            " FROM successbrian_os.audience_channels ch"
+            " JOIN successbrian_os.channel_audiences ca"
+            "  ON ca.channel_id=ch.id"
+            " JOIN successbrian_os.audiences a ON a.id=ca.audience_id"
+            " WHERE a.slug=:'aud')")
+        aud_vars = {"aud": args.audience}
+        aud_label = " [audience: %s]" % args.audience
     rows = _rows(
         "SELECT slug, name, is_focus, focus_rank, audience_size,"
         " posts_published, prev_size, delta, pct_change"
         " FROM successbrian_os.audience_weekly_growth"
-        " WHERE week_start=:'week'::date"
+        " WHERE week_start=:'week'::date" + aud_filter +
         " ORDER BY is_focus DESC, focus_rank, slug;",
-        {"week": week})
+        {"week": week, **aud_vars})
     base = _rows(
         "SELECT c.slug FROM successbrian_os.audience_channels c"
         " JOIN successbrian_os.audience_snapshots s"
         " ON s.channel_id=c.id AND s.week_start=:'week'::date"
         " LEFT JOIN successbrian_os.audience_weekly_growth g"
         " ON g.slug=c.slug AND g.week_start=:'week'::date"
-        " WHERE g.slug IS NULL"
+        " WHERE g.slug IS NULL" + aud_filter +
         " ORDER BY c.is_focus DESC, c.focus_rank;",
-        {"week": week})
-    print("audience growth -- week of %s" % week)
+        {"week": week, **aud_vars})
+    print("audience growth -- week of %s%s" % (week, aud_label))
     print("-" * 64)
     if not rows and not base:
         print("no channels registered")
@@ -194,6 +223,145 @@ def cmd_report(args):
     else:
         print("SUGGESTION: not enough focus-channel history yet --"
               " log weekly and the ranking appears on its own.")
+
+
+def _audience_id(slug):
+    out = _psql("SELECT id FROM successbrian_os.audiences WHERE slug=:'slug'",
+                {"slug": slug}).strip()
+    return out or None
+
+
+def cmd_add_audience(args):
+    _psql(
+        "INSERT INTO successbrian_os.audiences"
+        " (slug, name, who_they_are, axis, notes) VALUES"
+        " (:'slug', :'name', :'who', :'axis', :'notes')"
+        " ON CONFLICT (slug) DO UPDATE SET name=EXCLUDED.name,"
+        " who_they_are=EXCLUDED.who_they_are, axis=EXCLUDED.axis,"
+        " notes=EXCLUDED.notes;",
+        {"slug": args.slug, "name": args.name, "who": args.who or "",
+         "axis": args.axis or "", "notes": args.notes or ""})
+    print("audience upserted: %s" % args.slug)
+
+
+def cmd_list_audiences(_args):
+    rows = _rows(
+        "SELECT a.slug, a.name,"
+        " (SELECT count(*) FROM successbrian_os.campaigns c"
+        "  WHERE c.audience_id=a.id),"
+        " (SELECT count(*) FROM successbrian_os.channel_audiences ca"
+        "  WHERE ca.audience_id=a.id)"
+        " FROM successbrian_os.audiences a ORDER BY a.slug;")
+    if not rows:
+        print("no audiences yet -- add_audience first")
+        return
+    for r in rows:
+        slug, name, ncamp, nchan = r.split("\t")
+        print("%-16s %-30s campaigns=%s channels=%s"
+              % (slug, name, ncamp, nchan))
+
+
+def _campaign_id(audience_slug, campaign_slug):
+    aid = _audience_id(audience_slug)
+    if not aid:
+        return None, None
+    out = _psql(
+        "SELECT id FROM successbrian_os.campaigns"
+        " WHERE audience_id=:'aid' AND slug=:'slug'",
+        {"aid": aid, "slug": campaign_slug}).strip()
+    return aid, (out or None)
+
+
+def cmd_add_campaign(args):
+    aid = _audience_id(args.audience)
+    if not aid:
+        raise SystemExit("unknown audience slug '%s'" % args.audience)
+    _psql(
+        "INSERT INTO successbrian_os.campaigns"
+        " (audience_id, slug, name, goal) VALUES"
+        " (:'aid', :'slug', :'name', :'goal')"
+        " ON CONFLICT (audience_id, slug) DO UPDATE SET name=EXCLUDED.name,"
+        " goal=EXCLUDED.goal;",
+        {"aid": aid, "slug": args.slug, "name": args.name,
+         "goal": args.goal or ""})
+    print("campaign upserted: %s/%s" % (args.audience, args.slug))
+
+
+def cmd_list_campaigns(args):
+    if args.audience:
+        aid = _audience_id(args.audience)
+        if not aid:
+            raise SystemExit("unknown audience slug '%s'" % args.audience)
+        filt, vars_ = "WHERE c.audience_id=:'aid'", {"aid": aid}
+    else:
+        filt, vars_ = "", {}
+    rows = _rows(
+        "SELECT a.slug, c.slug, c.name, c.status,"
+        " (SELECT count(*) FROM successbrian_os.campaign_assets ca"
+        "  WHERE ca.campaign_id=c.id)"
+        " FROM successbrian_os.campaigns c"
+        " JOIN successbrian_os.audiences a ON a.id=c.audience_id "
+        + filt + " ORDER BY a.slug, c.slug;", vars_)
+    if not rows:
+        print("no campaigns yet -- add_campaign first")
+        return
+    for r in rows:
+        aud, slug, name, status, nassets = r.split("\t")
+        print("%-16s %-16s %-28s %-7s assets=%s"
+              % (aud, slug, name, status, nassets))
+
+
+def cmd_link_channel(args):
+    aid = _audience_id(args.audience)
+    if not aid:
+        raise SystemExit("unknown audience slug '%s'" % args.audience)
+    out = _psql(
+        "INSERT INTO successbrian_os.channel_audiences"
+        " (channel_id, audience_id)"
+        " SELECT id, :'aid'::int FROM successbrian_os.audience_channels"
+        " WHERE slug=:'channel'"
+        " ON CONFLICT DO NOTHING RETURNING channel_id;",
+        {"aid": aid, "channel": args.channel}).strip()
+    if out:
+        print("linked: %s -> %s" % (args.channel, args.audience))
+        return
+    exists = _psql(
+        "SELECT 1 FROM successbrian_os.audience_channels WHERE slug=:'s'",
+        {"s": args.channel}).strip()
+    if not exists:
+        raise SystemExit("unknown channel slug '%s'" % args.channel)
+    print("already linked: %s -> %s" % (args.channel, args.audience))
+
+
+def cmd_add_asset(args):
+    _aid, cid = _campaign_id(args.audience, args.campaign)
+    if not cid:
+        raise SystemExit("unknown campaign '%s/%s'"
+                         % (args.audience, args.campaign))
+    _psql(
+        "INSERT INTO successbrian_os.campaign_assets"
+        " (campaign_id, kind, brief) VALUES (:'cid', :'kind', :'brief');",
+        {"cid": cid, "kind": args.kind, "brief": args.brief or ""})
+    print("asset added to %s/%s: %s" % (args.audience, args.campaign,
+                                        args.kind))
+
+
+def cmd_list_assets(args):
+    _aid, cid = _campaign_id(args.audience, args.campaign)
+    if not cid:
+        raise SystemExit("unknown campaign '%s/%s'"
+                         % (args.audience, args.campaign))
+    rows = _rows(
+        "SELECT id, kind, status,"
+        " left(brief, 60) FROM successbrian_os.campaign_assets"
+        " WHERE campaign_id=:'cid' ORDER BY id;",
+        {"cid": cid})
+    if not rows:
+        print("no assets yet -- add_asset first")
+        return
+    for r in rows:
+        aid_, kind, status, brief = r.split("\t")
+        print("#%-4s %-8s %-7s %s" % (aid_, kind, status, brief))
 
 
 def main(argv=None):
@@ -229,11 +397,53 @@ def main(argv=None):
 
     p = sub.add_parser("report")
     p.add_argument("--week", default=None, help="YYYY-MM-DD, default latest")
+    p.add_argument("--audience", default=None,
+                   help="audience slug: restrict report to its channels")
+
+    p = sub.add_parser("add_audience")
+    p.add_argument("--slug", required=True)
+    p.add_argument("--name", required=True)
+    p.add_argument("--who", default="",
+                   help="who they are, in plain words")
+    p.add_argument("--axis", default="",
+                   help="what they measure on (the right axis)")
+    p.add_argument("--notes", default="")
+
+    sub.add_parser("list_audiences")
+
+    p = sub.add_parser("add_campaign")
+    p.add_argument("--audience", required=True, help="audience slug")
+    p.add_argument("--slug", required=True)
+    p.add_argument("--name", required=True)
+    p.add_argument("--goal", default="")
+
+    p = sub.add_parser("list_campaigns")
+    p.add_argument("--audience", default=None, help="audience slug filter")
+
+    p = sub.add_parser("link_channel")
+    p.add_argument("--channel", required=True, help="channel slug")
+    p.add_argument("--audience", required=True, help="audience slug")
+
+    p = sub.add_parser("add_asset")
+    p.add_argument("--audience", required=True, help="audience slug")
+    p.add_argument("--campaign", required=True, help="campaign slug")
+    p.add_argument("--kind", default="other",
+                   choices=["image", "meme", "post", "video", "other"])
+    p.add_argument("--brief", default="",
+                   help="what to make, tailored to the audience")
+
+    p = sub.add_parser("list_assets")
+    p.add_argument("--audience", required=True, help="audience slug")
+    p.add_argument("--campaign", required=True, help="campaign slug")
 
     args = ap.parse_args(argv)
     {"init_db": cmd_init_db, "add_channel": cmd_add_channel,
      "list_channels": cmd_list_channels, "set_focus": cmd_set_focus,
-     "log": cmd_log, "report": cmd_report}[args.cmd](args)
+     "log": cmd_log, "report": cmd_report,
+     "add_audience": cmd_add_audience, "list_audiences": cmd_list_audiences,
+     "add_campaign": cmd_add_campaign, "list_campaigns": cmd_list_campaigns,
+     "link_channel": cmd_link_channel,
+     "add_asset": cmd_add_asset, "list_assets": cmd_list_assets}[args.cmd](args)
 
 
 if __name__ == "__main__":

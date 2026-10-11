@@ -53,3 +53,59 @@ SELECT c.slug, c.name, c.kind, c.is_focus, c.focus_rank,
 FROM ranked r
 JOIN successbrian_os.audience_channels c ON c.id = r.channel_id
 WHERE r.prev_size IS NOT NULL;
+
+-- Multi-audience upgrade (2026-10-11): one user, many crowds.
+-- Additive and idempotent: re-running init_db on an existing deployment
+-- only creates what is missing. Existing channels/snapshots/views untouched.
+--
+-- Shape: audiences (who they are + what axis they measure on) ->
+-- campaigns (one audience, one goal) -> campaign_assets (the creative:
+-- images, memes, posts tailored to that crowd). Channels link to
+-- audiences many-to-many: one channel can serve several crowds.
+
+CREATE TABLE IF NOT EXISTS successbrian_os.audiences (
+    id           SERIAL PRIMARY KEY,
+    slug         TEXT NOT NULL UNIQUE,
+    name         TEXT NOT NULL,
+    who_they_are TEXT NOT NULL DEFAULT '',
+    axis         TEXT NOT NULL DEFAULT '',
+    notes        TEXT NOT NULL DEFAULT '',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS successbrian_os.campaigns (
+    id          SERIAL PRIMARY KEY,
+    audience_id INTEGER NOT NULL
+                REFERENCES successbrian_os.audiences(id) ON DELETE CASCADE,
+    slug        TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    goal        TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'active'
+                CHECK (status IN ('active','paused','done')),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (audience_id, slug)
+);
+
+CREATE TABLE IF NOT EXISTS successbrian_os.channel_audiences (
+    channel_id  INTEGER NOT NULL
+                REFERENCES successbrian_os.audience_channels(id)
+                ON DELETE CASCADE,
+    audience_id INTEGER NOT NULL
+                REFERENCES successbrian_os.audiences(id)
+                ON DELETE CASCADE,
+    PRIMARY KEY (channel_id, audience_id)
+);
+
+CREATE TABLE IF NOT EXISTS successbrian_os.campaign_assets (
+    id          SERIAL PRIMARY KEY,
+    campaign_id INTEGER NOT NULL
+                REFERENCES successbrian_os.campaigns(id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL DEFAULT 'other'
+                CHECK (kind IN ('image','meme','post','video','other')),
+    brief       TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'idea'
+                CHECK (status IN ('idea','making','ready','posted')),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS campaign_assets_campaign_idx
+    ON successbrian_os.campaign_assets (campaign_id);

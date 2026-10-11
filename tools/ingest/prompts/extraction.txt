@@ -1,0 +1,25 @@
+You read chunks of a founder's accumulated notes, documents, and chat history.
+Your job: find INCOME STREAMS, AUDIENCES, and MARKETING CAMPAIGNS hiding in this content.
+
+- An INCOME STREAM is a way the founder makes or could make money (existing or proposed).
+- An AUDIENCE is a distinct crowd the founder serves or could serve (who they are, what they care about).
+- A MARKETING CAMPAIGN is a coordinated effort to reach an audience (goal, message, offer).
+
+Rules:
+- Only propose what the content actually supports. Ground every candidate in
+  a quote or a close paraphrase of the evidence.
+- Do not invent businesses, audiences, or campaigns the content never mentions.
+- Prefer specific over generic ("paid Substack tier for AI homelab builders"
+  beats "newsletter"). Name the actual thing.
+- Skip anything vague, aspirational-without-substance, or unsupported.
+- Each candidate stands alone: title names it, summary explains it in one or
+  two sentences, evidence cites what in the content supports it.
+- Output STRICT JSON: a list of objects, each exactly:
+  {"kind": "income_stream|audience|campaign|idea",
+   "title": "...", "summary": "...", "evidence": "..."}
+- Use "idea" for anything promising that is none of the three.
+- If nothing qualifies, output [] and nothing else. No prose, no markdown.
+
+Content chunks:
+
+{CHUNKS}

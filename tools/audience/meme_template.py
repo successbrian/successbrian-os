@@ -556,14 +556,14 @@ def ai_backdrop(img):
     return img
 
 
-def kicker_ai(img, y, text):
+def kicker_ai(img, y, text, cx=None):
     """Kicker on a holographic pill, flanked by AI sparkles — the AI
     template signature. (Spencer appears exactly once per meme,
-    as the badge top-right.)"""
+    as the badge top-right.) cx overrides the page-center default."""
     d = ImageDraw.Draw(img)
     kf = font(FB, 25)
     tw = d.textlength(text, font=kf) + 3 * (len(text) - 1)
-    cx = img.size[0] / 2
+    cx = cx if cx is not None else img.size[0] / 2
     pw, ph = int(tw) + 150, 52
     pill = holo_pill((pw, ph), radius=26, base_alpha=52)
     img.paste(pill, (int(cx - pw / 2), y - 8), pill)
@@ -702,16 +702,16 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
     img = ai_backdrop(background())
     d = ImageDraw.Draw(img)
 
-    # brand bar
+    # brand bar: photo + wordmark. The kicker now lives up here too
+    # (moved 2026-10-11 to free the content zone for the meat).
     pc = photo_card(photo_path)
-    img.paste(pc, (48, 36), pc)
+    img.paste(pc, (48, 32), pc)
     x = 48 + 148 + 24
     wx = x
     for word, color in b["wordmark"]:
         f = font(FB, 46)
-        d.text((wx, 44), word, font=f, fill=color)
+        d.text((wx, 36), word, font=f, fill=color)
         wx += d.textlength(word, font=f) + 10
-    d.text((x, 104), b["tagline"], font=font(FR, 21), fill=GRAY)
 
     # Spencer standing watch, top right — the one mascot on the meme.
     # CTA above, his name below.
@@ -728,8 +728,8 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
     d.text((_scx - _nw / 2, 182), "SPENCER", font=_nf, fill=INK)
     d = ImageDraw.Draw(img)
 
-    # kicker with AI emblems (robot + spark)
-    img = kicker_ai(img, 216, content["kicker"])
+    # kicker up in the header now, centered on the page
+    img = kicker_ai(img, 100, content["kicker"])
     d = ImageDraw.Draw(img)
 
     # headline: gradient + 3D, always (auto-fit so the extrusion never clips)
@@ -745,20 +745,21 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
     hl, (lw, lh) = headline_3d(img, content["headline"], f_big, colors)
     # soft luminous halo behind the headline — radial falloff, no edges
     halo = _radial_glow(lw * 1.18, lh * 2.6, (255, 255, 255), 115)
-    hx, hy0 = (W - lw) // 2, 254
+    hx, hy0 = (W - lw) // 2, 196
     img.paste(halo, (int(hx + lw / 2 - halo.width / 2),
                      int(hy0 + lh / 2 - halo.height / 2)), halo)
-    img.paste(hl, ((W-lw)//2, 254), hl)
+    img.paste(hl, ((W-lw)//2, 196), hl)
     # colorful gradient divider under headline, with a soft holographic glow
     div = grad_rounded((440, 9), ["#22d3ee", "#3b82f6", "#8b5cf6", "#e879f9"], 4)
     glow = div.filter(ImageFilter.GaussianBlur(14))
-    img.paste(glow, ((W-440)//2, 398 - 5), glow)
-    img.paste(div, ((W-440)//2, 398), div)
+    div_y = hy0 + lh + 10
+    img.paste(glow, ((W-440)//2, div_y - 5), glow)
+    img.paste(div, ((W-440)//2, div_y), div)
     # scattered AI sparkles flanking the divider (deterministic)
-    for sx, sy, ss, scol in ((150, 390, 22, "#22d3ee"),
-                             (238, 402, 16, "#8b5cf6"),
-                             (842, 402, 16, "#e879f9"),
-                             (930, 390, 22, "#3b82f6")):
+    for sx, sy, ss, scol in ((150, div_y - 8, 22, "#22d3ee"),
+                             (238, div_y + 4, 16, "#8b5cf6"),
+                             (842, div_y + 4, 16, "#e879f9"),
+                             (930, div_y - 8, 22, "#3b82f6")):
         sp = icon_spark(ss, color=scol)
         img.paste(sp, (sx, sy), sp)
     d = ImageDraw.Draw(img)
@@ -768,21 +769,42 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
         _r, _gap = 7, 12
         _total = 5 * _r * 2 + 4 * _gap
         _sx = (W - _total) / 2
+        _sy = div_y + 22
         for _i in range(5):
             _cx = _sx + _r + _i * (_r * 2 + _gap)
             if _i < _sd:
-                d.ellipse([_cx - _r, 416 - _r, _cx + _r, 416 + _r],
+                d.ellipse([_cx - _r, _sy - _r, _cx + _r, _sy + _r],
                           fill="#0a7fd4")
             else:
-                d.ellipse([_cx - _r, 416 - _r, _cx + _r, 416 + _r],
+                d.ellipse([_cx - _r, _sy - _r, _cx + _r, _sy + _r],
                           outline="#b9c4d6", width=2)
 
-    # cards: tinted, soft shadow, gradient bars
+    # ---- content zone: sequential flow, cards scale to fill ----
+    # CONTENT["hero"] = {"label": "SMALL CAPS", "image": "/path.png",
+    #                    "caption": "Plain-English line."} — a diagram or
+    # image depicting what the meme is about, for wide audiences.
+    y = div_y + 28
+    hero = content.get("hero")
+    if hero:
+        _centered(d, y + 4, hero["label"], font(FB, 17), FAINT)
+        him = Image.open(hero["image"]).convert("RGBA")
+        th = 104
+        sc = th / him.height
+        nw = max(1, int(him.width * sc))
+        him = him.resize((nw, th), Image.LANCZOS)
+        img.paste(him, (int((W - nw) / 2), y + 26), him)
+        _centered(d, y + 136, hero["caption"], font(FB, 20), INK)
+        d = ImageDraw.Draw(img)
+        y += 180
+
+    # cards: tinted, soft shadow, gradient bars; internals scale with ch
     cards = content["cards"]
     n = len(cards)
     gap, margin = 32, 48
     cw = (W - 2*margin - gap*(n-1)) / n
-    cy0, ch = 424, 252
+    ch = min(300, max(130, 700 - 12 - y))
+    cy0 = y
+    s = ch / 252
     for i, c in enumerate(cards):
         x = margin + i*(cw+gap)
         tint = c.get("tint", "#ffffff")
@@ -809,78 +831,55 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
         d = ImageDraw.Draw(img)
         cx = x + cw/2
         for txt, fnt, col, yy in [
-            (c["tag"], font(FB, 19), FAINT, cy0+24),
-            (c["title"], font(FB, 30), INK, cy0+54),
-            (c["price"], font(FB, 66), c["bar_color"], cy0+96),
+            (c["tag"], font(FB, max(11, int(19*s))), FAINT, cy0+24*s),
+            (c["title"], font(FB, int(30*s)), INK, cy0+54*s),
+            (c["price"], font(FB, int(66*s)), c["bar_color"], cy0+96*s),
         ]:
             tw = d.textlength(txt, font=fnt)
             d.text((cx-tw/2, yy), txt, font=fnt, fill=col)
-        t = c["sub"]; tw = d.textlength(t, font=font(FR, 22))
-        d.text((cx-tw/2, cy0+178), t, font=font(FR, 22), fill=GRAY)
-        bx, bw, bh, by = x+36, cw-72, 24, cy0+214
+        t = c["sub"]
+        sf = font(FR, max(11, int(22*s)))
+        tw = d.textlength(t, font=sf)
+        d.text((cx-tw/2, cy0+178*s), t, font=sf, fill=GRAY)
+        bx, bw, bh, by = x+36, cw-72, max(10, int(24*s)), cy0+214*s
         d.rounded_rectangle([bx, by, bx+bw, by+bh], 12, fill=(226, 231, 241, 255))
         _gbar(img, [bx, by, bx+bw*c["bar_frac"], by+bh], c["bar_color"])
         d = ImageDraw.Draw(img)
+    y = cy0 + ch + 12
 
-    # optional counterpoint strip (debate-style memes): a slim outlined
-    # strip between the cards and the punchline; shifts everything below.
-    # CONTENT["counterpoint"] = {"label": "SMALL CAPS SOURCE",
-    #                            "quote": "The other side, in their words."}
+    # optional counterpoint strip: a slim outlined strip between the
+    # cards and the punchline.
+    # CONTENT["counterpoint"] = {"label": "SMALL CAPS",
+    #                            "quote": "One plain-English line."}
     cp = content.get("counterpoint")
-    dy = 0
     if cp:
-        cs0, cs1 = 688, 758
+        cs0, cs1 = y, y + 68
         d.rounded_rectangle([48, cs0, W - 48, cs1], 16, fill="#eef2f7",
                             outline="#16213a", width=2)
         _centered(d, cs0 + 8, cp["label"], font(FB, 19), FAINT)
         _centered(d, cs0 + 34, cp["quote"], font(FB, 23), INK)
-        dy = 68
+        y = cs1 + 12
 
     # punchline strip (garnet — Brian's birthstone) with iridescent top edge
-    py0, py1 = 700 + dy, 782 + dy
-    d.rounded_rectangle([48, py0, W-48, py1], 18, fill=GARNET_BG,
+    py0, py1 = y, y + 82
+    d.rounded_rectangle([48, py0, W - 48, py1], 18, fill=GARNET_BG,
                         outline=GARNET_EDGE, width=2)
     edge = holo_pill((W - 96 - 8, 5), radius=2, base_alpha=200)
     img.paste(edge, (48 + 4, py0 + 3), edge)
     d = ImageDraw.Draw(img)
     _centered(d, py0+22, content["punchline"], font(FB, 29), YELLOW)
+    y = py1 + 16
 
     # curiosity line (replaces technical callouts)
     if content.get("curiosity"):
-        _centered(d, 804 + dy, content["curiosity"], font(FB, 26), INK)
+        _centered(d, y, content["curiosity"], font(FB, 26), INK)
 
-    img, d = footer(img, d, hashtag=content.get("hashtag"), dy=dy, brand=b)
-
-    # optional QR badge (top-right): the link survives screenshots/forwards.
-    # On the feed itself it's unscannable, so keep it small and clearly
-    # labeled; it earns its place when the image circulates on WhatsApp.
-    if content.get("qr_url") and qrcode is not None:
-        qr = qrcode.QRCode(box_size=6, border=2)
-        qr.add_data(content["qr_url"]); qr.make(fit=True)
-        qim = qr.make_image(fill_color="black", back_color="white").convert("RGBA")
-        q = qim.resize((116, 116), Image.LANCZOS)
-        bs, bh = 144, 176
-        badge = Image.new("RGBA", (bs, bh), (0, 0, 0, 0))
-        db = ImageDraw.Draw(badge)
-        db.rounded_rectangle([0, 0, bs, bh], 18, fill="white",
-                             outline=(210, 218, 230, 255), width=2)
-        badge.paste(q, ((bs-116)//2, 10), q)
-        t = "SCAN FOR FULL STORY"
-        fs = 14
-        while fs > 8:
-            f = font(FB, fs)
-            if db.textlength(t, font=f) <= bs-16:
-                break
-            fs -= 1
-        tw = db.textlength(t, font=f)
-        db.text(((bs-tw)/2, 134), t, font=f, fill=INK)
-        img.paste(badge, (W-bs-28, 36), badge)
-        d = ImageDraw.Draw(img)
+    # footer follows the flow
+    img, d = footer(img, d, hashtag=content.get("hashtag"),
+                    dy=y + 38 - 840, brand=b)
 
     img.save(out_path)
     return out_path
-
-
 # ---------------- demo: the RAM SCAM card ----------------
 RAM_SCAM = {
     "kicker": "MINI PC MAKERS DON'T WANT YOU DOING THIS MATH",

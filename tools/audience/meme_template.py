@@ -113,6 +113,21 @@ def font(path, size):
 
 
 # ---------------- color helpers ----------------
+def _radial_glow(w, h, color, max_alpha):
+    """Elliptical glow with smooth radial falloff to transparent — a true
+    glow with no visible edges (beauty pass 2026-10-11)."""
+    glow = Image.new("RGBA", (int(w), int(h)), (0, 0, 0, 0))
+    d = ImageDraw.Draw(glow)
+    steps = 56
+    for i in range(steps, 0, -1):
+        t = i / steps
+        a = int(max_alpha * (1 - t) ** 1.7)
+        px = (w / 2) * t
+        py = (h / 2) * t
+        d.ellipse([px, py, w - px, h - py], fill=color + (a,))
+    return glow
+
+
 def _hex(c):
     c = c.lstrip("#")
     return tuple(int(c[i:i+2], 16) for i in (0, 2, 4))
@@ -508,11 +523,18 @@ def ai_backdrop(img):
     # holographic depth: large blurred color orbs
     orbs = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     od = ImageDraw.Draw(orbs)
-    od.ellipse([-160, 120, 320, 600], fill=(34, 211, 238, 38))
-    od.ellipse([w - 320, -80, w + 160, 400], fill=(232, 121, 249, 34))
-    od.ellipse([w - 420, h - 420, w + 60, h + 60], fill=(139, 92, 246, 36))
+    od.ellipse([-160, 120, 320, 600], fill=(34, 211, 238, 56))
+    od.ellipse([w - 320, -80, w + 160, 400], fill=(232, 121, 249, 52))
+    od.ellipse([w - 420, h - 420, w + 60, h + 60], fill=(139, 92, 246, 54))
+    od.ellipse([-200, h - 300, 200, h + 100], fill=(34, 211, 238, 44))
     orbs = orbs.filter(ImageFilter.GaussianBlur(60))
     img = Image.alpha_composite(img.convert("RGBA"), orbs).convert("RGB")
+    # radiant burst behind the headline zone (beauty pass 2026-10-11):
+    # true radial falloff so no edges ever show
+    burst = _radial_glow(880, 720, (190, 232, 255), 60)
+    img.paste(burst, (w // 2 - 440, -60), burst)
+    burst2 = _radial_glow(480, 380, (255, 255, 255), 66)
+    img.paste(burst2, (w // 2 - 240, 110), burst2)
     # faint diagonal holographic sheen
     sheen = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     sd = ImageDraw.Draw(sheen)
@@ -522,6 +544,15 @@ def ai_backdrop(img):
                fill=(190, 220, 255, 30))
     sheen = sheen.filter(ImageFilter.GaussianBlur(30))
     img = Image.alpha_composite(img.convert("RGBA"), sheen).convert("RGB")
+    # scattered micro-sparkles along the edges (beauty pass 2026-10-11)
+    for sx, sy, ss, scol in ((70, 700, 18, "#22d3ee"),
+                             (1010, 700, 18, "#e879f9"),
+                             (60, 880, 14, "#8b5cf6"),
+                             (1020, 880, 14, "#3b82f6"),
+                             (90, 480, 14, "#e879f9"),
+                             (990, 480, 14, "#22d3ee")):
+        sp = icon_spark(ss, color=scol)
+        img.paste(sp, (sx, sy), sp)
     return img
 
 
@@ -591,9 +622,13 @@ def background():
     # soft blue glow top + faint warm/cool washes for color
     glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
-    gd.ellipse([W//2-460, -280, W//2+460, 360], fill=(120, 190, 255, 60))
-    gd.ellipse([W-560, H-460, W+160, H+120], fill=(255, 196, 150, 44))
-    gd.ellipse([-200, H-420, 420, H+80], fill=(196, 160, 255, 40))
+    gd.ellipse([W//2-460, -280, W//2+460, 360], fill=(120, 190, 255, 72))
+    gd.ellipse([W-560, H-460, W+160, H+120], fill=(255, 196, 150, 54))
+    gd.ellipse([-200, H-420, 420, H+80], fill=(196, 160, 255, 50))
+    # richer holographic orbs for depth (beauty pass 2026-10-11)
+    gd.ellipse([-320, 300, 180, 800], fill=(34, 211, 238, 52))
+    gd.ellipse([W-180, 180, W+320, 680], fill=(232, 121, 249, 48))
+    gd.ellipse([W//2-260, H-320, W//2+260, H+180], fill=(139, 92, 246, 46))
     img = Image.alpha_composite(img.convert("RGBA"), glow.filter(ImageFilter.GaussianBlur(70))).convert("RGB")
     return img
 
@@ -708,6 +743,11 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
         size -= 2
     colors = content.get("grad_colors", ["#22d3ee", "#3b82f6", "#8b5cf6", "#e879f9"])
     hl, (lw, lh) = headline_3d(img, content["headline"], f_big, colors)
+    # soft luminous halo behind the headline — radial falloff, no edges
+    halo = _radial_glow(lw * 1.18, lh * 2.6, (255, 255, 255), 115)
+    hx, hy0 = (W - lw) // 2, 254
+    img.paste(halo, (int(hx + lw / 2 - halo.width / 2),
+                     int(hy0 + lh / 2 - halo.height / 2)), halo)
     img.paste(hl, ((W-lw)//2, 254), hl)
     # colorful gradient divider under headline, with a soft holographic glow
     div = grad_rounded((440, 9), ["#22d3ee", "#3b82f6", "#8b5cf6", "#e879f9"], 4)
@@ -746,7 +786,19 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
     for i, c in enumerate(cards):
         x = margin + i*(cw+gap)
         tint = c.get("tint", "#ffffff")
-        d.rounded_rectangle([x+6, cy0+10, x+cw+6, cy0+ch+10], 26, fill=(178, 188, 205, 255))
+        # soft colored aura so the card lifts off the page (beauty 2026-10-11)
+        ar, ag, ab = _hex(c["bar_color"])
+        aura = Image.new("RGBA", (int(cw) + 72, ch + 72), (0, 0, 0, 0))
+        ImageDraw.Draw(aura).rounded_rectangle(
+            [0, 0, int(cw) + 72, ch + 72], 34, fill=(ar, ag, ab, 60))
+        aura = aura.filter(ImageFilter.GaussianBlur(28))
+        img.paste(aura, (int(x) - 36, int(cy0) - 36), aura)
+        # soft drop shadow (blurred, not hard-offset)
+        sh = Image.new("RGBA", (int(cw) + 40, ch + 40), (0, 0, 0, 0))
+        ImageDraw.Draw(sh).rounded_rectangle(
+            [20, 22, int(cw) + 20, ch + 22], 26, fill=(110, 122, 155, 105))
+        sh = sh.filter(ImageFilter.GaussianBlur(13))
+        img.paste(sh, (int(x) - 20, int(cy0) - 20), sh)
         d.rounded_rectangle([x, cy0, x+cw, cy0+ch], 26, fill=tint,
                             outline=(210, 218, 230, 255), width=2)
         # holographic chrome strip along the card top + corner sparkle

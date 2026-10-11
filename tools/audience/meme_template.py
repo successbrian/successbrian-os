@@ -568,7 +568,7 @@ def kicker_ai(img, y, text, cx=None):
     pill = holo_pill((pw, ph), radius=26, base_alpha=52)
     img.paste(pill, (int(cx - pw / 2), y - 8), pill)
     d = ImageDraw.Draw(img)
-    _centered(d, y, text, kf, "#0a7fd4", tracking=3)
+    _centered(d, y, text, kf, "#0d55a0", tracking=3)
     for sx in (int(cx - tw / 2 - 58), int(cx + tw / 2 + 20)):
         sp = icon_spark(36)
         img.paste(sp, (sx, y - 6), sp)
@@ -729,7 +729,7 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
     d = ImageDraw.Draw(img)
 
     # kicker up in the header now, centered on the page
-    img = kicker_ai(img, 100, content["kicker"])
+    img = kicker_ai(img, 135, content["kicker"])
     d = ImageDraw.Draw(img)
 
     # headline: gradient + 3D, always (auto-fit so the extrusion never clips)
@@ -783,7 +783,7 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
     # CONTENT["hero"] = {"label": "SMALL CAPS", "image": "/path.png",
     #                    "caption": "Plain-English line."} — a diagram or
     # image depicting what the meme is about, for wide audiences.
-    y = div_y + 28
+    y = div_y + 20
     hero = content.get("hero")
     if hero:
         _centered(d, y + 4, hero["label"], font(FB, 17), FAINT)
@@ -795,7 +795,7 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
         img.paste(him, (int((W - nw) / 2), y + 26), him)
         _centered(d, y + 136, hero["caption"], font(FB, 20), INK)
         d = ImageDraw.Draw(img)
-        y += 180
+        y += 170
 
     # cards: tinted, soft shadow, gradient bars; internals scale with ch
     cards = content["cards"]
@@ -845,7 +845,7 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
         d.rounded_rectangle([bx, by, bx+bw, by+bh], 12, fill=(226, 231, 241, 255))
         _gbar(img, [bx, by, bx+bw*c["bar_frac"], by+bh], c["bar_color"])
         d = ImageDraw.Draw(img)
-    y = cy0 + ch + 12
+    y = cy0 + ch + 8
 
     # optional counterpoint strip: a slim outlined strip between the
     # cards and the punchline.
@@ -858,7 +858,7 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
                             outline="#16213a", width=2)
         _centered(d, cs0 + 8, cp["label"], font(FB, 19), FAINT)
         _centered(d, cs0 + 34, cp["quote"], font(FB, 23), INK)
-        y = cs1 + 12
+        y = cs1 + 8
 
     # punchline strip (garnet — Brian's birthstone) with iridescent top edge
     py0, py1 = y, y + 82
@@ -868,7 +868,7 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
     img.paste(edge, (48 + 4, py0 + 3), edge)
     d = ImageDraw.Draw(img)
     _centered(d, py0+22, content["punchline"], font(FB, 29), YELLOW)
-    y = py1 + 16
+    y = py1 + 12
 
     # curiosity line (replaces technical callouts)
     if content.get("curiosity"):

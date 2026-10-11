@@ -118,11 +118,12 @@ def crew_reports() -> dict:
     """Which crew reports have landed in today's inbox?"""
     today = datetime.now().strftime("%Y%m%d")
     found: dict[str, bool] = {
-        "deepseek_brief": False, "altair": False, "lyra": False,
+        "sonic": False, "altair": False, "lyra": False,
         "morpheus": False, "penny": False,
     }
     try:
-        names = [p.name.lower() for p in (INBOX / "inbox").glob(f"{today}*")]
+        names = [p.name.lower() for p in (INBOX / "inbox").glob(f"{today}*")
+                 if "nudge-" not in p.name]  # nudges aren't reports — a brief-overdue nudge must never count as the brief itself
         blob = " ".join(names)
         for key in found:
             found[key] = key in blob

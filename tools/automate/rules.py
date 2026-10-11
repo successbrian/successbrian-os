@@ -56,7 +56,7 @@ def _nudge_live(slug: str) -> bool:
 
     Overdue nudges fire once per shift per item — re-writing the same
     nudge every 15-minute heartbeat (2026-09-27: two identical
-    nudge-deepseek-brief notes 15 min apart) is noise with no new
+    nudge-sonic-brief notes 15 min apart) is noise with no new
     information. The conductor's shift-log flags keep the overdue
     visible; the rule stays quiet once the nudge is live.
     """
@@ -103,7 +103,7 @@ def _inbox_act(ctx: dict, dry_run: bool) -> str:
     return "inbox pushed"
 
 
-# --- Rule 2: DeepSeek brief overdue ------------------------------------------
+# --- Rule 2: Sonic strategic brief overdue ----------------------------------
 def _brief_check():
     shift = shift_window_active()
     if not shift["active"]:
@@ -111,8 +111,8 @@ def _brief_check():
     now = _now()
     past_due = now.hour >= 17  # due 5pm
     crew = crew_reports()
-    already_nudged = _nudge_live("nudge-deepseek-brief")
-    return (past_due and not crew["deepseek_brief"] and not already_nudged), {
+    already_nudged = _nudge_live("nudge-sonic-brief")
+    return (past_due and not crew["sonic"] and not already_nudged), {
         "now": now.isoformat(), "crew": crew, "already_nudged": already_nudged}
 
 
@@ -129,7 +129,7 @@ def _brief_act(ctx: dict, dry_run: bool) -> str:
     )
     if dry_run:
         return "would write overdue nudge to inbox"
-    path = _inbox_note("nudge-deepseek-brief", body)
+    path = _inbox_note("nudge-sonic-brief", body)
     return f"nudge written: {Path(path).name}"
 
 
@@ -142,7 +142,7 @@ def _crew_check():
     past_due = now.hour >= 18
     crew = crew_reports()
     missing = [k for k, v in crew.items()
-               if not v and k != "deepseek_brief"]
+               if not v and k != "sonic"]
     already_nudged = _nudge_live("nudge-crew-reports")
     return (past_due and bool(missing) and not already_nudged), {
         "missing": missing, "crew": crew, "already_nudged": already_nudged}
@@ -340,7 +340,7 @@ RULES: list[Rule] = [
     Rule("v4pro_balance_check", _bal_check, _bal_confidence,
          _bal_act, reversible=True, tags=["routing", "v4pro"]),
     Rule("v4pro_routing", _v4pro_check, _v4pro_confidence,
-         _v4pro_act, reversible=True, tags=["routing", "v4pro"]),    Rule("deepseek_brief_overdue", _brief_check, _brief_confidence,
+         _v4pro_act, reversible=True, tags=["routing", "v4pro"]),    Rule("sonic_brief_overdue", _brief_check, _brief_confidence,
          _brief_act, reversible=True, tags=["sunday-shift", "crew"]),
     Rule("crew_reports_overdue", _crew_check, _crew_confidence,
          _crew_act, reversible=True, tags=["sunday-shift", "crew"]),

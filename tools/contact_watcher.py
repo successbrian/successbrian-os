@@ -11,9 +11,13 @@ WHY:
     contacts and prints JSON alerts for anything new or repeating.
 
 CALLED BY:
-    - contact-alert cron (activates when Brian says "start contact alerts"
-      from WhatsApp; alert channel = WhatsApp)
+    - p1_scheduler.py daemon (Hatch VM, 4x/day 06:20/12:20/18:20/22:20
+      America/Chicago) — see tools/relationship_intel/README-P1.md
     - manual runs for spot checks
+    (Was: "contact-alert cron activates when Brian says 'start contact alerts'
+    from WhatsApp" — he never said it; build approved 2026-10-10, and the
+    WhatsApp relay path is dead. Alerts now go to the daemon log + the
+    weekly people.contact_watcher_weekly rollup.)
 
 NOTES:
     Moved 2026-09-28 from ~/workspace/contacts/watcher.py (night-shift
@@ -29,13 +33,18 @@ Writes:
 Prints JSON: {"alerts": [...], "summary": {...}}
 """
 import json
+import os
 import re
 import sqlite3
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 
-BASE = "/home/hatch/workspace/contacts"
+# Env-overridable so the code stays portable if a k11 credential path for
+# outlook-mail ever exists (2026-10-10: none exists; OAuth resolves via
+# Hatch authd, so this runs on the Hatch VM — see
+# tools/relationship_intel/README-P1.md).
+BASE = os.environ.get("CONTACT_WATCHER_BASE", "/home/hatch/workspace/contacts")
 BASELINE_DB = f"{BASE}/baseline.db"
 TRACKING_DB = f"{BASE}/tracking.db"
 

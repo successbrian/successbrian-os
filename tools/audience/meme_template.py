@@ -118,17 +118,39 @@ def font(path, size):
 # ---------------- color helpers ----------------
 def _radial_glow(w, h, color, max_alpha):
     """Elliptical glow with smooth radial falloff to transparent — a true
-    glow with no visible edges (beauty pass 2026-10-11)."""
+    glow with no visible edges. Drawn large→small: the faint outer ellipse
+    goes down first, the bright center finishes on top."""
     glow = Image.new("RGBA", (int(w), int(h)), (0, 0, 0, 0))
     d = ImageDraw.Draw(glow)
     steps = 56
-    for i in range(steps, 0, -1):
+    for i in range(1, steps + 1):
         t = i / steps
-        a = int(max_alpha * (1 - t) ** 1.7)
+        a = int(max_alpha * t ** 1.7)
         px = (w / 2) * t
         py = (h / 2) * t
         d.ellipse([px, py, w - px, h - py], fill=color + (a,))
     return glow
+
+
+def _holo_orb(w, h, hues, alpha, blur=40):
+    """Iridescent orb: hue shifts radially from rim to center through the
+    palette at constant alpha; the rim is softened with its own blur so
+    overlapping orbs melt together with no edges. Drawn large→small."""
+    orb = Image.new("RGBA", (int(w), int(h)), (0, 0, 0, 0))
+    d = ImageDraw.Draw(orb)
+    rgb = [_hex(c) for c in hues]
+    n = len(rgb)
+    steps = 64
+    for i in range(1, steps + 1):
+        t = i / steps
+        seg = (1 - t) * (n - 1)
+        j = int(seg)
+        f = seg - j
+        c1, c2 = rgb[j], rgb[min(j + 1, n - 1)]
+        col = tuple(int(a + (b - a) * f) for a, b in zip(c1, c2))
+        px, py = (w / 2) * t, (h / 2) * t
+        d.ellipse([px, py, w - px, h - py], fill=col + (alpha,))
+    return orb.filter(ImageFilter.GaussianBlur(blur))
 
 
 def _hex(c):
@@ -523,14 +545,16 @@ def ai_backdrop(img):
         r = rnd.randint(4, 9)
         d.ellipse([x - r, y - r, x + r, y + r], fill=(130, 110, 220, 115))
     img = Image.alpha_composite(img.convert("RGBA"), ov).convert("RGB")
-    # holographic depth: large blurred color orbs
+    # holographic depth: hue-shifting orbs (true iridescence, 2026-10-11)
     orbs = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    od = ImageDraw.Draw(orbs)
-    od.ellipse([-160, 120, 320, 600], fill=(34, 211, 238, 80))
-    od.ellipse([w - 320, -80, w + 160, 400], fill=(232, 121, 249, 76))
-    od.ellipse([w - 420, h - 420, w + 60, h + 60], fill=(139, 92, 246, 78))
-    od.ellipse([-200, h - 300, 200, h + 100], fill=(34, 211, 238, 66))
-    orbs = orbs.filter(ImageFilter.GaussianBlur(60))
+    for (ow, oh, ox, oy), hues, ma in (
+        ((480, 480, -160, 120), ("#22d3ee", "#3b82f6", "#8b5cf6"), 60),
+        ((480, 480, w-320, -80), ("#8b5cf6", "#e879f9", "#22d3ee"), 56),
+        ((480, 480, w-420, h-420), ("#3b82f6", "#8b5cf6", "#e879f9"), 58),
+        ((400, 400, -200, h-300), ("#22d3ee", "#8b5cf6", "#e879f9"), 50),
+    ):
+        orbs.alpha_composite(_holo_orb(ow, oh, hues, ma), (ox, oy))
+    orbs = orbs.filter(ImageFilter.GaussianBlur(50))
     img = Image.alpha_composite(img.convert("RGBA"), orbs).convert("RGB")
     # radiant burst behind the headline zone (beauty pass 2026-10-11):
     # true radial falloff so no edges ever show
@@ -622,17 +646,18 @@ def background():
         # very light cool gradient: #fbfcfe -> #e9eef6
         r = int(251 - 14*t); g = int(252 - 12*t); b = int(254 - 8*t)
         d.line([(0, y), (W, y)], fill=(r, g, b))
-    # soft blue glow top + faint warm/cool washes for color
+    # iridescent washes: hue-shifting orbs, centers on-canvas (2026-10-11)
     glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    gd = ImageDraw.Draw(glow)
-    gd.ellipse([W//2-460, -280, W//2+460, 360], fill=(110, 185, 255, 96))
-    gd.ellipse([W-560, H-460, W+160, H+120], fill=(255, 188, 140, 72))
-    gd.ellipse([-200, H-420, 420, H+80], fill=(190, 150, 255, 68))
-    # richer holographic orbs for depth (beauty pass 2026-10-11)
-    gd.ellipse([-320, 300, 180, 800], fill=(34, 211, 238, 74))
-    gd.ellipse([W-180, 180, W+320, 680], fill=(232, 121, 249, 70))
-    gd.ellipse([W//2-260, H-320, W//2+260, H+180], fill=(139, 92, 246, 68))
-    img = Image.alpha_composite(img.convert("RGBA"), glow.filter(ImageFilter.GaussianBlur(70))).convert("RGB")
+    for (ow, oh, cx, cy), hues, alpha in (
+        ((900, 620, 540, 130), ("#22d3ee", "#3b82f6", "#8b5cf6"), 85),
+        ((540, 540, 920, 470), ("#8b5cf6", "#e879f9", "#f0a6ff"), 75),
+        ((540, 560, 170, 620), ("#22d3ee", "#3b82f6", "#2dd4bf"), 80),
+        ((580, 540, 540, 960), ("#3b82f6", "#8b5cf6", "#e879f9"), 80),
+        ((440, 440, 860, 900), ("#e879f9", "#8b5cf6", "#3b82f6"), 70),
+        ((360, 360, 950, 210), ("#22d3ee", "#8b5cf6", "#e879f9"), 65),
+    ):
+        glow.alpha_composite(_holo_orb(ow, oh, hues, alpha), (cx - ow // 2, cy - oh // 2))
+    img = Image.alpha_composite(img.convert("RGBA"), glow.filter(ImageFilter.GaussianBlur(60))).convert("RGB")
     return img
 
 

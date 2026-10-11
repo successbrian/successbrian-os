@@ -126,12 +126,18 @@ def mission_text(proposal_id, target_name, what_to_capture):
 
 
 def create_mission_primary(cur_eco, text):
-    """podcast_questions row. Returns the new id."""
+    """podcast_questions row. Returns the new id.
+    episode = the Saturday this mission belongs to (missions are issued in
+    the weekly podcast cycle; episode is NOT NULL)."""
+    import datetime
+    today = datetime.date.today()
+    days_ahead = (5 - today.weekday()) % 7  # Saturday = 5
+    episode = (today + datetime.timedelta(days=days_ahead)).isoformat()
     cur_eco.execute(
         "INSERT INTO successbrian_os.podcast_questions "
-        "(kind, question_text, answer_type) VALUES ('mission', %s, 'free_text') "
-        "RETURNING id",
-        (text,),
+        "(episode, kind, question_text, answer_type) "
+        "VALUES (%s, 'mission', %s, 'free_text') RETURNING id",
+        (episode, text),
     )
     return cur_eco.fetchone()[0]
 
@@ -202,10 +208,12 @@ def poll(backup_only=False):
                 try:
                     if backup_only:
                         raise RuntimeError("backup channel forced")
+                    cur_eco.execute("SAVEPOINT p5_primary")
                     mission_id = create_mission_primary(cur_eco, text)
+                    cur_eco.execute("RELEASE SAVEPOINT p5_primary")
                 except Exception as e:
+                    cur_eco.execute("ROLLBACK TO SAVEPOINT p5_primary")
                     print(f"proposal {pid}: primary channel failed ({e}); trying backup")
-                    mission_id = None
                     channel = "pending_questions"
                     status = "requested_backup"
                     mission_id = create_mission_backup(cur_eco, text)

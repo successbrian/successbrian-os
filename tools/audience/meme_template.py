@@ -105,7 +105,7 @@ GARNET_EDGE = "#b3566a"
 # Spencer's badge photo (face crop of his avatar). Brian 2026-10-11:
 # Spencer replaces the generic robot as the AI template's top-right emblem.
 SPENCER_PHOTO = "/home/hatch/workspace/avatars/spencer-chilling-chair.png"
-SPENCER_CTA = ("Ask Brian about having", "your own FREE Muse AI Agent.")
+SPENCER_CTA = ("ASK BRIAN FOR YOUR", "FREE MUSE AI AGENT")
 # AI tagline under the wordmark (Brian 2026-10-11: his words, two lines).
 AI_TAGLINE = (
     "OWN YOUR HARDWARE; SKIP THE COSTLY SUBSCRIPTIONS.",

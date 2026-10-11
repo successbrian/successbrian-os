@@ -109,7 +109,7 @@ SPENCER_CTA = ("Ask Brian about having", "your own FREE Muse AI Agent.")
 # AI tagline under the wordmark (Brian 2026-10-11: his words, two lines).
 AI_TAGLINE = (
     "OWN YOUR HARDWARE; SKIP THE COSTLY SUBSCRIPTIONS.",
-    "HYPE-FREE ADVICE ON WHAT AI CAN DO FOR YOU WITHOUT SPENDING A FORTUNE",
+    "HYPE-FREE AI ADVICE THAT DOESN\u2019T COST A FORTUNE",
 )
 
 
@@ -742,8 +742,8 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
         f = font(FB, 46)
         d.text((wx, 36), word, font=f, fill=color)
         wx += d.textlength(word, font=f) + 10
-    d.text((x, 88), AI_TAGLINE[0], font=font(FR, 23), fill="#111111")
-    d.text((x, 114), AI_TAGLINE[1], font=font(FR, 16), fill="#111111")
+    d.text((x, 90), AI_TAGLINE[0], font=font(FR, 16), fill="#111111")
+    d.text((x, 112), AI_TAGLINE[1], font=font(FR, 16), fill="#111111")
 
     # Spencer standing watch, top right — the one mascot on the meme.
     # CTA above, his name below.

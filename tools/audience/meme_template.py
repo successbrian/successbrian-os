@@ -106,6 +106,9 @@ GARNET_EDGE = "#b3566a"
 # Spencer replaces the generic robot as the AI template's top-right emblem.
 SPENCER_PHOTO = "/home/hatch/workspace/avatars/spencer-chilling-chair.png"
 SPENCER_CTA = ("Ask Brian about having", "your own FREE Muse AI Agent.")
+# AI tagline under the wordmark (Brian 2026-10-11: exceptional, says what
+# the AI content is about).
+AI_TAGLINE = "OWN YOUR AI. SKIP THE SUBSCRIPTION."
 
 
 def font(path, size):
@@ -523,10 +526,10 @@ def ai_backdrop(img):
     # holographic depth: large blurred color orbs
     orbs = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     od = ImageDraw.Draw(orbs)
-    od.ellipse([-160, 120, 320, 600], fill=(34, 211, 238, 56))
-    od.ellipse([w - 320, -80, w + 160, 400], fill=(232, 121, 249, 52))
-    od.ellipse([w - 420, h - 420, w + 60, h + 60], fill=(139, 92, 246, 54))
-    od.ellipse([-200, h - 300, 200, h + 100], fill=(34, 211, 238, 44))
+    od.ellipse([-160, 120, 320, 600], fill=(34, 211, 238, 80))
+    od.ellipse([w - 320, -80, w + 160, 400], fill=(232, 121, 249, 76))
+    od.ellipse([w - 420, h - 420, w + 60, h + 60], fill=(139, 92, 246, 78))
+    od.ellipse([-200, h - 300, 200, h + 100], fill=(34, 211, 238, 66))
     orbs = orbs.filter(ImageFilter.GaussianBlur(60))
     img = Image.alpha_composite(img.convert("RGBA"), orbs).convert("RGB")
     # radiant burst behind the headline zone (beauty pass 2026-10-11):
@@ -565,7 +568,7 @@ def kicker_ai(img, y, text, cx=None):
     tw = d.textlength(text, font=kf) + 3 * (len(text) - 1)
     cx = cx if cx is not None else img.size[0] / 2
     pw, ph = int(tw) + 150, 52
-    pill = holo_pill((pw, ph), radius=26, base_alpha=52)
+    pill = holo_pill((pw, ph), radius=26, base_alpha=95)
     img.paste(pill, (int(cx - pw / 2), y - 8), pill)
     d = ImageDraw.Draw(img)
     _centered(d, y, text, kf, "#0d55a0", tracking=3)
@@ -622,13 +625,13 @@ def background():
     # soft blue glow top + faint warm/cool washes for color
     glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
-    gd.ellipse([W//2-460, -280, W//2+460, 360], fill=(120, 190, 255, 72))
-    gd.ellipse([W-560, H-460, W+160, H+120], fill=(255, 196, 150, 54))
-    gd.ellipse([-200, H-420, 420, H+80], fill=(196, 160, 255, 50))
+    gd.ellipse([W//2-460, -280, W//2+460, 360], fill=(110, 185, 255, 96))
+    gd.ellipse([W-560, H-460, W+160, H+120], fill=(255, 188, 140, 72))
+    gd.ellipse([-200, H-420, 420, H+80], fill=(190, 150, 255, 68))
     # richer holographic orbs for depth (beauty pass 2026-10-11)
-    gd.ellipse([-320, 300, 180, 800], fill=(34, 211, 238, 52))
-    gd.ellipse([W-180, 180, W+320, 680], fill=(232, 121, 249, 48))
-    gd.ellipse([W//2-260, H-320, W//2+260, H+180], fill=(139, 92, 246, 46))
+    gd.ellipse([-320, 300, 180, 800], fill=(34, 211, 238, 74))
+    gd.ellipse([W-180, 180, W+320, 680], fill=(232, 121, 249, 70))
+    gd.ellipse([W//2-260, H-320, W//2+260, H+180], fill=(139, 92, 246, 68))
     img = Image.alpha_composite(img.convert("RGBA"), glow.filter(ImageFilter.GaussianBlur(70))).convert("RGB")
     return img
 
@@ -712,6 +715,7 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
         f = font(FB, 46)
         d.text((wx, 36), word, font=f, fill=color)
         wx += d.textlength(word, font=f) + 10
+    d.text((x, 96), AI_TAGLINE, font=font(FR, 21), fill="#414b5e")
 
     # Spencer standing watch, top right — the one mascot on the meme.
     # CTA above, his name below.
@@ -812,7 +816,7 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
         ar, ag, ab = _hex(c["bar_color"])
         aura = Image.new("RGBA", (int(cw) + 72, ch + 72), (0, 0, 0, 0))
         ImageDraw.Draw(aura).rounded_rectangle(
-            [0, 0, int(cw) + 72, ch + 72], 34, fill=(ar, ag, ab, 60))
+            [0, 0, int(cw) + 72, ch + 72], 34, fill=(ar, ag, ab, 85))
         aura = aura.filter(ImageFilter.GaussianBlur(28))
         img.paste(aura, (int(x) - 36, int(cy0) - 36), aura)
         # soft drop shadow (blurred, not hard-offset)

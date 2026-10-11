@@ -206,7 +206,42 @@ def _crew_act(ctx: dict, dry_run: bool) -> str:
     return f"nudge written: {Path(path).name}"
 
 
-# --- Rule 4: disk pressure on k11-alpha ----------------------------------------
+# --- Rule 4: pre-briefing escalation (7pm) -------------------------------------
+def _prebrief_check():
+    shift = shift_window_active()
+    if not shift["active"]:
+        return False, {}
+    now = _now()
+    past_19 = (now.hour, now.minute) >= (19, 0)  # 30 min before 7:30 briefing
+    crew = crew_reports()
+    missing = [k for k, v in crew.items() if not v]
+    already = _nudge_live("prebrief-escalation")
+    return (past_19 and bool(missing) and not already), {
+        "now": now.isoformat(), "missing": missing, "already": already}
+
+
+def _prebrief_confidence(ctx: dict) -> float:
+    return 0.95  # clock + file presence, directly observed
+
+
+def _prebrief_act(ctx: dict, dry_run: bool) -> str:
+    missing = ", ".join(ctx["missing"])
+    body = (
+        "# FINAL ESCALATION: 7:30 briefing at risk — conductor will build it alone (automation)\n\n"
+        f"Time: {_now().strftime('%H:%M')} — still missing 30 min before the briefing: {missing}.\n"
+        "This is not a crew nudge (the nudge channel appears to have no reader). "
+        "The 7:30 briefing must be assembled from conductor material only: shift-log evidence, "
+        "automation verdicts, and research findings. Carry the broken delivery channel itself "
+        "as a briefing item: no altair-brain inbox clone found on k11 (maxdepth 7 probe 2026-10-11 "
+        "18:30), so inbox nudges/escalations likely went nowhere.\n"
+    )
+    if dry_run:
+        return "would write prebrief-escalation note to inbox"
+    path = _inbox_note("prebrief-escalation", body)
+    return f"prebrief-escalation written: {Path(path).name}"
+
+
+# --- Rule 5: disk pressure on k11-alpha ----------------------------------------
 def _disk_check():
     disks = alpha_disk()
     if "error" in disks:
@@ -385,6 +420,8 @@ RULES: list[Rule] = [
          _escalation_act, reversible=True, tags=["sunday-shift", "crew"]),
     Rule("crew_reports_overdue", _crew_check, _crew_confidence,
          _crew_act, reversible=True, tags=["sunday-shift", "crew"]),
+    Rule("pre_briefing_escalation", _prebrief_check, _prebrief_confidence,
+         _prebrief_act, reversible=True, tags=["sunday-shift", "crew"]),
     Rule("disk_pressure_alpha", _disk_check, _disk_confidence,
          _disk_act, reversible=True, tags=["infra", "k11-alpha"]),
     Rule("alert_spike", _alert_check, _alert_confidence,

@@ -139,8 +139,8 @@ def create_mission_primary(cur_eco, text):
     episode = (today + datetime.timedelta(days=days_ahead)).isoformat()
     cur_eco.execute(
         "INSERT INTO successbrian_os.podcast_questions "
-        "(episode, kind, question_text, answer_type) "
-        "VALUES (%s, 'mission', %s, 'free_text') RETURNING id",
+        "(episode, kind, question_text, answer_type, choices) "
+        "VALUES (%s, 'mission', %s, 'free_text', '{}'::jsonb) RETURNING id",
         (episode, text),
     )
     return cur_eco.fetchone()[0]

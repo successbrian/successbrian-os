@@ -356,8 +356,9 @@ def icon_robot(size=120, dark="#16213a", glow="#4dd8ff"):
 
 
 def spencer_badge(size=170, photo_path=None):
-    """Spencer the black Lab inside a glowing badge — the one hero emblem
-    per meme. Circular photo, holographic chrome ring, orbiting sparkles."""
+    """Spencer the black Lab in a rounded-rect badge — the one hero emblem
+    per meme. Full face photo (never circle-cropped), holographic chrome
+    frame, orbiting sparkles."""
     from PIL import Image as _Image
     s = size
     ph = _Image.open(photo_path or SPENCER_PHOTO).convert("RGB")
@@ -369,27 +370,25 @@ def spencer_badge(size=170, photo_path=None):
     cx = cy = s / 2
     glow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
-    gd.ellipse([cx - s * 0.47, cy - s * 0.47, cx + s * 0.47, cy + s * 0.47],
-               fill=(56, 182, 255, 70))
+    gd.rounded_rectangle([6, 6, s - 6, s - 6], 26, fill=(56, 182, 255, 70))
     glow = glow.filter(ImageFilter.GaussianBlur(max(4, int(s * 0.07))))
     im.alpha_composite(glow)
-    d = ImageDraw.Draw(im)
-    r = s * 0.40
-    # circular photo
-    face = ph.resize((int(r * 2), int(r * 2)), Image.LANCZOS).convert("RGBA")
-    mask = Image.new("L", face.size, 0)
-    ImageDraw.Draw(mask).ellipse([0, 0, face.size[0], face.size[1]], fill=255)
-    im.paste(face, (int(cx - r), int(cy - r)), mask)
-    # holographic ring: the chrome shifts around the circle
-    _holo_ring(d, cx, cy, r, max(3, int(s * 0.028)))
-    r2 = s * 0.345
-    _holo_ring(d, cx, cy, r2, 2,
-               ("#e879f9", "#8b5cf6", "#3b82f6", "#22d3ee"))
+    # holographic chrome frame
+    frame = holo_pill((s, s), radius=26, base_alpha=255)
+    im.alpha_composite(frame)
+    # face photo inset, rounded corners
+    pad = 7
+    fs = s - 2 * pad
+    face = ph.resize((fs, fs), Image.LANCZOS).convert("RGBA")
+    mask = Image.new("L", (fs, fs), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, fs, fs], 20, fill=255)
+    im.paste(face, (pad, pad), mask)
     # tiny orbiting sparkles on the glow field
+    d = ImageDraw.Draw(im)
     for ang, scol in ((35, "#22d3ee"), (155, "#8b5cf6"), (275, "#e879f9")):
         a = math.radians(ang)
-        ox = cx + math.cos(a) * s * 0.47
-        oy = cy + math.sin(a) * s * 0.47
+        ox = cx + math.cos(a) * s * 0.52
+        oy = cy + math.sin(a) * s * 0.52
         sp = icon_spark(20, color=scol)
         im.paste(sp, (int(ox - 10), int(oy - 10)), sp)
     return im

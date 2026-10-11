@@ -11,9 +11,9 @@ PURPOSE:
 
     AI-template signature visuals (built in): a neural-network
     constellation along the edges over holographic depth (blurred color
-    orbs + diagonal sheen), the android emblem (glowing badge with the
-    humanoid android, holographic chrome ring, orbiting sparkles)
-    standing watch top-right — exactly one robot per meme — the kicker
+    orbs + diagonal sheen), Spencer the black Lab in a glowing badge with
+    a holographic chrome ring and orbiting sparkles standing watch
+    top-right — exactly one mascot per meme — the kicker
     on a holographic pill flanked by AI sparkles, iridescent chrome
     strips on the cards, and a glowing gradient divider.
 
@@ -101,6 +101,11 @@ FAINT = "#8a93a3"
 YELLOW = "#ffd23f"
 GARNET_BG = "#7e2e3f"   # soft garnet — Brian's January birthstone
 GARNET_EDGE = "#b3566a"
+
+# Spencer's badge photo (face crop of his avatar). Brian 2026-10-11:
+# Spencer replaces the generic robot as the AI template's top-right emblem.
+SPENCER_PHOTO = "/home/hatch/workspace/avatars/spencer-badge-face.png"
+SPENCER_CTA = ("Ask Brian about having", "your own FREE Muse AI Agent.")
 
 
 def font(path, size):
@@ -350,6 +355,46 @@ def icon_robot(size=120, dark="#16213a", glow="#4dd8ff"):
     return im
 
 
+def spencer_badge(size=170, photo_path=None):
+    """Spencer the black Lab inside a glowing badge — the one hero emblem
+    per meme. Circular photo, holographic chrome ring, orbiting sparkles."""
+    from PIL import Image as _Image
+    s = size
+    ph = _Image.open(photo_path or SPENCER_PHOTO).convert("RGB")
+    side = min(ph.size)
+    left = (ph.size[0] - side) // 2
+    top = (ph.size[1] - side) // 2
+    ph = ph.crop((left, top, left + side, top + side))
+    im = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    cx = cy = s / 2
+    glow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    gd.ellipse([cx - s * 0.47, cy - s * 0.47, cx + s * 0.47, cy + s * 0.47],
+               fill=(56, 182, 255, 70))
+    glow = glow.filter(ImageFilter.GaussianBlur(max(4, int(s * 0.07))))
+    im.alpha_composite(glow)
+    d = ImageDraw.Draw(im)
+    r = s * 0.40
+    # circular photo
+    face = ph.resize((int(r * 2), int(r * 2)), Image.LANCZOS).convert("RGBA")
+    mask = Image.new("L", face.size, 0)
+    ImageDraw.Draw(mask).ellipse([0, 0, face.size[0], face.size[1]], fill=255)
+    im.paste(face, (int(cx - r), int(cy - r)), mask)
+    # holographic ring: the chrome shifts around the circle
+    _holo_ring(d, cx, cy, r, max(3, int(s * 0.028)))
+    r2 = s * 0.345
+    _holo_ring(d, cx, cy, r2, 2,
+               ("#e879f9", "#8b5cf6", "#3b82f6", "#22d3ee"))
+    # tiny orbiting sparkles on the glow field
+    for ang, scol in ((35, "#22d3ee"), (155, "#8b5cf6"), (275, "#e879f9")):
+        a = math.radians(ang)
+        ox = cx + math.cos(a) * s * 0.47
+        oy = cy + math.sin(a) * s * 0.47
+        sp = icon_spark(20, color=scol)
+        im.paste(sp, (int(ox - 10), int(oy - 10)), sp)
+    return im
+
+
 def android_emblem(size=170, ring="#38b6ff"):
     """The android inside a glowing badge - the one hero emblem per meme."""
     s = size
@@ -483,8 +528,8 @@ def ai_backdrop(img):
 
 def kicker_ai(img, y, text):
     """Kicker on a holographic pill, flanked by AI sparkles — the AI
-    template signature. (The android appears exactly once per meme,
-    as the emblem top-right.)"""
+    template signature. (Spencer appears exactly once per meme,
+    as the badge top-right.)"""
     d = ImageDraw.Draw(img)
     kf = font(FB, 25)
     tw = d.textlength(text, font=kf) + 3 * (len(text) - 1)
@@ -634,9 +679,19 @@ def render_meme(content, photo_path=None, out_path="meme.png", brand=None):
         wx += d.textlength(word, font=f) + 10
     d.text((x, 104), b["tagline"], font=font(FR, 21), fill=GRAY)
 
-    # android emblem standing watch, top right — the one robot on the meme
-    emb = android_emblem(150)
-    img.paste(emb, (W - 30 - 150, 22), emb)
+    # Spencer standing watch, top right — the one mascot on the meme.
+    # CTA above, his name below.
+    _scx = W - 130
+    for _i, _line in enumerate(SPENCER_CTA):
+        _f = font(FB, 16)
+        _tw = d.textlength(_line, font=_f)
+        d.text((_scx - _tw / 2, 14 + _i * 22), _line, font=_f,
+               fill="#0a7fd4" if _i else INK)
+    badge = spencer_badge(120)
+    img.paste(badge, (_scx - 60, 58), badge)
+    _nf = font(FB, 18)
+    _nw = d.textlength("SPENCER", font=_nf)
+    d.text((_scx - _nw / 2, 182), "SPENCER", font=_nf, fill=INK)
     d = ImageDraw.Draw(img)
 
     # kicker with AI emblems (robot + spark)

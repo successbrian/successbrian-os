@@ -95,9 +95,13 @@ def resolve_or_create_target(cur, person_id_hint, target_name, platform):
             return row[0]
     norm = _norm_name(target_name)
     if norm:
+        # Index-safe: hits idx_people_name_lower_concat
+        # (btree on lower(first_name)||' '||lower(last_name)). Whitespace is
+        # normalized in Python; the query must not wrap the expression or the
+        # 211M-row table falls back to a seq scan (caught in e2e 2026-10-10).
         cur.execute(
             "SELECT id FROM people.people "
-            "WHERE lower(regexp_replace(first_name || ' ' || last_name, '\\s+', ' ', 'g')) = %s "
+            "WHERE (lower(first_name) || ' ' || lower(last_name)) = %s "
             "ORDER BY id LIMIT 3",
             (norm,),
         )

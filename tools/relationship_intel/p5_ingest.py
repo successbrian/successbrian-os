@@ -230,9 +230,12 @@ def match_or_create(cur, name, handle, platform, mission_id):
             log(f"handle conflict @{handle}: OCR name '{name}' vs stored '{stored}' "
                 "-> new tagged row")
     if name:
+        # Index-safe: hits idx_people_name_lower_concat
+        # (btree on lower(first_name)||' '||lower(last_name)). The naive
+        # regexp_replace version seq-scans 211M rows (caught in e2e 2026-10-10).
         cur.execute(
             "SELECT id FROM people.people "
-            "WHERE lower(regexp_replace(first_name || ' ' || last_name, '\\s+', ' ', 'g')) = %s "
+            "WHERE (lower(first_name) || ' ' || lower(last_name)) = %s "
             "ORDER BY id LIMIT 3",
             (_norm_name(name),),
         )

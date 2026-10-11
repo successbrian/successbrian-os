@@ -32,6 +32,22 @@ CREATE TABLE IF NOT EXISTS people.field_capture_missions (
 CREATE INDEX IF NOT EXISTS idx_fcm_status
     ON people.field_capture_missions (status);
 
+-- 2026-10-10 (P5 e2e finding): connection_name relaxed to nullable.
+-- Field captures legitimately yield handle-only rows (display name not
+-- visible in the screenshot). The table was empty at build time, so this is
+-- safe. person_id and platform stay NOT NULL.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'people' AND table_name = 'social_connections'
+          AND column_name = 'connection_name' AND is_nullable = 'NO'
+    ) THEN
+        ALTER TABLE people.social_connections
+            ALTER COLUMN connection_name DROP NOT NULL;
+    END IF;
+END
+$$;
 -- Processed-file manifest: per-file OCR/edge stats and per-edge confidence
 -- summary. people.social_connections has no notes column, so confidence lives
 -- here (per-file) and edges carry source='field_capture:<mission_id>'.

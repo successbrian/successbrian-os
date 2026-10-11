@@ -120,9 +120,13 @@ def is_noise_line(line):
 
 
 def extract_deterministic(text):
-    """Regex-first name/handle extraction. Returns [(name, handle_or_None)]."""
-    pairs = []
-    seen = set()
+    """Regex-first name/handle extraction. Returns [(name, handle_or_None)].
+
+    Merges adjacent lines: real friends-list screenshots put the display name
+    on one line and the @handle on the next. A name-only line followed by a
+    handle-only line (or the reverse) is one person.
+    """
+    raw_pairs = []
     for raw in text.splitlines():
         line = raw.strip()
         if is_noise_line(line) or len(line) > 80:
@@ -139,8 +143,28 @@ def extract_deterministic(text):
             name = " ".join(words)
         elif len(words) == 1 and handle and words[0].lower() == handle.lower().replace("_", " ").replace(".", " "):
             name = None  # handle-only row; name unknown
-        key = (name or "", (handle or "").lower())
-        if (name or handle) and key not in seen:
+        if name or handle:
+            raw_pairs.append([name, handle])
+    # merge pass: (name, None) + (None, handle) on adjacent lines -> one person
+    merged = []
+    i = 0
+    while i < len(raw_pairs):
+        name, handle = raw_pairs[i]
+        nxt = raw_pairs[i + 1] if i + 1 < len(raw_pairs) else (None, None)
+        if name and not handle and not nxt[0] and nxt[1]:
+            merged.append((name, nxt[1]))
+            i += 2
+        elif not name and handle and nxt[0] and not nxt[1]:
+            merged.append((nxt[0], handle))
+            i += 2
+        else:
+            merged.append((name, handle))
+            i += 1
+    seen = set()
+    pairs = []
+    for name, handle in merged:
+        key = ((name or "").lower(), (handle or "").lower())
+        if key not in seen:
             seen.add(key)
             pairs.append((name, handle))
     return pairs

@@ -133,6 +133,45 @@ def _brief_act(ctx: dict, dry_run: bool) -> str:
     return f"nudge written: {Path(path).name}"
 
 
+# --- Rule 2b: Sonic strategic brief escalation --------------------------------
+# Fires once per shift: the 17:00-style nudge is live but 30+ min later the
+# brief still hasn't landed. Same one-fire-per-shift discipline as the nudge
+# itself (2026-09-27: identical nudges were noise) — this is a *different*
+# note with new information (the nudge failed), not a repeat.
+def _escalation_check():
+    shift = shift_window_active()
+    if not shift["active"]:
+        return False, {}
+    now = _now()
+    past_due_30 = (now.hour, now.minute) >= (17, 30)  # nudge + 30 min
+    crew = crew_reports()
+    nudge_live = _nudge_live("nudge-sonic-brief")
+    already_escalated = _nudge_live("escalation-sonic-brief")
+    return (past_due_30 and not crew["sonic"] and nudge_live
+            and not already_escalated), {
+        "now": now.isoformat(), "crew": crew, "nudge_live": nudge_live,
+        "already_escalated": already_escalated}
+
+
+def _escalation_confidence(ctx: dict) -> float:
+    return 0.95  # clock + file presence, directly observed
+
+
+def _escalation_act(ctx: dict, dry_run: bool) -> str:
+    body = (
+        "# ESCALATION: strategic brief still missing 30 min after nudge (automation)\n\n"
+        f"Time: {_now().strftime('%H:%M')} — the nudge went unanswered; brief was due 5:00 PM.\n"
+        "Altair: please confirm Sonic (qwen-a3b) is actively drafting the strategic brief, "
+        "or reroute the brief to another crew member. It is the backbone of the 7:30 briefing "
+        "and Brian wakes at 6:30 PM. Conductor verified infra healthy (llama-server live on "
+        "k11-alpha :11439) — this is a task/backlog stall, not an outage.\n"
+    )
+    if dry_run:
+        return "would write escalation note to inbox"
+    path = _inbox_note("escalation-sonic-brief", body)
+    return f"escalation written: {Path(path).name}"
+
+
 # --- Rule 3: crew reports overdue (6pm) ---------------------------------------
 def _crew_check():
     shift = shift_window_active()
@@ -342,6 +381,8 @@ RULES: list[Rule] = [
     Rule("v4pro_routing", _v4pro_check, _v4pro_confidence,
          _v4pro_act, reversible=True, tags=["routing", "v4pro"]),    Rule("sonic_brief_overdue", _brief_check, _brief_confidence,
          _brief_act, reversible=True, tags=["sunday-shift", "crew"]),
+    Rule("sonic_brief_escalation", _escalation_check, _escalation_confidence,
+         _escalation_act, reversible=True, tags=["sunday-shift", "crew"]),
     Rule("crew_reports_overdue", _crew_check, _crew_confidence,
          _crew_act, reversible=True, tags=["sunday-shift", "crew"]),
     Rule("disk_pressure_alpha", _disk_check, _disk_confidence,

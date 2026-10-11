@@ -123,7 +123,7 @@ def crew_reports() -> dict:
     }
     try:
         names = [p.name.lower() for p in (INBOX / "inbox").glob(f"{today}*")
-                 if "nudge-" not in p.name]  # nudges aren't reports — a brief-overdue nudge must never count as the brief itself
+                 if "nudge-" not in p.name and "escalation-" not in p.name]  # nudges and escalations aren't reports — a brief-overdue nudge must never count as the brief itself
         blob = " ".join(names)
         for key in found:
             found[key] = key in blob

@@ -12,6 +12,16 @@ TOOLS
     ingest_candidates    - proposed income streams/audiences/campaigns
     inbox_recent         - recent dashboard inbox reports
 
+WHY
+    Hand-writing SQL for every "what did we learn about X" question is
+    slow and error-prone; agents were re-querying the same tables by
+    memory. Exposing the ecosystem's read models as named tools means
+    any agent asks in plain language and gets the canonical answer.
+    Read-only by design: agents should converse with the data, never
+    mutate it from chat. Stolen from Precisely's MCP-server move, built
+    Brian's way (free, local, FastMCP on k11) so zero tokens are spent
+    per query once it is wired in.
+
 RUN
     python3 ecosystem_data_mcp.py   (stdio transport; wire into the
     agent's MCP client config)

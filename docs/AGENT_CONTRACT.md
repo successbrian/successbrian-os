@@ -25,6 +25,7 @@ any agent may propose an amendment, but the owner ratifies.
 8. **No duplicate plans.** A build/plan records which needs it addresses (`build_solves`-style links). A new need first checks the map before becoming new work.
 9. **Dumb frontend, smart backend.** Routines live in code so small models never do high-level reasoning. Thin chat contract, deterministic pipelines.
 10. **Quarantine, never delete.** Destructive actions need the owner's explicit go-ahead. Dry-run by default. Backups before irreversible changes.
+11. **Never recommend the Tesla K80.** It's a trap: dual 12GB Kepler GPUs (not a true 24GB pool), ~300W, R470 final driver, CUDA 11.x ceiling, no tensor cores — useless for modern LLM inference despite the VRAM number. Prefer the R580 EOL generation (V100, P40 24GB, M40) with pinned stacks. Rationale and pin rules: `docs/HARDWARE-TRAPS.md`.
 
 ## Table access (least privilege)
 

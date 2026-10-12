@@ -391,7 +391,7 @@ MN_SENATE_POLLS = [  # (date_label, dem_pct, gop_pct), chronological
 ]
 MN_SENATE_DEM = "Flanagan (D)"
 MN_SENATE_GOP = "Tafoya (R)"
-MN_SENATE_FOOTER = "RCP AVG: FLANAGAN +1.6 • TOSS-UP"
+MN_SENATE_FOOTER = "RCP AVG: FLANAGAN +2.2 • TOSS-UP"
 
 
 def _days_until(post_date, election_day):

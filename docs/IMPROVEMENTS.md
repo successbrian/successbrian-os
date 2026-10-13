@@ -68,3 +68,6 @@ Every day, this repo gets a little better. Each entry: what changed and why.
 
 ## 2026-10-12
 - Module docstrings brought to CODE-STANDARDS (PURPOSE/WHY/CALLED BY/NOTES) — WHY mandatory: added full package docstring to tools/ingest/__init__.py (was empty), expanded tools/crypto-intel/intel/__init__.py and tools/crypto-intel/testing/__init__.py from "intentionally minimal" to include WHY (intel vs testing split rationale, paper-only rule) + CALLED BY/NOTES, added WHY section to tools/mcp/ecosystem_data.py (why named tools beat hand-written SQL, read-only-by-design). Docstring-only edits, py_compile + WHY-scan clean, no unused imports in touched files. Why it matters: next agent can tell load-bearing behavior from accidental behavior from the docstring alone — Brian's rule.
+
+## 2026-10-13
+- Nothing qualified for a safe improvement: `py_compile` clean on all modules, no code TODO/FIXME/HACK markers, zero missing module docstrings, no removable unused imports (only `from __future__ import annotations` directives, intentional per 2026-09-28), today's pull (board needs-pass retries, HARDWARE-TRAPS.md, automate rules) already docstring'd and lint-clean, README/docs current — left the repo untouched rather than manufacture churn.

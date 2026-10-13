@@ -17,7 +17,8 @@ atomic claiming (UPDATE ... WHERE status='queued') makes N workers safe.
 DealsDesk provisions the VM templates; this script only starts/stops.
 
 Usage: capacity_reconciler.py [--live]
-Cron: every 30 min, staggered (9,39).
+Cron: every 2 hours (52 */2), ~30 min after the demand meter. Fleet VMs track
+sustained demand, not bursts — slower cadence avoids flapping.
 """
 import argparse, json, subprocess, sys
 from datetime import datetime, timezone

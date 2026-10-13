@@ -21,7 +21,9 @@ Models on the board:
   vision                   — multimodal (planned, supplied somehow)
 
 Usage: demand_meter.py [--dry-run]
-Cron: every 30 min, staggered off other jobs.
+Cron: every 2 hours (22 */2), staggered off other jobs. Demand changes on an
+hours timescale; 12 samples/day is plenty for trend analysis. The 30-min
+harness worker (with v4pro surge cap) handles bursts.
 """
 import argparse, json, math, subprocess, sys
 from datetime import datetime, timezone

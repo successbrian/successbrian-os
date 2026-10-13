@@ -69,10 +69,19 @@ Report the ranked list to Brian — he funds in order.
 ## VM lifecycle
 
 - New worker VMs are defined by DealsDesk (config above, source=proxmox-vm).
-- `proxmox_ctl.py` performs start/stop/shutdown. Dry-run default; --live acts.
+  Sonic worker VM spec MUST include: harness_worker.py --engine sonic on a
+  30-min cron (staggered per VM), VM name prefix `sonic-worker-`.
+- `proxmox_ctl.py` performs start/stop/shutdown/list (--json for machines).
+  Dry-run default; --live acts.
+- `capacity_reconciler.py` (cron :09/:39) closes the loop for Sonic: desired
+  workers come from the open "sonic inference capacity" signal qty; it starts
+  stopped sonic-worker-* VMs up to desired, stops extras when the queue is
+  drained. Ceiling 12 (screams to Brian if demand exceeds it). Dry-run
+  default; --live acts. Brian's order 2026-10-13: "if sonic is needed a lot
+  we fire up as many vms everywhere as needed."
 - Needs PROXMOX_HOST + PROXMOX_TOKEN in the environment on the control node.
-- v1: humans approve each scale action. v2 (Brian's call): auto-reconcile
-  desired vs actual from the approved capacity plan.
+- v1: reconciler dry-runs until Brian flips --live. Auto-scale of OTHER
+  models (150B, Qwen3.8, GLM5.3, shakespeare) = later, same pattern.
 
 ## Efficiency objective (the whole point)
 

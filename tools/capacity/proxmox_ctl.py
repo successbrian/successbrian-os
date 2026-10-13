@@ -68,7 +68,7 @@ def resolve_vm(c, ident):
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("list"); p.add_argument("--node")
+    p = sub.add_parser("list"); p.add_argument("--node"); p.add_argument("--json", action="store_true")
     p = sub.add_parser("status"); p.add_argument("vm")
     for name in ("start", "stop", "shutdown"):
         p = sub.add_parser(name); p.add_argument("vm"); p.add_argument("--live", action="store_true")
@@ -78,11 +78,20 @@ def main():
     if a.cmd == "list":
         nodes = [a.node or c["node"]] if (a.node or c["node"]) else [
             n["node"] for n in api(c, "GET", "/nodes")]
+        out = []
         for node in nodes:
-            print(f"== {node} ==")
+            if not a.json:
+                print(f"== {node} ==")
             for vm in api(c, "GET", f"/nodes/{node}/qemu"):
-                print(f"  {vm['vmid']:>5}  {vm.get('status','?'):>8}  {vm.get('name','-')}  "
-                      f"cpus={vm.get('cpus','?')} mem={vm.get('maxmem',0)//1024//1024}MB")
+                rec = {"node": node, "vmid": vm["vmid"], "name": vm.get("name", "-"),
+                       "status": vm.get("status", "?"),
+                       "cpus": vm.get("cpus"), "mem_mb": vm.get("maxmem", 0) // 1024 // 1024}
+                out.append(rec)
+                if not a.json:
+                    print(f"  {vm['vmid']:>5}  {vm.get('status','?'):>8}  {vm.get('name','-')}  "
+                          f"cpus={vm.get('cpus','?')} mem={vm.get('maxmem',0)//1024//1024}MB")
+        if a.json:
+            print(json.dumps(out))
         return
 
     node, vmid, name, status = resolve_vm(c, a.vm)

@@ -304,6 +304,44 @@ def engine_ready(engine, key):
     return True, "V4 Pro usable (balance $%.2f)" % avail.get("usd", 0)
 
 
+def bridge_scream(subject, body):
+    """File a scream on the live bridge. Silence is never just logged."""
+    b = ("STARVATION-ALARM " + body).replace("'", "''")
+    s = subject.replace("'", "''")
+    exec_sql(f"INSERT INTO altair.knowledge_bridge (sender, target, subject, body, urgency) "
+             f"VALUES ('harness-worker','dealsdesk','{s}','{b}','important')")
+
+
+def starvation_diagnostic(engine, key):
+    """Queue claimed empty. Brian's law: silence is a 5-alarm until proven
+    healthy. Diagnose: is the engine actually reachable, or is the worker
+    blind? Scream if broken; log the verdict if genuinely idle."""
+    # independent second probe of the engine endpoint
+    if engine == "sonic":
+        engine_up = sonic_available()
+        engine_name = "sonic :11439"
+    else:
+        avail = get_availability()
+        engine_up = bool(key) and bool(avail.get("usable"))
+        engine_name = "V4 Pro API"
+    # race-safe recount
+    left = query("SELECT count(*) FROM successbrian_os.harness_jobs "
+                 "WHERE status = 'queued';").strip()
+    # feeder freshness: when was work last filed?
+    last_filed = query("SELECT coalesce(max(created_at)::text,'never') "
+                       "FROM successbrian_os.harness_jobs;").strip()
+    if not engine_up:
+        msg = ("%s unreachable at idle check — worker blind, not idle. "
+               "queue=%s last_filed=%s" % (engine_name, left, last_filed))
+        print("STARVED-BROKEN: " + msg)
+        bridge_scream("harness worker starved: %s down" % engine, msg)
+        return 1
+    print("idle-healthy: queue=%s confirmed empty, %s up, last job filed %s. "
+          "Feeder (heartbeat decomposition) owns backlog refill."
+          % (left, engine_name, last_filed))
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--engine", choices=["v4pro", "sonic"], default="v4pro")
@@ -320,8 +358,9 @@ def main():
         return 0
     claimed = claim_jobs(engine, adaptive_cap(engine))
     if not claimed:
-        print("harness queue empty for %s — nothing to do" % engine)
-        return 0
+        # Brian's law: an empty queue is a 5-alarm until proven healthy.
+        # Diagnose before declaring idle — never just log "nothing to do".
+        return starvation_diagnostic(engine, key)
     print("%s — %d job(s) claimed" % (reason, len(claimed)))
     for jid in claimed:
         ok, why = engine_ready(engine, key)

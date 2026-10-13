@@ -26,7 +26,7 @@ Version: 1.0 — 2026-10-13.
 | deepseek-150b-reap | deep | no | planned: MS-02 + dual B70 |
 | qwen-3.8-flash | deep | no | planned: Strata, Mantis-3/4 dual-V100 |
 | glm-5.3-flash | deep | no | planned: Strata fork, Mantis-3/4 dual-V100 |
-| shakespeare | content | no | content workflow ONLY — excluded from capacity signals |
+| shakespeare | large | no | 70B-class local; content factory is one consumer, ecosystem routes 70B-class work as difficulty='large' |
 | vision | multimodal | no | supply TBD ("supplied somehow") |
 
 Columns: `measured_at, model, tier, queue_depth, throughput_per_hr,

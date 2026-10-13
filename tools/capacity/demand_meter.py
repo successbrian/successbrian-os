@@ -15,7 +15,9 @@ Models on the board:
   deepseek-150b-reap       — deep tier (planned local)
   qwen-3.8-flash           — deep tier (planned local, Strata)
   glm-5.3-flash            — deep tier (planned local, Strata fork)
-  shakespeare              — content workflow (tracked, excluded from capacity signals)
+  shakespeare              — 70B tier (free, local planned): the content factory is
+                           one consumer; the ecosystem can also route 70B-class work
+                           to it (difficulty='large' harness jobs)
   vision                   — multimodal (planned, supplied somehow)
 
 Usage: demand_meter.py [--dry-run]
@@ -36,6 +38,14 @@ THRESHOLDS = {
                         "24/7 local LLM inference, 35B-class (Qwen3.6-35B-A3B Q6_K or equiv), "
                         "OpenAI-compatible endpoint. qty = concurrent workers needed to drain "
                         "trailing backlog at observed throughput.")},
+    "shakespeare": {"queue_ge": 12, "item": "shakespeare 70B inference capacity", "priority": 6,
+               "spec": ("Generic workload spec (interpreting agent selects hardware): "
+                        "local 70B-class LLM inference (Llama-3.3-70B or equiv). Serves TWO "
+                        "consumers: (1) the content factory (blog network batch pipeline), "
+                        "which is its own system with its own queue; (2) ecosystem 70B-class "
+                        "work routed as difficulty='large' harness jobs — work that beats "
+                        "35B quality without burning paid cloud tokens. qty = concurrent "
+                        "workers to drain trailing backlog at observed throughput.")},
 }
 
 def q(sql):
@@ -114,9 +124,33 @@ def main():
         m[planned] = {"tier": "deep", "paid": False, "queue_depth": 0,
                       "throughput_per_hr": 0.0, "est_cost_usd_per_hr": 0.0,
                       "note": why}
-    m["shakespeare"] = {"tier": "content", "paid": False, "queue_depth": 0,
-                        "throughput_per_hr": 0.0, "est_cost_usd_per_hr": 0.0,
-                        "note": "content workflow only — excluded from capacity signals"}
+    # --- shakespeare: 70B tier — content factory AND ecosystem demand ---
+    # Content side: the content system is its own consumer (os_content_queue backlog).
+    # Ecosystem side: harness jobs with difficulty='large' (70B-class work that
+    # beats sonic quality without burning paid V4 Pro tokens). Routers may assign
+    # difficulty='large'; the meter counts it here.
+    content_q = int(scalar(
+        "SELECT count(*) FROM public.os_content_queue WHERE status='queued'"))
+    brief_q = int(scalar(
+        "SELECT count(*) FROM public.content_brief_queue WHERE completed_at IS NULL"))
+    large_q = int(scalar(
+        "SELECT count(*) FROM successbrian_os.harness_jobs "
+        "WHERE status IN ('queued','working') AND difficulty='large'"))
+    content_tp = float(scalar(
+        "SELECT round(count(*)::numeric/24,2) FROM public.os_content_queue "
+        "WHERE published_at > now() - interval '24 hours'"))
+    large_tp = float(scalar(
+        "SELECT round(count(*)::numeric/24,2) FROM successbrian_os.harness_jobs "
+        "WHERE status='done' AND difficulty='large' "
+        "AND completed_at > now() - interval '24 hours'"))
+    m["shakespeare"] = {
+        "tier": "large", "paid": False,
+        "queue_depth": content_q + brief_q + large_q,
+        "throughput_per_hr": round(content_tp + large_tp, 2),
+        "est_cost_usd_per_hr": 0.0,
+        "note": (f"70B demand: content queue={content_q} briefs={brief_q} "
+                 f"ecosystem-large-jobs={large_q}; content factory is one consumer"),
+    }
 
     # --- write measurements ---
     for model, d in m.items():

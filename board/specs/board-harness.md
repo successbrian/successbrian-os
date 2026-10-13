@@ -30,8 +30,12 @@ forks the harness.
    instrumentation backlog (new pullers/reports to build — the board's
    standing "recommend instrumenting it" rule, now with a paper trail).
    The morning brief's shared context carries answered DETAILs plus the
+   The morning brief's shared context carries answered DETAILs plus the
    open REPORT backlog. The needs-pass waits on the model API like the
-   session does.
+   session does. Transport errors retry without bound; thin (starved-model)
+   output — unlabeled fragments under 100 chars — retries 3 times, then is
+   accepted with a loud warning so a starved model can't silently zero out
+   the queue. A labeled answer is always accepted, even "NEEDS: nothing".
 1. **Brief** (≤15 min): BriefBuilder runs the pullers named in the seats'
    `brief_keys` plus shared context (night-shift report, recent decisions,
    overnight research answers). Missing state → explicit `NOT INSTRUMENTED`,

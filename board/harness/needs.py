@@ -43,6 +43,28 @@ NEEDS_RE = re.compile(r"^\s*NEEDS\s*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE
 SATISFIED_RE = re.compile(r"^\s*SATISFIED\s*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 REPORT_RE = re.compile(r"^\s*REPORT\s*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 DETAIL_RE = re.compile(r"^\s*DETAIL\s*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+LABELED_RE = re.compile(r"^\s*(REPORT|DETAIL|NEEDS|SATISFIED)\s*:",
+                        re.IGNORECASE | re.MULTILINE)
+
+# Thin-output retry bound: transport errors wait forever (Brian 2026-10-08),
+# but a starved model returning fragments gets 3 retries, then we accept and
+# log loudly rather than hang the evening pass.
+THIN_MAX_RETRIES = 3
+THIN_MIN_CHARS = 100
+
+
+def is_thin(raw: str) -> bool:
+    """True when the model output looks starved/truncated, not considered.
+
+    A labeled answer (REPORT:/DETAIL:/NEEDS:/SATISFIED:) is always considered,
+    even "NEEDS: nothing". An unlabeled fragment under THIN_MIN_CHARS is thin.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return True
+    if LABELED_RE.search(text):
+        return False
+    return len(text) < THIN_MIN_CHARS
 
 
 @dataclass
@@ -143,8 +165,11 @@ class NeedsCollector:
             print(f"[needs] asking {seat.title} ...", flush=True)
             previous = read_recent_needs(seat.title, self.out_dir)
             # Blocking wait like the morning session: a slow API is waited
-            # on, never skipped (Brian 2026-10-08).
+            # on, never skipped (Brian 2026-10-08). Thin (starved-model)
+            # output gets bounded retries — a labeled answer is always
+            # accepted, even "NEEDS: nothing".
             attempt, backoff = 0, self.worker.retry_base_s
+            thin_attempts = 0
             raw = ""
             while True:
                 attempt += 1
@@ -152,12 +177,26 @@ class NeedsCollector:
                     raw = self.worker._post(
                         self.worker._payload(seat.system_prompt(),
                                              self._needs_prompt(seat, previous)))
-                    break
                 except Exception:  # noqa: BLE001 - wait, retry
                     print(f"[needs] {seat.title}: attempt {attempt} transport "
                           f"error; waiting {backoff:.0f}s", flush=True)
                     time.sleep(backoff)
                     backoff = min(backoff * 2, self.worker.retry_cap_s)
+                    continue
+                if is_thin(raw) and thin_attempts < THIN_MAX_RETRIES:
+                    thin_attempts += 1
+                    print(f"[needs] {seat.title}: thin output "
+                          f"({len(raw.strip())} chars, no labeled lines); "
+                          f"thin retry {thin_attempts}/{THIN_MAX_RETRIES} "
+                          f"after {backoff:.0f}s", flush=True)
+                    time.sleep(backoff)
+                    backoff = min(backoff * 2, self.worker.retry_cap_s)
+                    continue
+                if is_thin(raw):
+                    print(f"[needs] {seat.title}: WARNING still thin after "
+                          f"{THIN_MAX_RETRIES} retries; accepting as-is",
+                          flush=True)
+                break
             needs = parse_needs(raw)
             # Review step: SATISFIED lines close out previous requests whose
             # answers/reports met the seat's goal.

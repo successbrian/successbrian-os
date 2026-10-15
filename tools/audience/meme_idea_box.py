@@ -31,10 +31,10 @@ NOTES:
       Sonic once after 60s; if it still yields zero finals it writes a
       dated fallback note (never fails silently). Every run also writes
       /home/successbrian/meme-ideas/YYYY-MM-DD.md and posts the 4 ideas
-      to Brian's Telegram via scripts/tg_post.py — so Brian gets the ideas
-      even if the Hatch link is dead. The Hatch 18:45 chat read is the
-      primary interactive path (he picks numbers in chat); duplicates
-      across Telegram + chat are acceptable, missing the ideas is not.
+      to successbrian_os.pending_questions — so Brian picks numbers in his
+      dashboard Inbox (per Brian 2026-10-10: no Telegram sends, DB -> inbox
+      is the delivery path). The inbox fragment is rebuilt and pushed to
+      Node Zero right after insert, so it shows the same evening.
     - TWO-STAGE GENERATION (Brian's routing principle: Sonic does what it
       can, V4 Pro assists): step 1, Sonic drafts the 4 contrasts;
       step 2, maybe_sharpen_with_v4pro() sends the drafts for a polish
@@ -64,6 +64,7 @@ DBNAME = os.environ.get("MEME_IDEA_DB", "ecosystem_central")
 SONIC_URL = os.environ.get("SONIC_URL", "http://localhost:11439/v1/chat/completions")
 SONIC_MODEL = os.environ.get("SONIC_MODEL", "qwen-a3b")
 IDEAS_DIR = os.environ.get("MEME_IDEAS_DIR", "/home/successbrian/meme-ideas")
+# TG_POST retired 2026-10-10 per Brian: no Telegram sends; delivery is DB -> dashboard inbox.
 TG_POST = os.environ.get("TG_POST", "/home/successbrian/scripts/tg_post.py")
 
 RSS_FEEDS = [
@@ -457,28 +458,103 @@ def write_ideas_file(idea_date, ideas, headlines, raw_lines,
     return path
 
 
-def deliver_telegram(idea_date, ideas, failed=False):
-    """k11-native delivery — no Hatch involvement. Uses the established
-    tg_post.py pattern (token from file, never logged)."""
+def deliver_to_inbox(idea_date, ideas, failed=False, fail_reason=""):
+    """Dashboard-inbox delivery — no Telegram (per Brian 2026-10-10).
+
+    Success: one row in successbrian_os.pending_questions with option
+    buttons (1/2/3/4/All 4/Skip) so Brian picks in his dashboard Inbox.
+    Failure: one row in successbrian_os.reports (informational).
+    Then rebuilds + pushes the inbox fragment so it shows the same evening.
+    """
     if failed:
-        text = (f"Meme ideas {idea_date}: tonight's generation failed "
-                f"(Sonic unreachable). Raw intake saved to {IDEAS_DIR}/"
-                f"{idea_date}.md — check it for the raw hooks.")
+        title = f"Meme ideas {idea_date}: generation failed"
+        body = (f"Tonight's generation failed ({fail_reason or 'Sonic unreachable'}). "
+                f"Raw intake saved to {IDEAS_DIR}/{idea_date}.md — check it for the raw hooks.")
+        try:
+            if _have_psycopg2():
+                conn = _pg_conn()
+                cur = conn.cursor()
+                cur.execute(
+                    "INSERT INTO successbrian_os.reports "
+                    "(report_type, title, body, source, priority) "
+                    "VALUES ('meme', %s, %s, 'altair', 1)",
+                    (title, body))
+                cur.close(); conn.close()
+            else:
+                q = lambda s: (s or "").replace("'", "''")
+                _psql(f"INSERT INTO successbrian_os.reports "
+                      f"(report_type, title, body, source, priority) VALUES "
+                      f"('meme', '{q(title)}', '{q(body)}', 'altair', 1)")
+            print(f"inbox: posted failure report for {idea_date}")
+        except Exception as e:
+            print(f"inbox delivery failed: {e}", file=sys.stderr)
+            return
     else:
-        parts = [f"Tonight's 4 meme ideas ({idea_date}):", ""]
+        parts = []
         for i, it in enumerate(ideas, 1):
             parts.append(f"{i}. {it.get('headline', '')}")
             if it.get("punchline"):
-                parts.append(f"   \"{it['punchline']}\"")
-        parts += ["", "Reply with the number(s) to render."]
-        text = "\n".join(parts)
+                parts.append(f'   "{it.get("punchline", "")}"')
+            if it.get("angle"):
+                parts.append(f"   Angle: {it.get('angle', '')}")
+            parts.append("")
+        context = "\n".join(parts).strip()
+        question = f"Meme ideas {idea_date} — pick number(s) to render"
+        options = [{"label": "1"}, {"label": "2"}, {"label": "3"},
+                   {"label": "4"}, {"label": "All 4"}, {"label": "Skip"}]
+        try:
+            if _have_psycopg2():
+                conn = _pg_conn()
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT id FROM successbrian_os.pending_questions "
+                    "WHERE asked_by='altair' AND status='open' "
+                    "AND question LIKE %s LIMIT 1",
+                    (f"Meme ideas {idea_date}%",))
+                if cur.fetchone():
+                    print(f"inbox: question for {idea_date} already open, skipping duplicate")
+                    cur.close(); conn.close()
+                    return
+                cur.execute(
+                    "INSERT INTO successbrian_os.pending_questions "
+                    "(asked_by, question, context, options, priority) "
+                    "VALUES ('altair', %s, %s, %s, 2) RETURNING id",
+                    (question, context, json.dumps(options)))
+                qid = cur.fetchone()[0]
+                cur.close(); conn.close()
+            else:
+                q = lambda s: (s or "").replace("'", "''")
+                existing = _psql(
+                    f"SELECT id FROM successbrian_os.pending_questions "
+                    f"WHERE asked_by='altair' AND status='open' "
+                    f"AND question LIKE 'Meme ideas {q(idea_date)}%' LIMIT 1")
+                if existing:
+                    print(f"inbox: question for {idea_date} already open, skipping duplicate")
+                    return
+                qid = _psql(
+                    f"INSERT INTO successbrian_os.pending_questions "
+                    f"(asked_by, question, context, options, priority) VALUES "
+                    f"('altair', '{q(question)}', '{q(context)}', "
+                    f"'{q(json.dumps(options))}'::jsonb, 2) RETURNING id")
+            print(f"inbox: posted pending_question id={qid} for {idea_date}")
+        except Exception as e:
+            print(f"inbox delivery failed: {e}", file=sys.stderr)
+            return
+
+    # Rebuild + push the inbox fragment so Brian sees it tonight
     try:
-        p = subprocess.run(["/usr/bin/python3", TG_POST], input=text,
-                           capture_output=True, text=True, timeout=60)
-        out = p.stdout.strip() or p.stderr.strip()
-        print(f"telegram: {out}")
+        subprocess.run(
+            ["/usr/bin/python3",
+             "/home/successbrian/successbrian-os/tools/dashboard/build_unified_inbox.py"],
+            timeout=120)
+        subprocess.run(
+            ["/usr/bin/scp", "-o", "ConnectTimeout=10",
+             "/home/successbrian/dashboard-fragments/inbox-unified.html",
+             "root@100.118.196.66:/var/www/fleet-builds/inbox-unified.html"],
+            timeout=60)
+        print("inbox: fragment rebuilt + pushed to Node Zero")
     except Exception as e:
-        print(f"telegram delivery failed: {e}", file=sys.stderr)
+        print(f"inbox fragment push failed (non-fatal): {e}", file=sys.stderr)
 
 
 def synthesize_with_sonic(idea_date, headlines, raw_lines, log):
@@ -542,7 +618,7 @@ def cmd_generate(args):
         log(f"GENERATION FAILED after 2 attempts: {last_err}")
         write_ideas_file(idea_date, [], headlines, raw_lines,
                          failed=True, fail_reason=str(last_err))
-        deliver_telegram(idea_date, [], failed=True)
+        deliver_to_inbox(idea_date, [], failed=True, fail_reason=str(last_err))
         return []
 
     # STAGE 2: V4 Pro sharpens Sonic's drafts (active while the rental is
@@ -577,7 +653,7 @@ def cmd_generate(args):
 
     # k11-native delivery paths (no Hatch needed)
     write_ideas_file(idea_date, ideas, headlines, raw_lines)
-    deliver_telegram(idea_date, ideas)
+    deliver_to_inbox(idea_date, ideas)
 
     for i, it in enumerate(ideas, 1):
         print(f"\n{i}. {it.get('headline', '')}")

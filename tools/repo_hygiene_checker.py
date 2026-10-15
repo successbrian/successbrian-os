@@ -163,9 +163,9 @@ def alert_altair(c):
                c["name"], c["notes"] or "see table",
                c.get("staged_count", 0), c.get("unmerged_count", 0),
                c.get("unstaged_count", 0), c.get("untracked_count", 0)))
-    sql = ("INSERT INTO public.knowledge_bridge "
-           "(source_agent, target_agent, message, urgency, created_at) VALUES "
-           "('repo-hygiene-checker', 'altair', %s, 'high', now());" % pq(msg))
+    sql = ("INSERT INTO altair.knowledge_bridge "
+           "(sender, target, subject, body, urgency) VALUES "
+           "('repo-hygiene-checker', 'altair', '[repo-hygiene] dirty git state', %s, 'important');" % pq(msg))
     r = subprocess.run(PSQL + ["-c", sql], capture_output=True, text=True, timeout=30)
     if r.returncode != 0:
         print("bridge alert failed: %s" % r.stderr.strip()[:200], file=sys.stderr)

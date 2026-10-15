@@ -51,12 +51,12 @@ def main():
     stale_work = one("""SELECT COUNT(*) FROM successbrian_os.work_queue
                         WHERE status='claimed' AND claimed_at < NOW() - INTERVAL '24 hours'""")
     intel_waiting = one("""SELECT COUNT(*) FROM successbrian_os.intel_buffer
-                           WHERE addressed_to IN ('meghan-alpha','all') AND read_at IS NULL""")
+                           WHERE addressed_to IN ('meghan-ceo','meghan-alpha','all') AND read_at IS NULL""")
     # liveness: has Meghan's wake written anything in the last 2h?
     alive = one("""SELECT COUNT(*) FROM successbrian_os.ceo_heartbeats
                    WHERE source='wake' AND ran_at > NOW() - INTERVAL '2 hours'""")
     decisions = one("""SELECT COUNT(*) FROM successbrian_os.intel_buffer
-                       WHERE source_agent='meghan-alpha' AND category='decision'
+                       WHERE source_agent='meghan-ceo' AND category='decision'
                        AND created_at > NOW() - INTERVAL '24 hours'""")
 
     actions = (f"snapshot: {open_q} open questions ({untriaged} untriaged), "
@@ -67,7 +67,7 @@ def main():
     if int(stale_work) > 0:
         psql(f"""INSERT INTO successbrian_os.intel_buffer
                  (addressed_to, source_agent, category, subject, body)
-                 VALUES ('meghan-alpha','ceo-heartbeat','nudge',
+                 VALUES ('meghan-ceo','ceo-heartbeat','nudge',
                          '{stale_work} work items claimed >24h with no result',
                          'Review successbrian_os.work_queue and reassign or resolve.')""")
         actions += f"; nudged {stale_work} stale claims to intel_buffer"

@@ -14,8 +14,8 @@
 | k11-bravo | 2.5GbE | exporter | Second k11 node |
 | Mantis-1 | X79 dual E5-2650 v2, 64GB DDR3, NVMe RAID0 | exporter | Image-first / video-capable factory |
 | Mantis-2 | X79 dual E5-2650 v2, 64GB DDR3, NVMe RAID0 | exporter | Text factory (Shakespeare 70B lives here, dual M40) |
-| Mantis-3 | X79 dual E5-2650 v2, 64GB DDR3, NVMe RAID0 | exporter | Analysis / strategy box |
-| Mantis-4 | X79 dual E5-2650 v2, 64GB DDR3, NVMe RAID0 | exporter | Training machine |
+| Mantis-3 | X79 dual E5-2650 v2, 64GB DDR3, NVMe RAID0, dual Tesla V100 32GB | exporter | Analysis / strategy box (Sonic-class local) |
+| Mantis-4 | X79 dual E5-2650 v2, 64GB DDR3, NVMe RAID0, dual Tesla V100 32GB | exporter | Training machine (35B QLoRA) |
 | Mantis-5 | dual-LGA2011 build | future exporter | MSV scraping + Vera/enrichment |
 | Mantis-6 | dual-LGA2011 build | future exporter | SearXNG workers + AI analysis |
 | Mantis-7 | dual-LGA2011 build | future exporter | Scraper-fleet overflow (proposed) |
@@ -23,7 +23,10 @@
 | Mantis-9 (DL380 #1) | 2x E5-2670 v2, 128GB DDR3, 4x 1GbE | consumer (+pinch exporter) | Proxmox: 2x 150B inference slices + people.people PostgreSQL slice |
 | Mantis-10 (DL380 #2) | 2x E5-2670 v2, 128GB DDR3, 4x 1GbE | consumer (+pinch exporter) | Proxmox: 2x 150B inference slices + blog app tier slice |
 | Aoostar x2 | 24GB, NVMe, 2.5GbE | exporter | General utility (6 more planned for 4U rack) |
-| MS-02 | Core Ultra 5 235HX, 128GB DDR5 | future | DeepSeek 150B Q4 + dual B70 track (approved) |
+| MS-02 | Core Ultra 5 235HX, 128GB DDR5, Arc Pro B50 | future | 70B-and-up inference node; 150B low-cost on-ramp |
+| EVO-X5 ×1 | Ryzen AI Max+ PRO 495, 192GB LPDDR5X, dual 10GbE, DASH | future | 150B long-term home (Phase 9; becomes cluster node 1) |
+| EVO-X5 ×4 | 4 units in 2U, USB4 V2 daisy-chain, dual 10GbE/node | future | 4× independent 150B or 320B-class cluster (Phase 12; gated on ecosystem readiness) |
+| EVO-X3 ×1 | Ryzen AI Max+ 395, 128GB LPDDR5X, OCuLink | future | Test unit (Phase 8) — Halo/OCuLink/150B eval |
 
 Inference lanes today: 4 (DL380 slices) + MS-02 track. X79s keep their factory jobs.
 

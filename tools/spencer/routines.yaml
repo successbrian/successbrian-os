@@ -1,0 +1,224 @@
+# Spencer routine registry
+# WHY: one catalog of every recurring job Spencer runs — what it does, what it
+#   produces, where output lands. The cron scheduler is the source of truth for
+#   timing; this file is the catalog. Never document a guess as a fact: every
+#   entry must match an actual cron id (see `cron.list`).
+# NOTES: goal-owned routines keep their owner; their output stays in that
+#   goal's workspace per cron policy.
+
+routines:
+  - id: digest-midday
+    cron_id: digest-midday
+    schedule: daily 12:30 America/Chicago
+    purpose: Midday intelligence digest for the Brian->Gemini paste loop
+    produces:
+      tables: [altair.research_digest]
+      files: ["~/workspace/digests/"]
+    owner: null
+
+  - id: digest-evening
+    cron_id: digest-evening
+    schedule: daily 16:45 America/Chicago
+    purpose: Evening intelligence digest for the Brian->Gemini paste loop
+    produces:
+      tables: [altair.research_digest]
+      files: ["~/workspace/digests/"]
+    owner: null
+
+  - id: altair-morning-ping
+    cron_id: altair-morning-ping
+    schedule: weekdays 09:00 America/Chicago
+    purpose: Morning standup ping to Altair (replies, blockers, quiet-watch)
+    produces:
+      tables: []
+      files: []
+    owner: null
+
+  - id: altair-afternoon-ping
+    cron_id: altair-afternoon-ping
+    schedule: weekdays 14:00 America/Chicago
+    purpose: Afternoon standup ping to Altair
+    produces:
+      tables: []
+      files: []
+    owner: null
+
+  - id: altair-checkin-receiver-morning
+    cron_id: altair-checkin-receiver-morning
+    schedule: weekdays 10:42 America/Chicago
+    purpose: Receive and route Altair's morning check-in
+    produces:
+      tables: []
+      files: []
+    owner: goal:a2a-agent-mesh-upgrade
+
+  - id: altair-checkin-receiver-afternoon
+    cron_id: altair-checkin-receiver-afternoon
+    schedule: weekdays 15:42 America/Chicago
+    purpose: Receive and route Altair's afternoon check-in
+    produces:
+      tables: []
+      files: []
+    owner: goal:a2a-agent-mesh-upgrade
+
+  - id: altair-work-review
+    cron_id: altair-work-review
+    schedule: every 12h
+    purpose: Review Altair's bridge output, question-queue entries, and decision writes for accuracy and rule compliance
+    produces:
+      tables: []
+      files: []
+    owner: null
+
+  - id: board-of-directors-daily
+    cron_id: board-of-directors-daily
+    schedule: daily 03:42 America/Chicago
+    purpose: Ephemeral C-suite board session via the board harness
+    produces:
+      tables: []
+      files: []
+    owner: null
+
+  - id: bus-ride-briefing
+    cron_id: bus-ride-briefing
+    schedule: Mon/Tue 05:25 America/Chicago
+    purpose: Morning briefing for Brian's bus ride
+    produces:
+      tables: []
+      files: []
+    owner: goal:bus-ride-morning-briefing
+
+  - id: sunday-shift
+    cron_id: sunday-shift
+    schedule: Sun 15:00 America/Chicago
+    purpose: Sunday sleep-shift planning/strategy/cleanup window
+    produces:
+      tables: []
+      files: []
+    owner: null
+
+  - id: sunday-night-shift
+    cron_id: sunday-night-shift
+    schedule: Sun 21:00 America/Chicago
+    purpose: Sunday night shift — code improvement, hard goals, ecosystem cleanup
+    produces:
+      tables: []
+      files: []
+    owner: null
+
+  - id: sunday-altair-briefing
+    cron_id: sunday-altair-briefing
+    schedule: Sun 19:30 America/Chicago
+    purpose: Altair's weekly briefing to Brian
+    produces:
+      tables: []
+      files: []
+    owner: null
+
+  - id: wealth-accumulator-daily-study
+    cron_id: wealth-accumulator-daily-study
+    schedule: daily 08:42 America/Chicago
+    purpose: Daily wealth-accumulator study (covered calls, forex watch)
+    produces:
+      tables: []
+      files: []
+    owner: goal:covered-call-income-strategy-research
+
+  - id: social-engagement-morning-check
+    cron_id: social-engagement-morning-check
+    schedule: daily 08:00 America/Chicago
+    purpose: Read-only social engagement check across FB/IG/Messenger/Threads
+    produces:
+      tables: [public.social_engagement_reports]
+      files: []
+    owner: goal:100-blog-network-with-huge-social-media-reach
+
+  - id: secret-scan-daily
+    cron_id: secret-scan-daily
+    schedule: daily 04:42 America/Chicago
+    purpose: Deterministic scan of ecosystem code/docs for plaintext credentials (NEW vs baseline only)
+    produces:
+      tables: []
+      files: []
+    owner: null
+
+  - id: 150b-context-refresh
+    cron_id: 150b-context-refresh
+    schedule: daily 04:42 America/Chicago
+    purpose: Refresh the 150B context bundle
+    produces:
+      tables: []
+      files: []
+    owner: null
+
+  - id: ecosystem-recap-sweeper
+    cron_id: ecosystem-recap-sweeper
+    schedule: hourly
+    purpose: Sweep ecosystem recaps into the digest pipeline
+    produces:
+      tables: []
+      files: []
+    owner: null
+
+  - id: meghan-session-sweeper
+    cron_id: meghan-session-sweeper
+    schedule: hourly
+    purpose: Sweep Meghan CEO-agent session output
+    produces:
+      tables: []
+      files: []
+    owner: null
+
+  - id: eod-recap-mon-tue
+    cron_id: eod-recap-mon-tue
+    schedule: Mon/Tue 15:45 America/Chicago
+    purpose: End-of-day recap after CREW2 Mon/Tue shifts
+    produces:
+      tables: []
+      files: []
+    owner: null
+
+  - id: daily-repo-improvements
+    cron_id: daily-repo-improvements
+    schedule: daily 06:00 America/Chicago
+    purpose: Small safe improvements per tracked repo, committed+pushed, logged in docs/IMPROVEMENTS.md
+    produces:
+      tables: []
+      files: []
+    owner: null
+
+  - id: life-calendar-reminders
+    cron_id: life-calendar-reminders
+    schedule: daily 16:00 America/Chicago
+    purpose: Daily life-calendar reminders
+    produces:
+      tables: []
+      files: []
+    owner: null
+
+  - id: spencer-altair-model-tuning
+    cron_id: spencer-altair-model-tuning
+    schedule: every 4h
+    purpose: Model-tuning discussion loop with Altair
+    produces:
+      tables: []
+      files: []
+    owner: goal:home-lab-ai-inference-and-web-server-build
+
+  - id: webinar-scan-daily
+    cron_id: webinar-scan-daily
+    schedule: daily 08:42 America/Chicago
+    purpose: Daily webinar scan for the audience build
+    produces:
+      tables: []
+      files: []
+    owner: goal:100-blog-network-with-huge-social-media-reach
+
+  - id: youtube-hot-videos-daily
+    cron_id: youtube-hot-videos-daily
+    schedule: daily 09:42 America/Chicago
+    purpose: Daily hot-YouTube-videos digest for the audience build
+    produces:
+      tables: []
+      files: []
+    owner: goal:100-blog-network-with-huge-social-media-reach

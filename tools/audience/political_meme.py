@@ -388,6 +388,7 @@ MN_SENATE_POLLS = [  # (date_label, dem_pct, gop_pct), chronological
     ("10/7", 48.0, 45.0),   # Rasmussen Reports, LV n=856, Oct 5-7
     ("10/7b", 45.0, 41.0),  # Morning Consult (D), RV n=1000, Oct 2-7
     ("10/7c", 47.0, 43.0),  # Mason-Dixon (Star Tribune Minnesota Poll), LV n=800, Oct 5-7, released 10/12; 9% undec
+    ("10/12", 45.0, 42.0),   # KSTP/SurveyUSA, LV n=718, Oct 8-12, ±4.2; 4% other, 9% undec
 ]
 MN_SENATE_DEM = "Flanagan (D)"
 MN_SENATE_GOP = "Tafoya (R)"

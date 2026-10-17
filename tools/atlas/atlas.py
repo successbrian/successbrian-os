@@ -86,6 +86,27 @@ def depends(a):
     for d, f, et, o in sorted(rows):
         print(f"  {'  ' * d}{o} -[{et}]-> {f}")
 
+
+def research(a):
+    print("RESEARCH QUEUE - items the ecosystem should help investigate:")
+    rows = psql("SELECT node_key, node_type, name, details FROM atlas.nodes WHERE status='researching' ORDER BY node_key;")
+    if not rows:
+        print("  (queue empty)"); return
+    for line in rows:
+        parts = line.split('	')
+        k, t, n = parts[0], parts[1], parts[2]
+        d = parts[3] if len(parts) > 3 else '{}'
+        print("\n%s [%s] %s" % (k, t, n))
+        try:
+            det = json.loads(d or '{}')
+            if det.get('note'):
+                print("  note: %s" % det['note'])
+        except Exception:
+            pass
+        for eline in psql("SELECT from_node, edge_type, to_node FROM atlas.edges WHERE from_node='%s' OR to_node='%s' ORDER BY edge_type;" % (k.replace("'", "''"), k.replace("'", "''"))):
+            f, et, to = eline.split('	')
+            print("  %s -[%s]-> %s" % (f, et, to))
+
 p = argparse.ArgumentParser()
 sub = p.add_subparsers(dest='cmd', required=True)
 s = sub.add_parser('add-node'); s.add_argument('key'); s.add_argument('type'); s.add_argument('name')
@@ -95,6 +116,7 @@ s = sub.add_parser('show'); s.add_argument('--type'); s.add_argument('--status')
 s = sub.add_parser('edges'); s.add_argument('key')
 s = sub.add_parser('impact'); s.add_argument('key')
 s = sub.add_parser('depends'); s.add_argument('key')
+sub.add_parser('research')
 a = p.parse_args()
 {'add-node': add_node, 'add-edge': add_edge, 'show': show, 'edges': edges,
- 'impact': impact, 'depends': depends}[a.cmd](a)
+ 'impact': impact, 'depends': depends, 'research': research}[a.cmd](a)

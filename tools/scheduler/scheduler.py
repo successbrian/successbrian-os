@@ -307,9 +307,41 @@ def plan_slot(frequency, weight="light", upstream=None, min_gap=10,
             "upstream": upstream or [], "purpose": purpose}
 
 
+def watch():
+    """Self-running audit: file a question only when the schedule degrades.
+    Silent when clean. Deduped like gap_watch."""
+    a = audit()
+    problems = []
+    bad = [c for c in a["collisions"] if c["load"] >= 12]
+    if bad:
+        worst = sorted(bad, key=lambda c: -c["load"])[:3]
+        desc = ", ".join(f":{c['minute']:02d} ({c['load']} load)" for c in worst)
+        problems.append(f"{len(bad)} overloaded minutes, worst: {desc}")
+    if a["sequence_violations"]:
+        problems.append(f"{len(a['sequence_violations'])} sequence violations")
+    if a["unregistered"]:
+        problems.append(f"{len(a['unregistered'])} unregistered jobs")
+    if not problems:
+        return "clean"
+    question = ("Schedule audit found problems: " + "; ".join(problems) +
+                ". Want me to propose a rebalance?")
+    ctx = "scheduler-watch " + "; ".join(problems)
+    rows = pg_query(
+        "SELECT 1 FROM successbrian_os.pending_questions "
+        f"WHERE asked_by='scheduler-watch' AND status='open' LIMIT 1;")
+    if rows:
+        return "already filed"
+    pg_exec(
+        "INSERT INTO successbrian_os.pending_questions "
+        "(asked_by, question, context, priority) VALUES "
+        f"('scheduler-watch', {lit(question)}, {lit(ctx)}, 3);")
+    return "filed: " + "; ".join(problems)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--audit", action="store_true")
+    ap.add_argument("--watch", action="store_true")
     ap.add_argument("--plan", action="store_true")
     ap.add_argument("--frequency", default="hourly")
     ap.add_argument("--weight", default="light")
@@ -319,6 +351,8 @@ def main():
     args = ap.parse_args()
     if args.audit:
         print(json.dumps(audit(), indent=2))
+    elif args.watch:
+        print(watch())
     elif args.plan:
         print(json.dumps(plan_slot(args.frequency, args.weight,
                                    args.upstream, args.min_gap,

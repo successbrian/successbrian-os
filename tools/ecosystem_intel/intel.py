@@ -86,25 +86,33 @@ def record_gotcha(tenant, trap, why, fix):
             f"why=EXCLUDED.why, fix=EXCLUDED.fix;")
 
 
+def pg_json(sql):
+    """Run a SELECT and return rows as dicts (newline-safe via row_to_json)."""
+    import json as _json
+    p = subprocess.run(
+        ["psql", "-t", "-A", "-c",
+         f"SELECT row_to_json(t) FROM ({sql}) t;"],
+        capture_output=True, text=True, env=_pg_env(), timeout=120)
+    if p.returncode != 0:
+        raise RuntimeError(f"pg_json failed: {p.stderr.strip()[:300]}")
+    return [_json.loads(l) for l in p.stdout.strip().split("\n") if l.strip()]
+
+
 def get_digest(tenant, category=None):
     """Everything an agent should know before discovery work."""
     t = lit(tenant)
     cat = f"AND category={lit(category)}" if category else ""
-    facts = [{"key": r[0], "value": r[1], "category": r[2],
-              "confidence": r[3]}
-             for r in pg_query(
-                 "SELECT key, value, category, confidence "
-                 "FROM ecosystem_intel.facts "
-                 f"WHERE tenant_id={t} {cat} ORDER BY category, key;")]
-    howtos = [{"topic": r[0], "summary": r[1], "steps": r[2]}
-              for r in pg_query(
-                  "SELECT topic, summary, steps "
-                  "FROM ecosystem_intel.howtos "
-                  f"WHERE tenant_id={t} ORDER BY topic;")]
-    gotchas = [{"trap": r[0], "why": r[1], "fix": r[2]}
-               for r in pg_query(
-                   "SELECT trap, why, fix FROM ecosystem_intel.gotchas "
-                   f"WHERE tenant_id={t} ORDER BY trap;")]
+    facts = pg_json(
+        "SELECT key, value, category, confidence "
+        "FROM ecosystem_intel.facts "
+        f"WHERE tenant_id={t} {cat} ORDER BY category, key")
+    howtos = pg_json(
+        "SELECT topic, summary, steps "
+        "FROM ecosystem_intel.howtos "
+        f"WHERE tenant_id={t} ORDER BY topic")
+    gotchas = pg_json(
+        "SELECT trap, why, fix FROM ecosystem_intel.gotchas "
+        f"WHERE tenant_id={t} ORDER BY trap")
     return {"facts": facts, "howtos": howtos, "gotchas": gotchas}
 
 
@@ -113,21 +121,24 @@ def find(tenant, query):
     t = lit(tenant)
     q = f"%{query}%"
     out = []
-    for r in pg_query(
-            "SELECT 'fact', key, value FROM ecosystem_intel.facts "
+    for r in pg_json(
+            "SELECT 'fact' AS kind, key, value AS text "
+            "FROM ecosystem_intel.facts "
             f"WHERE tenant_id={t} AND (key ILIKE {lit(q)} "
-            f"OR value ILIKE {lit(q)} OR category ILIKE {lit(q)});"):
-        out.append({"kind": r[0], "key": r[1], "text": r[2]})
-    for r in pg_query(
-            "SELECT 'howto', topic, summary FROM ecosystem_intel.howtos "
+            f"OR value ILIKE {lit(q)} OR category ILIKE {lit(q)})"):
+        out.append(r)
+    for r in pg_json(
+            "SELECT 'howto' AS kind, topic AS key, summary AS text "
+            "FROM ecosystem_intel.howtos "
             f"WHERE tenant_id={t} AND (topic ILIKE {lit(q)} "
-            f"OR summary ILIKE {lit(q)} OR steps ILIKE {lit(q)});"):
-        out.append({"kind": r[0], "key": r[1], "text": r[2]})
-    for r in pg_query(
-            "SELECT 'gotcha', trap, fix FROM ecosystem_intel.gotchas "
+            f"OR summary ILIKE {lit(q)} OR steps ILIKE {lit(q)})"):
+        out.append(r)
+    for r in pg_json(
+            "SELECT 'gotcha' AS kind, trap AS key, fix AS text "
+            "FROM ecosystem_intel.gotchas "
             f"WHERE tenant_id={t} AND (trap ILIKE {lit(q)} "
-            f"OR why ILIKE {lit(q)} OR fix ILIKE {lit(q)});"):
-        out.append({"kind": r[0], "key": r[1], "text": r[2]})
+            f"OR why ILIKE {lit(q)} OR fix ILIKE {lit(q)})"):
+        out.append(r)
     return out
 
 

@@ -18,8 +18,16 @@ collect_*.py  →  ecosystem_signals  →  derive_needs.py  →  sbos_need_reque
 
 ## Live collectors
 
-- `collect_infra.py` (cron :05/:20/:35/:50) — k11 cpu temp, load, mem/swap,
-  disk, longest DB query.
+- `collect_watchdog.py` (cron :03/:18/:33/:48, every 15 min) — the "something
+  is wrong RIGHT NOW" signals: cpu temp, longest DB query.
+- `collect_infra.py` (cron :13 hourly) — the "capacity planning" signals: load,
+  mem/swap, disk. Hourly is plenty; these move over hours/days.
+
+## Cadence policy (Brian 2026-10-17)
+
+Not everything needs 15 minutes. Fast signals (thermal, runaways) stay fast;
+slow signals (capacity) go hourly. Derivation stays 15 min — it's cheap,
+idempotent, and the fast signals need it.
 
 ## Signal contracts (collectors not yet built — keys reserved)
 

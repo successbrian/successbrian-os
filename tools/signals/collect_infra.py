@@ -1,41 +1,25 @@
 #!/usr/bin/env python3
-"""collect_infra.py — sample k11-alpha infra signals into ecosystem_signals.
+"""collect_infra.py — slow-cadence infra signals (hourly).
 
-PURPOSE: Turn tonight's manual sweep into a standing feed: cpu temp, load,
-  memory, swap, disk, and longest-running DB query.
-WHY: Brian 2026-10-17 — the ecosystem's own strain signals must feed the
-  screams, so needs get detected instead of discovered during outages.
-CALLED BY: cron every 15 min (staggered off the derivation runner).
+PURPOSE: The "capacity planning" signals: load, memory, swap, disk. These move
+  over hours/days, not minutes — hourly sampling is plenty.
+  Brian 2026-10-17: "some things don't need to run every 15 minutes."
+  Fast signals (cpu temp, runaway queries) live in collect_watchdog.py (15 min).
+WHY: Split for cadence optimization; was 15-min for everything.
+CALLED BY: cron 13 * * * * (hourly, staggered clear of derive + need_reader).
 NOTES: stdlib + psycopg2 only, zero AI tokens. Upserts by signal_key —
   the table holds the latest observation per signal.
 """
 import json
-import os
-import re
 import shutil
-import subprocess
-import sys
 
 import psycopg2
 
 SIGNALS = []
 
 
-def sample_cmd(cmd):
-    try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
-    except Exception:
-        return ""
-
-
 def collect():
-    # CPU temp (AMD Tctl)
-    out = sample_cmd(["sensors"])
-    m = re.search(r"Tctl:\s*\+([\d.]+)", out)
-    if m:
-        SIGNALS.append(("k11.cpu_temp_c", "infra", float(m.group(1)), None, {}))
-
-    # Load averages
+    # Load averages — capacity signal, hourly is plenty
     try:
         with open("/proc/loadavg") as f:
             l1, l5, l15 = f.read().split()[:3]
@@ -44,7 +28,7 @@ def collect():
     except Exception:
         pass
 
-    # Memory / swap (GB)
+    # Memory / swap (GB) — moves over hours
     try:
         mem = {}
         with open("/proc/meminfo") as f:
@@ -57,29 +41,13 @@ def collect():
     except Exception:
         pass
 
-    # Disk used % (root)
+    # Disk used % (root) — fills over days
     try:
         du = shutil.disk_usage("/")
         SIGNALS.append(("k11.disk_used_pct", "infra",
                         round(du.used / du.total * 100, 1), None, {}))
     except Exception:
         pass
-
-    # Longest active query (minutes) — the runaway detector's raw feed
-    try:
-        conn = psycopg2.connect(dbname="ecosystem_central", user="successbrian")
-        cur = conn.cursor()
-        cur.execute(
-            """SELECT COALESCE(EXTRACT(EPOCH FROM max(now() - query_start))/60, 0)
-               FROM pg_stat_activity
-               WHERE state = 'active' AND pid <> pg_backend_pid()
-                 AND query NOT LIKE '%pg_stat_activity%'""")
-        longest = float(cur.fetchone()[0] or 0)
-        SIGNALS.append(("db.longest_query_min", "infra", round(longest, 1), None, {}))
-        conn.close()
-    except Exception as e:
-        SIGNALS.append(("db.longest_query_min", "infra", None,
-                        f"collector db error: {e}"[:200], {}))
 
 
 def store():

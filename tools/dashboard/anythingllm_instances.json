@@ -1,0 +1,7 @@
+[
+  {
+    "name": "k11-alpha",
+    "base_url": "http://localhost:3000",
+    "key_path": "/home/successbrian/.config/spencer-api/anythingllm.key"
+  }
+]

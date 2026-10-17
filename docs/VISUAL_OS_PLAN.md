@@ -45,18 +45,24 @@ v1 shows schedule + heartbeat instead of run history and names the gap.
 A lightweight run-logger (wrapper that logs start/end per cron) is a
 follow-up, not this phase.
 
-## Phase 2 — Action API (next)
+## Phase 2 — Action API (BUILT 2026-10-17)
 
-Extend the proven Node Zero Flask pattern with `dash-actions`:
+`tools/dash_actions/api.py` on k11:5057, systemd user service
+`dash-actions.service`, nginx `/successbrian-os/dash-actions/` -> k11:5057.
 
-- `POST /api/questions/answer` {id, answer} — fixes the dead inbox buttons
-- `POST /api/tasks/done` {id} — complete PM/life_ops tasks from dashboard
-- `POST /api/run` {job} — trigger a registered job on demand (k11 exec)
-- `GET /api/ops/summary` — live ops numbers for the console (replaces some
-  static content later)
+- `POST /api/questions/answer` {id, answer} — inbox answer buttons now work
+  (the `answerQuestion()` JS was dead since the buttons were rendered).
+- `POST /api/tasks/done` {id, source} — complete PM or life_ops tasks
+  (life_ops mirrors to PM).
+- `POST /api/run` {job} — on-demand runs, strict allowlist only
+  (personal_os_watch, life_ops_watch, ops_console_rebuild). No shell, argv
+  only.
+- `GET /api/run/allowed`, `GET /api/health`.
 
-Auth: same-network only (nginx allow tailnet/localhost) + a shared token
-in the fragment JS. No new credentials hardcoded — read from env.
+Auth: `X-Dash-Token` header, token in `~/.dash_actions_token` (600),
+baked into fragment JS at build time. Public-in-source by design — safety
+is narrow endpoints, not the token. Tested end to end through the public
+URL (401 without token, answer recorded, test question cleaned up).
 
 ## Phase 3 — Blog builder board (after)
 

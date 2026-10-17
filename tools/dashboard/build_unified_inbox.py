@@ -28,11 +28,12 @@ cur.close(); conn.close()
 
 PRIO = {3: ('#ff5f56', 'High'), 2: ('#ffb84d', 'Medium'), 1: ('#5a5e6e', 'Low')}
 
-def row(kind, title, snippet, when, prio, extra=''):
+def row(kind, title, snippet, when, prio, extra='', row_id=''):
     color, label = PRIO.get(prio or 1, PRIO[1])
     badge = (f'<span class="ib-badge ib-action">Needs your call</span>' if kind == 'q'
              else f'<span class="ib-badge">{esc(kind)}</span>')
-    return f'''<div class="ib-row" style="border-left:3px solid {color}">
+    id_attr = f' id="{row_id}"' if row_id else ''
+    return f'''<div class="ib-row"{id_attr} style="border-left:3px solid {color}">
   <div class="ib-main">
     <div class="ib-subject">{esc(title)} {badge}</div>
     <div class="ib-snippet">{esc(snippet)}</div>
@@ -86,7 +87,7 @@ for qid, question, context, options, prio, created in questions:
             for o in opts)
         extra = f'<div class="ib-opts">{btns}</div>'
     snippet = (context or '')[:220]
-    p.append(row('q', question, snippet, when, prio, extra))
+    p.append(row('q', question, snippet, when, prio, extra, row_id=f'q-{qid}'))
 
 if reports:
     p.append('<div class="ib-sec">Reports</div>')
@@ -97,6 +98,39 @@ if reports:
 if not questions and not reports:
     p.append('<div class="loading">Inbox is clear.</div>')
 p.append('</div>')
+
+# answerQuestion(): the inbox buttons finally do something. Token is baked
+# in at build time (public in page source by design — the API's real safety
+# is narrow endpoints, not the token).
+try:
+    _dash_token = open('/home/successbrian/.dash_actions_token').read().strip()
+except OSError:
+    _dash_token = ''
+p.append(f'''<script>
+const DASH_TOKEN = {json.dumps(_dash_token)};
+async function answerQuestion(qid, label) {{
+  const row = document.getElementById('q-' + qid);
+  if (!row || !confirm('Answer with "' + label + '"?')) return;
+  try {{
+    const r = await fetch('/successbrian-os/dash-actions/api/questions/answer', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json', 'X-Dash-Token': DASH_TOKEN}},
+      body: JSON.stringify({{id: qid, answer: label}})
+    }});
+    const j = await r.json();
+    if (j.ok) {{
+      row.style.transition = 'opacity .4s';
+      row.style.opacity = '0.25';
+      row.querySelector('.ib-opts').innerHTML =
+        '<span style="color:#4caf50;font-size:.85em">✓ Answered: ' + label.replace(/</g,'&lt;') + '</span>';
+    }} else {{
+      alert('Failed: ' + (j.error || r.status));
+    }}
+  }} catch (e) {{
+    alert('Request failed: ' + e);
+  }}
+}}
+</script>''')
 
 open(OUT, 'w').write('\n'.join(p))
 print(f'Wrote {OUT}: {len(questions)} questions, {len(reports)} reports')

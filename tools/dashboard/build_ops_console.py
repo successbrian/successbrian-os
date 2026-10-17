@@ -195,6 +195,43 @@ for e in events:
              f'{esc(e["event_type"])}</div></div>'
              f'<div class="side">{esc(str(e["event_at"])[:16])}</div></div>')
 
+# on-demand runs of safe watcher jobs
+try:
+    _dash_token = open('/home/successbrian/.dash_actions_token').read().strip()
+except OSError:
+    _dash_token = ''
+p.append('<div class="ops-sec">Run now</div>')
+p.append('<div class="ops-row"><div class="dot ok"></div><div class="main">'
+         '<div class="t">Watcher jobs</div>'
+         '<div class="s">personal_os_watch · life_ops_watch · '
+         'ops_console_rebuild</div></div>'
+         '<div class="side" id="run-result"></div></div>')
+p.append('<div style="display:flex;gap:8px;margin-top:8px" id="run-btns">')
+for job in ("personal_os_watch", "life_ops_watch", "ops_console_rebuild"):
+    p.append(f'<button onclick="runJob(\'{job}\')" style="background:#2a2d3a;'
+             'color:#cfe3ff;border:1px solid #3a3e4d;border-radius:8px;'
+             f'padding:7px 14px;cursor:pointer">{job}</button>')
+p.append('</div>')
+p.append(f'''<script>
+const DASH_TOKEN = {json.dumps(_dash_token)};
+async function runJob(job) {{
+  const el = document.getElementById('run-result');
+  el.textContent = 'running ' + job + '...';
+  try {{
+    const r = await fetch('/successbrian-os/dash-actions/api/run', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json', 'X-Dash-Token': DASH_TOKEN}},
+      body: JSON.stringify({{job}})
+    }});
+    const j = await r.json();
+    el.textContent = j.ok ? job + ' ✓' : 'failed: ' + (j.error || j.output || r.status);
+    el.title = (j.output || '').slice(-500);
+  }} catch (e) {{
+    el.textContent = 'request failed';
+  }}
+}}
+</script>''')
+
 p.append('</div>')
 open(OUT, 'w').write('\n'.join(p))
 print(f'Wrote {OUT}: {total_jobs} jobs, {len(workers)} workers, '

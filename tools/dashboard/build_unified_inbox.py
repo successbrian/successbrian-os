@@ -11,6 +11,17 @@ OUT = '/home/successbrian/dashboard-fragments/inbox-unified.html'
 def esc(s):
     return html.escape(str(s or ''))
 
+
+def _hxesc(s):
+    """Escape a value for embedding in hx-vals JSON (double-quoted)."""
+    return str(s or '').replace('\\', '\\\\').replace('"', '\\"')
+
+
+try:
+    _dash_token = open('/home/successbrian/.dash_actions_token').read().strip()
+except OSError:
+    _dash_token = ''
+
 priority_judge.judge_all()
 
 conn = psycopg2.connect(dbname='ecosystem_central')
@@ -81,11 +92,24 @@ for qid, question, context, options, prio, created in questions:
         opts = []
     extra = ''
     if opts:
-        btns = ''.join(
-            f"<button onclick=\"answerQuestion({qid},'{esc(o.get('label', o.get('text', str(o))) if isinstance(o, dict) else str(o))}')\">"
-            f"{esc(o.get('label', o.get('text', str(o))) if isinstance(o, dict) else str(o))}</button>"
-            for o in opts)
-        extra = f'<div class="ib-opts">{btns}</div>'
+        # HTMX buttons: post answer, swap the button row in place.
+        # Token baked at build time (public in source by design).
+        labels = []
+        for o in opts:
+            if isinstance(o, dict):
+                labels.append(o.get('label', o.get('text', str(o))))
+            else:
+                labels.append(str(o))
+        btns = []
+        for lbl in labels:
+            btns.append(
+                f'<button hx-post="/successbrian-os/dash-actions/api/questions/answer" '
+                f'hx-vals=\'{{"id": "{qid}", "answer": "{_hxesc(lbl)}"}}\' '
+                f'hx-headers=\'{{"X-Dash-Token": "{_dash_token}"}}\' '
+                f'hx-target="closest .ib-opts" hx-swap="innerHTML" '
+                f'hx-confirm="Answer with &quot;{esc(lbl)}&quot;?">'
+                f'{esc(lbl)}</button>')
+        extra = f'<div class="ib-opts">{"".join(btns)}</div>'
     snippet = (context or '')[:220]
     p.append(row('q', question, snippet, when, prio, extra, row_id=f'q-{qid}'))
 
@@ -98,39 +122,6 @@ if reports:
 if not questions and not reports:
     p.append('<div class="loading">Inbox is clear.</div>')
 p.append('</div>')
-
-# answerQuestion(): the inbox buttons finally do something. Token is baked
-# in at build time (public in page source by design — the API's real safety
-# is narrow endpoints, not the token).
-try:
-    _dash_token = open('/home/successbrian/.dash_actions_token').read().strip()
-except OSError:
-    _dash_token = ''
-p.append(f'''<script>
-const DASH_TOKEN = {json.dumps(_dash_token)};
-async function answerQuestion(qid, label) {{
-  const row = document.getElementById('q-' + qid);
-  if (!row || !confirm('Answer with "' + label + '"?')) return;
-  try {{
-    const r = await fetch('/successbrian-os/dash-actions/api/questions/answer', {{
-      method: 'POST',
-      headers: {{'Content-Type': 'application/json', 'X-Dash-Token': DASH_TOKEN}},
-      body: JSON.stringify({{id: qid, answer: label}})
-    }});
-    const j = await r.json();
-    if (j.ok) {{
-      row.style.transition = 'opacity .4s';
-      row.style.opacity = '0.25';
-      row.querySelector('.ib-opts').innerHTML =
-        '<span style="color:#4caf50;font-size:.85em">✓ Answered: ' + label.replace(/</g,'&lt;') + '</span>';
-    }} else {{
-      alert('Failed: ' + (j.error || r.status));
-    }}
-  }} catch (e) {{
-    alert('Request failed: ' + e);
-  }}
-}}
-</script>''')
 
 open(OUT, 'w').write('\n'.join(p))
 print(f'Wrote {OUT}: {len(questions)} questions, {len(reports)} reports')

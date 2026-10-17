@@ -59,6 +59,27 @@ def _gate():
     return None
 
 
+def _input():
+    """Merge JSON body + form fields (HTMX posts form-encoded by default)."""
+    d = {}
+    try:
+        d.update(request.get_json(force=True, silent=True) or {})
+    except Exception:
+        pass
+    d.update(request.form.to_dict() or {})
+    try:
+        d.update(request.values.to_dict() or {})
+    except Exception:
+        pass
+    return d
+
+
+def _frag(body, ok=True):
+    color = "#4caf50" if ok else "#ff5f56"
+    return (f'<span style="color:{color};font-size:.85em">{body}</span>',
+            200, {"Content-Type": "text/html"})
+
+
 @app.route("/api/health", methods=["GET"])
 def health():
     return jsonify({"ok": True, "service": "dash-actions"})
@@ -66,15 +87,18 @@ def health():
 
 @app.route("/api/questions/answer", methods=["POST"])
 def answer_question():
-    """Record Brian's answer to an inbox pending_question."""
-    d = request.get_json(force=True) or {}
+    """Record Brian's answer to an inbox pending_question.
+
+    Returns an HTML snippet for HTMX to swap into the button row."""
+    import html as _html
+    d = _input()
     try:
         qid = int(d.get("id"))
     except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "id required"}), 400
+        return _frag("id required", ok=False)
     answer = (d.get("answer") or "")[:2000]
     if not answer:
-        return jsonify({"ok": False, "error": "answer required"}), 400
+        return _frag("answer required", ok=False)
     conn = db()
     cur = conn.cursor()
     cur.execute("UPDATE successbrian_os.pending_questions "
@@ -85,8 +109,8 @@ def answer_question():
     cur.close()
     conn.close()
     if not row:
-        return jsonify({"ok": False, "error": "not found or not open"}), 404
-    return jsonify({"ok": True, "id": qid})
+        return _frag("not found or not open", ok=False)
+    return _frag(f"✓ Answered: {_html.escape(answer)}")
 
 
 @app.route("/api/tasks/done", methods=["POST"])
@@ -95,12 +119,13 @@ def task_done():
 
     source 'pm' -> successbrian_os.tasks id
     source 'life_ops' -> life_ops.event_tasks id (mirrors to PM too)
+    Returns an HTML snippet for HTMX.
     """
-    d = request.get_json(force=True) or {}
+    d = _input()
     try:
         tid = int(d.get("id"))
     except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "id required"}), 400
+        return _frag("id required", ok=False)
     source = d.get("source", "pm")
     conn = db()
     cur = conn.cursor()
@@ -111,7 +136,7 @@ def task_done():
         if not row:
             conn.rollback()
             cur.close(); conn.close()
-            return jsonify({"ok": False, "error": "not found"}), 404
+            return _frag("not found", ok=False)
         if row["pm_task_id"]:
             cur.execute("UPDATE successbrian_os.tasks SET status='completed', "
                         "completed_at=now() WHERE id=%s", (row["pm_task_id"],))
@@ -121,11 +146,11 @@ def task_done():
         if not cur.fetchone():
             conn.rollback()
             cur.close(); conn.close()
-            return jsonify({"ok": False, "error": "not found"}), 404
+            return _frag("not found", ok=False)
     conn.commit()
     cur.close()
     conn.close()
-    return jsonify({"ok": True, "id": tid, "source": source})
+    return _frag("✓ Done")
 
 
 # job name -> argv (no shell, ever). Only safe, idempotent watchers.
@@ -144,14 +169,13 @@ RUN_ALLOWLIST = {
 
 @app.route("/api/run", methods=["POST"])
 def run_job():
-    """Run an allowlisted watcher job on demand. Returns its tail output."""
-    d = request.get_json(force=True) or {}
+    """Run an allowlisted watcher job on demand. Returns an HTML snippet."""
+    d = _input()
     job = d.get("job")
     argv = RUN_ALLOWLIST.get(job)
     if not argv:
-        return jsonify({"ok": False,
-                        "error": f"unknown job; allowed: "
-                                 f"{sorted(RUN_ALLOWLIST)}"}), 400
+        return _frag(f"unknown job; allowed: {sorted(RUN_ALLOWLIST)}",
+                     ok=False)
     env = dict(os.environ)
     env.update({"PGHOST": "localhost", "PGDATABASE": "ecosystem_central",
                 "PGUSER": "successbrian"})
@@ -159,10 +183,14 @@ def run_job():
         p = subprocess.run(argv, capture_output=True, text=True,
                            env=env, timeout=300)
     except subprocess.TimeoutExpired:
-        return jsonify({"ok": False, "error": "timed out after 300s"}), 504
-    tail = (p.stdout.strip() + "\n" + p.stderr.strip()).strip()[-1500:]
-    return jsonify({"ok": p.returncode == 0, "job": job,
-                    "returncode": p.returncode, "output": tail})
+        return _frag("timed out after 300s", ok=False)
+    if p.returncode == 0:
+        tail = p.stdout.strip().split("\n")[-1][:120] if p.stdout.strip() \
+            else "done"
+        return _frag(f"✓ {job}: {tail}")
+    err = (p.stderr.strip().split("\n")[-1][:120]
+           if p.stderr.strip() else f"exit {p.returncode}")
+    return _frag(f"{job} failed: {err}", ok=False)
 
 
 @app.route("/api/run/allowed", methods=["GET"])

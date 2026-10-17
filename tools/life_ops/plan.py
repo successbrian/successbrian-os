@@ -78,6 +78,14 @@ TEMPLATES = {
         ("Prep/agenda ready", 3),
         ("Tech check (link, audio)", 1),
     ],
+    "podcast": [
+        ("Segment topics locked (5)", 3),
+        ("Research banked per segment", 2),
+        ("Dialogue packet written", 1),
+        ("TTS audio generated", 0),
+        ("Episode assembled + posted", 0),
+        ("Meme created", 0),
+    ],
     "general": [
         ("Confirm details", 7),
         ("Day-before check", 1),
@@ -194,6 +202,31 @@ def _file(asked_by, question, context, priority=3):
     return True
 
 
+def ensure_weekly_podcast():
+    """Create next Saturday's 7:30 PM podcast event if missing.
+
+    The Saturday podcast is a weekly hard date. This runs Sundays and
+    sets up the coming week's episode shell; --generate then plans it.
+    """
+    today = datetime.date.today()
+    # next Saturday (weekday(): Mon=0..Sun=6; Sat=5)
+    days_ahead = (5 - today.weekday()) % 7 or 7
+    sat = today + datetime.timedelta(days=days_ahead)
+    title = f"Saturday podcast ({sat.isoformat()})"
+    rows = pg_query("SELECT id FROM successbrian_os.life_calendar "
+                    f"WHERE title={lit(title)} LIMIT 1;")
+    if rows:
+        return f"exists: {title}"
+    pg_exec(
+        "INSERT INTO successbrian_os.life_calendar "
+        "(title, event_date, event_type, is_hard_date, status, notes) "
+        f"VALUES ({lit(title)}, "
+        f"{lit(sat.isoformat() + ' 19:30:00 America/Chicago')}, "
+        "'podcast', TRUE, 'scheduled', "
+        "'Weekly hard date: 5 segments, then voice dialogue in TUI.');")
+    return f"created: {title}"
+
+
 def mark_hard(event_id, event_type=None):
     sets = ["is_hard_date=TRUE"]
     if event_type:
@@ -215,8 +248,14 @@ def main():
     ap.add_argument("--type", default=None)
     ap.add_argument("--done", type=int, default=None)
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--weekly", action="store_true",
+                    help="create next Saturday's podcast event")
     args = ap.parse_args()
-    if args.generate:
+    if args.weekly:
+        print(ensure_weekly_podcast())
+        made = generate()
+        print(f"planned {len(made)} events: {made or 'none new'}")
+    elif args.generate:
         made = generate()
         print(f"planned {len(made)} events: {made or 'none new'}")
     elif args.watch:

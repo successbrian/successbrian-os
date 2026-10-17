@@ -1,1 +1,5 @@
-{"_comment":"Brian listens to test_a/test_b and tells us which is which. Then update this mapping.","alex":"voice_a.wav","jordan":"voice_b.wav"}
+{
+ "_comment": "Brian QA 2026-10-17: voice_a_r1 (alt sample) fixed the rough hello. Still needs: which cluster is Alex vs Jordan.",
+ "alex": "voice_a_r1.wav",
+ "jordan": "voice_b.wav"
+}

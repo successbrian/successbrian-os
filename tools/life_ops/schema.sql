@@ -18,3 +18,8 @@ CREATE TABLE IF NOT EXISTS life_ops.event_tasks (
 );
 CREATE INDEX IF NOT EXISTS idx_event_tasks_due
     ON life_ops.event_tasks (due_date) WHERE status = 'pending';
+
+-- PM bridge: every life_ops task mirrors into successbrian_os.tasks
+-- (PM is the master task system for the whole ecosystem).
+ALTER TABLE life_ops.event_tasks
+    ADD COLUMN IF NOT EXISTS pm_task_id BIGINT;

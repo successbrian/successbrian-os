@@ -27,30 +27,32 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
 from core import lit  # noqa: E402
 
 
-def _pg_env():
+def _pg_env(db=None):
     env = dict(os.environ)
     env.update({
         "PGHOST": os.environ.get("PGHOST", "localhost"),
         "PGPORT": os.environ.get("PGPORT", "5432"),
-        "PGDATABASE": os.environ.get("PGDATABASE", "ecosystem_central"),
+        "PGDATABASE": db or os.environ.get("PGDATABASE", "ecosystem_central"),
         "PGUSER": os.environ.get("PGUSER", "successbrian"),
+        # people_unified.people is 215M rows — never let a query run away
+        "PGOPTIONS": "-c statement_timeout=30s" if db == "people_unified" else "",
     })
     return env
 
 
-def pg_query(sql):
+def pg_query(sql, db=None):
     p = subprocess.run(["psql", "-t", "-A", "-F", "\t", "-c", sql],
                        capture_output=True, text=True,
-                       env=_pg_env(), timeout=120)
+                       env=_pg_env(db), timeout=120)
     if p.returncode != 0:
         raise RuntimeError(f"pg_query failed: {p.stderr.strip()[:300]}")
     return [l.split("\t") for l in p.stdout.strip().split("\n") if l.strip()]
 
 
-def pg_exec(sql):
+def pg_exec(sql, db=None):
     p = subprocess.run(["psql", "-v", "ON_ERROR_STOP=1", "-q", "-t"],
                        input=sql, capture_output=True, text=True,
-                       env=_pg_env(), timeout=180)
+                       env=_pg_env(db), timeout=180)
     if p.returncode != 0:
         raise RuntimeError(f"pg_exec failed: {p.stderr.strip()[:300]}")
 
@@ -79,13 +81,19 @@ TEMPLATES = {
         ("Tech check (link, audio)", 1),
     ],
     "podcast": [
-        ("Segment topics locked (5)", 3),
-        ("Research banked per segment", 2),
-        ("Dialogue packet written (check pronunciation log)", 1),
-        ("TTS audio generated", 0),
+        # Research pulls the standing intel feeds so segments build on what
+        # the ecosystem already knows.
+        ("Segment topics locked (5; pull ecosystem_intel digest + "
+         "memory_ai_intel discoveries + Friday coaching deep dive)", 3),
+        ("Research banked per segment (save source URLs for scraper fleet)", 2),
+        ("Dialogue packet written (check tools/tts/pronunciation.md FIRST; "
+         "log new mispronunciations with phonetic fixes)", 1),
+        ("TTS audio generated (tools/tts/make_episode.py)", 0),
         ("QA pass: glitches, speed shifts, mispronunciations fixed", 0),
         ("Episode assembled + posted", 0),
         ("Meme created", 0),
+        ("Episode report filed: plan.py --report (second_brain note + "
+         "enrichment for named people/companies)", 0),
     ],
     "general": [
         ("Confirm details", 7),
@@ -111,6 +119,33 @@ def planned(event_id):
     return bool(rows)
 
 
+def _pm_mirror(event_id, event_title, task, due_iso, task_id=None):
+    """Mirror a life_ops task into successbrian_os.tasks (PM master).
+
+    Returns the PM task id. Idempotent per life_ops task id."""
+    if task_id:
+        rows = pg_query("SELECT pm_task_id FROM life_ops.event_tasks "
+                        f"WHERE id={task_id};")
+        if rows and rows[0][0]:
+            return int(rows[0][0])
+    label = task_id if task_id else "new"
+    desc = f"life_ops task {label} for event {event_id}"
+    rows = pg_query(
+        "INSERT INTO successbrian_os.tasks "
+        "(assigned_to, assigned_by, title, description, priority, "
+        " status, target_date) VALUES "
+        f"('brian', 'life-ops', "
+        f"{lit(f'[{event_title}] {task}')}, "
+        f"{lit(desc)}, "
+        f"'normal', 'pending', {lit(due_iso)}) "
+        "RETURNING id;")
+    pm_id = int(rows[0][0])
+    if task_id:
+        pg_exec("UPDATE life_ops.event_tasks "
+                f"SET pm_task_id={pm_id} WHERE id={task_id};")
+    return pm_id
+
+
 def generate():
     """Generate backward plans for unplanned hard-date events."""
     made = []
@@ -121,14 +156,14 @@ def generate():
         ev_date = datetime.date.fromisoformat(ev["date"])
         for task, lead in tmpl:
             due = ev_date - datetime.timedelta(days=lead)
-            # don't create tasks already in the past at generation time;
-            # flag them instead
-            pg_exec(
+            rows = pg_query(
                 "INSERT INTO life_ops.event_tasks "
                 "(event_id, task, due_date, lead_days, source) VALUES "
                 f"({ev['id']}, {lit(task)}, {lit(due.isoformat())}, "
                 f"{lead}, 'auto') ON CONFLICT (event_id, task) "
-                "DO NOTHING;")
+                "DO UPDATE SET task=EXCLUDED.task RETURNING id;")
+            tid = int(rows[0][0])
+            _pm_mirror(ev["id"], ev["title"], task, due.isoformat(), tid)
         made.append(ev["title"])
     return made
 
@@ -236,9 +271,86 @@ def mark_hard(event_id, event_type=None):
             ", ".join(sets) + f" WHERE id={event_id};")
 
 
+def episode_report(episode_date, notes, names):
+    """File the post-episode loop: second_brain note, PM event, and
+    vera_enrich tasks for named people already in people.people.
+
+    This is the enrichment bridge: topics that surface real people feed
+    the people/business enrichment pipeline instead of dying in chat."""
+    import subprocess
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    sb = subprocess.run(
+        ["python3", os.path.join(repo, "second_brain.py"),
+         "--topic", f"podcast episode {episode_date}",
+         "--content", notes,
+         "--category", "learning",
+         "--source", "life-ops"],
+        capture_output=True, text=True, timeout=60)
+    print("second_brain:", sb.stdout.strip() or sb.stderr.strip()[:80])
+    pg_exec(
+        "INSERT INTO successbrian_os.ecosystem_events "
+        "(event_type, source_plugin, project_ref, title, detail) VALUES "
+        f"('podcast_episode_report', 'life-ops', 'podcast', "
+        f"{lit(f'Episode {episode_date} reported')}, {lit(notes)});")
+    print("ecosystem event filed")
+    enriched = 0
+    for name in [n.strip() for n in (names or "").split(",") if n.strip()]:
+        # exact match on the indexed lower(full_name) expression —
+        # the table is 215M rows; no fuzzy scans allowed here
+        rows = pg_query(
+            "SELECT id FROM people.people "
+            "WHERE lower(TRIM(BOTH FROM (first_name || ' ' || last_name))) "
+            f"= lower({lit(name)}) LIMIT 1;",
+            db="people_unified")
+        if not rows:
+            print(f"  {name}: not in people.people, skipped")
+            continue
+        pid = int(rows[0][0])
+        dup = pg_query(
+            f"SELECT 1 FROM people.tasks WHERE person_id={pid} "
+            f"AND task_type='vera_enrich' "
+            f"AND status IN ('pending','in_progress','processing') LIMIT 1;",
+            db="people_unified")
+        if not dup:
+            pg_exec(
+                "INSERT INTO people.tasks (person_id, task_type, status, "
+                f"source_group, notes) VALUES ({pid}, 'vera_enrich', "
+                f"'pending', 'podcast', "
+                f"{lit(f'podcast episode {episode_date}: topic surfaced this person')});",
+                db="people_unified")
+            enriched += 1
+    print(f"enrichment tasks filed: {enriched}")
+    return enriched
+
+
 def mark_done(task_id):
     pg_exec("UPDATE life_ops.event_tasks SET status='done' "
             f"WHERE id={task_id};")
+    rows = pg_query("SELECT pm_task_id FROM life_ops.event_tasks "
+                    f"WHERE id={task_id};")
+    if rows and rows[0][0]:
+        pg_exec("UPDATE successbrian_os.tasks "
+                "SET status='completed', completed_at=now() "
+                f"WHERE id={rows[0][0]};")
+
+
+def backfill_pm():
+    """Mirror all existing life_ops tasks into PM (one-time)."""
+    rows = pg_query(
+        "SELECT t.id, t.event_id, c.title, t.task, t.due_date::text, "
+        "t.status FROM life_ops.event_tasks t "
+        "JOIN successbrian_os.life_calendar c ON c.id=t.event_id "
+        "WHERE t.pm_task_id IS NULL;")
+    n = 0
+    for r in rows:
+        tid, eid, title, task, due = int(r[0]), int(r[1]), r[2], r[3], r[4]
+        pm_id = _pm_mirror(eid, title, task, due, tid)
+        if r[5] == "done":
+            pg_exec("UPDATE successbrian_os.tasks "
+                    "SET status='completed', completed_at=now() "
+                    f"WHERE id={pm_id};")
+        n += 1
+    return n
 
 
 def main():
@@ -251,8 +363,26 @@ def main():
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--weekly", action="store_true",
                     help="create next Saturday's podcast event")
+    ap.add_argument("--backfill-pm", action="store_true",
+                    help="mirror existing tasks into PM (one-time)")
+    ap.add_argument("--report", action="store_true",
+                    help="file episode report: second_brain + PM event + "
+                         "enrichment for named people")
+    ap.add_argument("--episode-date", default="",
+                    help="episode date for --report (YYYY-MM-DD)")
+    ap.add_argument("--notes", default="",
+                    help="episode notes for --report")
+    ap.add_argument("--names", default="",
+                    help="comma-separated names for enrichment (--report)")
     args = ap.parse_args()
-    if args.weekly:
+    if args.report:
+        if not args.episode_date or not args.notes:
+            print("need --episode-date and --notes")
+            return
+        episode_report(args.episode_date, args.notes, args.names)
+    elif args.backfill_pm:
+        print(f"mirrored {backfill_pm()} tasks into PM")
+    elif args.weekly:
         print(ensure_weekly_podcast())
         made = generate()
         print(f"planned {len(made)} events: {made or 'none new'}")

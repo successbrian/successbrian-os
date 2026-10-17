@@ -33,18 +33,28 @@ KSSH = Path.home() / "workspace" / "bin" / "kssh"
 
 
 def pg_exec(sql: str) -> str:
-    # WHY base64: kssh runs the command through a remote shell, so SQL text
-    # containing &, $, backticks, quotes, or newlines would be interpreted by
-    # bash (2026-09-28: video titles with "&" broke inserts). Base64 moves the
-    # SQL through the shell opaquely; the decoded text is only ever seen by
-    # psql inside double quotes, where metacharacters are literal.
+    # On k11 (or anywhere with a local postgres): run psql directly.
+    # From Hatch: shell through kssh (base64 keeps &, $, backticks, quotes
+    # from being interpreted by the remote shell — 2026-09-28 lesson).
     import base64
+    import os
     b64 = base64.b64encode(sql.encode("utf-8")).decode("ascii")
-    out = subprocess.run(
-        [str(KSSH), "psql -h localhost -U successbrian -d ecosystem_central "
-                    f"-t -A -c \"$(echo {b64} | base64 -d)\""],
-        capture_output=True, text=True, timeout=60,
-    )
+    if KSSH.exists():
+        out = subprocess.run(
+            [str(KSSH), "psql -h localhost -U successbrian -d ecosystem_central "
+                        f"-t -A -c \"$(echo {b64} | base64 -d)\""],
+            capture_output=True, text=True, timeout=60,
+        )
+    else:
+        # local psql: no shell involved, pass SQL directly
+        env = dict(os.environ)
+        env.setdefault("PGHOST", "localhost")
+        env.setdefault("PGDATABASE", "ecosystem_central")
+        env.setdefault("PGUSER", "successbrian")
+        out = subprocess.run(
+            ["psql", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-c", sql],
+            capture_output=True, text=True, timeout=60, env=env,
+        )
     if out.returncode != 0:
         raise RuntimeError(f"psql failed: {out.stderr.strip()}")
     return out.stdout.strip()

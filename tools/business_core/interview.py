@@ -63,7 +63,9 @@ def pg_exec(sql):
 # table -> (label, ask_if_empty)
 COVERAGE_AREAS = [
     ("tenants", "business identity",
-     "What does your business do, in one sentence?"),
+     "What does your business do, in one sentence? Also: what day do you "
+     "do your weekly business review? (0=Sunday .. 6=Saturday, default "
+     "Sunday — I'll check your map for gaps on that day.)"),
     ("products", "products",
      "What are your products? For each: name, what layer it's on "
      "(core product, shared platform, skin/branding, the OS itself), "

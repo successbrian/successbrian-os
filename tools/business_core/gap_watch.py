@@ -57,6 +57,25 @@ def tenants():
     return [r[0] for r in rows]
 
 
+def tenant_review_dow(tenant_id):
+    """The tenant's chosen weekly-review day (0=Sunday .. 6=Saturday)."""
+    rows = pg_query(
+        "SELECT review_dow FROM business_core.tenants "
+        f"WHERE id={lit(tenant_id)};")
+    try:
+        return int(rows[0][0]) if rows and rows[0][0] is not None else 0
+    except (ValueError, IndexError):
+        return 0
+
+
+def set_review_day(tenant_id, dow):
+    """Set the tenant's weekly-review day (0=Sunday .. 6=Saturday)."""
+    if not 0 <= int(dow) <= 6:
+        raise ValueError("dow must be 0 (Sunday) .. 6 (Saturday)")
+    pg_exec("UPDATE business_core.tenants "
+            f"SET review_dow={int(dow)} WHERE id={lit(tenant_id)};")
+
+
 def open_question_exists(tenant_id, reason):
     rows = pg_query(
         "SELECT 1 FROM successbrian_os.pending_questions "
@@ -77,9 +96,14 @@ def file_question(tenant_id, reason, question, context_extra=""):
 
 
 def check_gaps():
-    """Weekly: tenants with unmapped areas get an interview question."""
+    """Per-tenant review day: tenants with unmapped areas get an interview
+    question, filed on their chosen review day (default Sunday)."""
+    import datetime
+    today_dow = (datetime.date.today().weekday() + 1) % 7  # Sun=0..Sat=6
     filed = []
     for t in tenants():
+        if tenant_review_dow(t) != today_dow:
+            continue
         qs = questions(t)
         if qs:
             areas = ", ".join(q["area"] for q in qs)
@@ -91,9 +115,16 @@ def check_gaps():
 
 
 def check_staleness(max_age_days=30):
-    """Monthly: fully-mapped but untouched maps get a check-in."""
+    """Per-tenant: fully-mapped but untouched maps get a check-in, on the
+    first occurrence of the tenant's review day each month."""
+    import datetime
+    today = datetime.date.today()
+    today_dow = (today.weekday() + 1) % 7  # Sun=0..Sat=6
+    first_of_kind = today.day <= 7  # first <dow> of the month
     filed = []
     for t in tenants():
+        if tenant_review_dow(t) != today_dow or not first_of_kind:
+            continue
         if questions(t):
             continue  # gaps handled by check_gaps
         rows = pg_query(
@@ -121,11 +152,19 @@ def check_staleness(max_age_days=30):
 def main():
     import argparse
     ap = argparse.ArgumentParser()
+    ap.add_argument("--tenant", default=None)
     ap.add_argument("--gaps", action="store_true")
     ap.add_argument("--staleness", action="store_true")
     ap.add_argument("--max-age-days", type=int, default=30)
+    ap.add_argument("--set-review-day", type=int, default=None,
+                    help="0=Sunday .. 6=Saturday")
     args = ap.parse_args()
-    if args.gaps:
+    if args.set_review_day is not None:
+        if not args.tenant:
+            ap.error("--set-review-day needs --tenant")
+        set_review_day(args.tenant, args.set_review_day)
+        print(f"{args.tenant}: review day = {args.set_review_day}")
+    elif args.gaps:
         filed = check_gaps()
         print(f"gap check: filed for {filed or 'none'}")
     elif args.staleness:

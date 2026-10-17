@@ -81,8 +81,9 @@ TEMPLATES = {
     "podcast": [
         ("Segment topics locked (5)", 3),
         ("Research banked per segment", 2),
-        ("Dialogue packet written", 1),
+        ("Dialogue packet written (check pronunciation log)", 1),
         ("TTS audio generated", 0),
+        ("QA pass: glitches, speed shifts, mispronunciations fixed", 0),
         ("Episode assembled + posted", 0),
         ("Meme created", 0),
     ],

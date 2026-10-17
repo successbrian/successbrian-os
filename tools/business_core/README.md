@@ -11,7 +11,34 @@ is per-tenant: every table carries `tenant_id`. Brian's tenant is `brian`;
 another user's install holds their own business. Same tools, unique data —
 the same boundary the products themselves respect.
 
-## For agents
+## How agents consume it (the system feeds itself)
+
+Agents do NOT read docs. The system pre-builds a versioned context packet
+per tenant and agents fetch one row:
+
+```sql
+SELECT packet, prompt_text, version, built_at
+FROM business_core.context_packets WHERE tenant_id = 'brian';
+```
+
+- `packet`: structured JSON (products, links, streams, flows, rules,
+  tools, people, open roadmap).
+- `prompt_text`: ready to prepend to a system prompt.
+- `version` bumps only when content actually changes (hash compare) —
+  agents poll cheaply and skip work when nothing changed.
+
+Rebuild the packet:
+
+```bash
+python3 core.py --tenant brian --build-packet   # rebuild if changed
+python3 core.py --tenant brian --packet          # fetch current packet
+```
+
+Refresh: hourly cron (idempotent) + rebuild on demand after any
+business_core write. The packet is always at most an hour stale, usually
+seconds.
+
+## For agents (Python)
 
 ```python
 from core import get_brief

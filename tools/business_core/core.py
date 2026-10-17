@@ -85,6 +85,68 @@ def get_brief(tenant_id):
     return brief
 
 
+def build_prompt(brief):
+    """Ready-to-prepend system prompt snippet for an agent."""
+    t = brief["tenants"][0] if brief["tenants"] else {}
+    prods = ", ".join(
+        f"{p['name']} ({p['layer']}, {p['status']})"
+        for p in brief["products"])
+    rules = "; ".join(r["rule"] for r in brief["rules"]
+                      if r["severity"] == "hard")
+    streams = ", ".join(s["name"] for s in brief["income_streams"])
+    return (
+        f"You serve {t.get('display_name', 'this user')}'s business: "
+        f"{t.get('tagline', '')} "
+        f"Products: {prods}. "
+        f"Income: {streams}. "
+        f"Hard rules: {rules}"
+    )
+
+
+def build_packet(tenant_id):
+    """Build (or rebuild) the agent context packet for a tenant.
+
+    Returns (version, changed_bool). Version bumps only when content
+    actually changed (hash compare) — agents can poll cheaply.
+    """
+    import hashlib
+    brief = get_brief(tenant_id)
+    if not brief["tenants"]:
+        raise ValueError(f"unknown tenant '{tenant_id}'")
+    packet = {
+        "tenant": tenant_id,
+        "products": brief["products"],
+        "product_links": brief["product_links"],
+        "income_streams": brief["income_streams"],
+        "capital_flows": brief["capital_flows"],
+        "rules": brief["rules"],
+        "tool_stack": brief["tool_stack"],
+        "people": brief["people"],
+        "roadmap": [r for r in brief["roadmap"]
+                    if r["status"] == "open"],
+    }
+    prompt_text = build_prompt(brief)
+    blob = json.dumps(packet, sort_keys=True)
+    h = hashlib.sha256(blob.encode()).hexdigest()[:16]
+
+    rows = pg_query(
+        "SELECT packet_hash, version FROM business_core.context_packets "
+        f"WHERE tenant_id={lit(tenant_id)};")
+    if rows and rows[0][0] == h:
+        return int(rows[0][1]), False
+    version = (int(rows[0][1]) + 1) if rows else 1
+    pg_exec(
+        "INSERT INTO business_core.context_packets "
+        "(tenant_id, packet, prompt_text, packet_hash, version) "
+        f"VALUES ({lit(tenant_id)}, {lit(blob)}::jsonb, "
+        f"{lit(prompt_text)}, {lit(h)}, {version}) "
+        "ON CONFLICT (tenant_id) DO UPDATE SET "
+        "packet=EXCLUDED.packet, prompt_text=EXCLUDED.prompt_text, "
+        "packet_hash=EXCLUDED.packet_hash, version=EXCLUDED.version, "
+        "built_at=now();")
+    return version, True
+
+
 def render_markdown(tenant_id):
     """Render the BUSINESS_CORE doc from the database."""
     b = get_brief(tenant_id)
@@ -144,11 +206,23 @@ def main():
                     help="print brief as JSON")
     ap.add_argument("--render", action="store_true",
                     help="render BUSINESS_CORE markdown")
+    ap.add_argument("--build-packet", action="store_true",
+                    help="build/rebuild the agent context packet")
+    ap.add_argument("--packet", action="store_true",
+                    help="print the current context packet as JSON")
     args = ap.parse_args()
     if args.brief:
         print(json.dumps(get_brief(args.tenant), indent=2))
     elif args.render:
         print(render_markdown(args.tenant))
+    elif args.build_packet:
+        version, changed = build_packet(args.tenant)
+        print(f"packet v{version} {'rebuilt' if changed else 'unchanged'}")
+    elif args.packet:
+        rows = pg_query(
+            "SELECT packet FROM business_core.context_packets "
+            f"WHERE tenant_id={lit(args.tenant)};")
+        print(rows[0][0] if rows else "{}")
     else:
         ap.print_help()
 

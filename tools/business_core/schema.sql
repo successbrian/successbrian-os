@@ -109,3 +109,16 @@ CREATE INDEX IF NOT EXISTS idx_bc_rules_tenant
     ON business_core.rules (tenant_id);
 CREATE INDEX IF NOT EXISTS idx_bc_streams_tenant
     ON business_core.income_streams (tenant_id);
+
+-- Pre-built agent context packets. The system reads itself and feeds
+-- agents: one structured packet per tenant, rebuilt on data change +
+-- hourly heartbeat. Agents fetch the packet (one row) instead of parsing
+-- docs. prompt_text is ready to prepend to a system prompt.
+CREATE TABLE IF NOT EXISTS business_core.context_packets (
+    tenant_id   TEXT PRIMARY KEY REFERENCES business_core.tenants(id),
+    packet      JSONB NOT NULL,
+    prompt_text TEXT NOT NULL,
+    packet_hash TEXT NOT NULL,
+    version     INTEGER NOT NULL DEFAULT 1,
+    built_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);

@@ -217,6 +217,45 @@ def audit(a):
     rows = psql("SELECT count(*) FROM atlas.nodes n WHERE NOT EXISTS (SELECT 1 FROM atlas.edges e WHERE e.from_node=n.node_key OR e.to_node=n.node_key);")
     print("  %s orphan nodes" % (rows[0].strip() if rows else "?"))
 
+
+def task_add(a):
+    model = a.model or "sonic"
+    # V4 Pro freeze check: v4pro tasks queue until the freeze lifts
+    fr = psql("SELECT status FROM atlas.nodes WHERE node_key='plan:v4-freeze';")
+    frozen = fr and fr[0].strip() == "active"
+    status = "queued"
+    note = ""
+    if model == "v4pro" and frozen:
+        note = " (V4 freeze active - queued until lift)"
+    det = {"about": a.about or "", "found_by": a.found_by or "manual", "model": model}
+    import json as _j
+    psql("INSERT INTO atlas.nodes (node_key, node_type, name, status, details) VALUES ('%s', 'atlas_task', '%s', '%s', '%s'::jsonb) ON CONFLICT (node_key) DO UPDATE SET name=EXCLUDED.name, status=EXCLUDED.status, details=EXCLUDED.details, updated_at=NOW();"
+         % (a.key.replace("'", "''"), a.title.replace("'", "''"), status, _j.dumps(det).replace("'", "''")))
+    if a.about:
+        psql("INSERT INTO atlas.edges (from_node, to_node, edge_type) VALUES ('%s', '%s', 'about') ON CONFLICT DO NOTHING;"
+             % (a.key.replace("'", "''"), a.about.replace("'", "''")))
+    print("task %s [%s]%s" % (a.key, model, note))
+
+def tasks(a):
+    filt = ""
+    if a.model:
+        filt = " AND details->>'model'='%s'" % a.model.replace("'", "''")
+    if a.status:
+        filt += " AND status='%s'" % a.status.replace("'", "''")
+    else:
+        filt += " AND status IN ('queued','open','assigned')"
+    print("ATLAS TASK LIST:")
+    rows = psql("SELECT node_key, name, status, details->>'model', details->>'found_by' FROM atlas.nodes WHERE node_type='atlas_task'%s ORDER BY node_key;" % filt)
+    if not rows:
+        print("  (empty)"); return
+    for line in rows:
+        parts = line.split("\t")
+        print("  %s [%s] %s (model=%s, found_by=%s)" % (parts[0], parts[2], parts[1], parts[3], parts[4]))
+
+def task_done(a):
+    psql("UPDATE atlas.nodes SET status='done', updated_at=NOW() WHERE node_key='%s' AND node_type='atlas_task';" % a.key.replace("'", "''"))
+    print("task %s done" % a.key)
+
 p = argparse.ArgumentParser()
 sub = p.add_subparsers(dest='cmd', required=True)
 s = sub.add_parser('add-node'); s.add_argument('key'); s.add_argument('type'); s.add_argument('name')
@@ -232,6 +271,9 @@ s = sub.add_parser('gaps')
 s = sub.add_parser('critical'); s.add_argument('key')
 s = sub.add_parser('compare'); s.add_argument('key_a'); s.add_argument('key_b')
 s = sub.add_parser('audit')
+s = sub.add_parser('task-add'); s.add_argument('key'); s.add_argument('title'); s.add_argument('--about'); s.add_argument('--model', choices=['sonic','v4pro']); s.add_argument('--found-by')
+s = sub.add_parser('tasks'); s.add_argument('--model', choices=['sonic','v4pro']); s.add_argument('--status')
+s = sub.add_parser('task-done'); s.add_argument('key')
 a = p.parse_args()
 {'add-node': add_node, 'add-edge': add_edge, 'show': show, 'edges': edges,
- 'impact': impact, 'depends': depends, 'research': research, 'whatif': whatif, 'gaps': gaps, 'critical': critical, 'compare': compare, 'audit': audit}[a.cmd](a)
+ 'impact': impact, 'depends': depends, 'research': research, 'whatif': whatif, 'gaps': gaps, 'critical': critical, 'compare': compare, 'audit': audit, 'task-add': task_add, 'tasks': tasks, 'task-done': task_done}[a.cmd](a)

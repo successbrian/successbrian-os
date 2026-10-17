@@ -1,5 +1,5 @@
 {
- "_comment": "Brian QA 2026-10-17: voice_a_r1 (alt sample) fixed the rough hello. Still needs: which cluster is Alex vs Jordan.",
- "alex": "voice_a_r1.wav",
- "jordan": "voice_b.wav"
+ "_comment": "Brian QA 2026-10-17: voice A = Jordan (female), voice B = Alex. voice_a_r1 = clean Jordan ref.",
+ "alex": "voice_b.wav",
+ "jordan": "voice_a_r1.wav"
 }

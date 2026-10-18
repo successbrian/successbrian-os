@@ -192,8 +192,19 @@ RESEARCH_STAGES = [
 BOARD_CONFIG = "/home/successbrian/successbrian-os/board/config/brian.yaml"
 
 def load_board_seats():
-    """Full live board roster from the board config — however many seats.
-    Never hardcoded: the board's composition is a config concern."""
+    """Full live board roster from Postgres (successbrian_os.board_seats).
+    Seats are data, not config — Brian edits rows, never files."""
+    try:
+        r = subprocess.run(
+            PSQL + ["-c",
+                    "SELECT title, mandate FROM successbrian_os.board_seats "
+                    "WHERE active ORDER BY wave, title;"],
+            capture_output=True, text=True, timeout=30)
+        rows = [ln.split("\t") for ln in r.stdout.split("\n") if "\t" in ln]
+        if rows:
+            return [(t.strip(), m.strip()) for t, m in rows]
+    except Exception as e:
+        print("board seats PG read failed (%s) — trying YAML" % str(e)[:80])
     try:
         sys.path.insert(0, "/home/successbrian/successbrian-os/board/harness")
         from seats import load_seats

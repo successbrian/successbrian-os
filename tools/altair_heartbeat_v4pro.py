@@ -801,51 +801,44 @@ def queue_deep_pass(tasks, prev_digest, dry_run=False):
 CLEANUP_PER_TICK = 2
 
 
-
-HEALTH_SCOPES = [
-    ("atlas-orphans",
-     "Find Atlas nodes with no edges (orphans). For each: determine what it "
-     "should connect to and emit HEALTH_FIX: WIRE_ORPHAN lines for obvious "
-     "links; propose plans for ambiguous ones.",
-     "SELECT node_key, name, node_type FROM atlas.nodes n WHERE NOT EXISTS "
-     "(SELECT 1 FROM atlas.edges e WHERE e.from_node = n.node_key "
-     "OR e.to_node = n.node_key) ORDER BY node_key LIMIT 40;"),
-    ("atlas-dead-edges",
-     "Find Atlas edges whose from_node or to_node no longer exists. Emit "
-     "HEALTH_FIX: DROP_DEAD_EDGE lines for each confirmed dead edge.",
-     "SELECT from_node, to_node, edge_type FROM atlas.edges e WHERE NOT EXISTS "
-     "(SELECT 1 FROM atlas.nodes n WHERE n.node_key = e.from_node) OR NOT EXISTS "
-     "(SELECT 1 FROM atlas.nodes n WHERE n.node_key = e.to_node) LIMIT 40;"),
-    ("stale-statuses",
-     "Find Atlas nodes stuck in 'researching' that already have research doc "
-     "nodes or completed handoffs, and plans marked 'planned' that look done. "
-     "Emit HEALTH_FIX: SET_NODE_STATUS lines with evidence, or proposals.",
-     "SELECT node_key, name, status, updated_at FROM atlas.nodes "
-     "WHERE status = 'researching' AND updated_at < now() - interval '3 days' "
-     "ORDER BY updated_at LIMIT 30;"),
-    ("learning-dupes",
-     "Scan active worker learnings for near-duplicates the weekly curation "
-     "missed. Emit HEALTH_FIX: SUPERSEDE_LEARNING lines.",
-     "SELECT id, worker_kind, left(learning, 200) FROM "
-     "successbrian_os.v4pro_worker_learnings WHERE status = 'active' "
-     "ORDER BY id DESC LIMIT 40;"),
-]
-
 HEALTH_PER_TICK = 2
+
+
+
+
+def load_scopes(worker_kind):
+    """Active scopes for a worker kind, from Postgres. Data, not code."""
+    rows = query(
+        "SELECT scope_key, brief, coalesce(scope_sql,''), "
+        "coalesce(context_extra,'') FROM successbrian_os.worker_scopes "
+        "WHERE worker_kind = %s AND active ORDER BY scope_key;"
+        % pq(worker_kind))
+    out = []
+    for ln in rows.split("\n"):
+        parts = ln.split("\t")
+        if len(parts) >= 2 and parts[0].strip():
+            out.append((parts[0].strip(), parts[1].strip(),
+                        parts[2].strip() if len(parts) > 2 else "",
+                        parts[3].strip() if len(parts) > 3 else ""))
+    return out
+
+
+def scope_recently_queued(summary_frag, days=7):
+    r = query(
+        "SELECT 1 FROM successbrian_os.v4pro_handoffs "
+        "WHERE task_summary LIKE %s AND created_at > NOW() - INTERVAL '%d days' "
+        "LIMIT 1;" % (pq("%" + summary_frag + "%"), days)).strip()
+    return bool(r)
 
 
 def queue_health_assessment(dry_run=False):
     n = 0
-    for scope_key, brief, sql in HEALTH_SCOPES:
+    for scope_key, brief, sql, _extra in load_scopes("ecosystem-health"):
         if n >= HEALTH_PER_TICK:
             break
-        recent = query(
-            "SELECT 1 FROM successbrian_os.v4pro_handoffs "
-            "WHERE task_summary LIKE %s AND created_at > NOW() - INTERVAL '7 days' "
-            "LIMIT 1;" % pq("%" + scope_key + "%")).strip()
-        if recent:
+        if scope_recently_queued("Ecosystem health: " + scope_key):
             continue
-        data = query(sql)
+        data = query(sql) if sql else ""
         if queue_handoff("Ecosystem health: " + scope_key,
                          "HEALTH SWEEP — fix what is safe, propose the rest. "
                          "Output HEALTH_FIX lines for whitelisted fixes, plus "
@@ -864,32 +857,17 @@ def queue_health_assessment(dry_run=False):
 def queue_cleanup_assessment(dry_run=False):
     """Queue AnythingLLM cleanup assessment handoffs (assess + propose only).
     Execution is separately gated on Brian's approval."""
-    scopes = [
-        ("workspace-duplicates",
-         "Duplicate/stale document assessment across all 15 workspaces"),
-        ("unsorted-triage",
-         "Triage plan for the 135 docs sitting in Unsorted"),
-    ]
     n = 0
-    for scope, desc in scopes[:CLEANUP_PER_TICK]:
-        recent = query(
-            "SELECT count(*) FROM successbrian_os.v4pro_handoffs "
-            "WHERE task_summary LIKE '%%' || %s || '%%' "
-            "AND created_at > NOW() - INTERVAL '7 days'"
-            % pq("AnythingLLM cleanup: " + scope))
-        if recent.strip().isdigit() and int(recent) > 0:
+    for scope_key, brief, _sql, extra in load_scopes("anythingllm-cleanup"):
+        if n >= CLEANUP_PER_TICK:
+            break
+        if scope_recently_queued("AnythingLLM cleanup: " + scope_key):
             continue
-        summary = "AnythingLLM cleanup: " + scope
+        summary = "AnythingLLM cleanup: " + scope_key
         ask = ("Assess and propose. %s. Work the stages, run the board, "
                "escalate decisions. Output FINDINGS / PROPOSED PLANS / "
-               "DATA GAPS. Propose only — never execute deletions." % desc)
-        context = ("SCOPE: %s\n%s\n\nLibrary inventory (2026-10-17): "
-                   "Home Lab 1255 docs, DealsDesk 610, MLM Income 306, "
-                   "Unsorted 135, Blog Network 78, Crypto Trading & Yield 55, "
-                   "People Pipeline 14, Career 2, ContactFlowCRM 7, "
-                   "Money & Investing 10, Mountain North 6, TrafficStreemz 2, "
-                   "Gina & Immigration 1, Quarantine 10, successbrian-os 1. "
-                   "Instance: k11-alpha:3000." % (scope, desc))
+               "DATA GAPS. Propose only — never execute deletions." % brief)
+        context = ("SCOPE: %s\n%s\n\n%s" % (scope_key, brief, extra))
         if queue_handoff(summary, ask, "anythingllm-cleanup", context,
                          "Assess and propose ONLY. No deletions, moves, or "
                          "re-embeds without Brian's explicit approval.",
@@ -899,13 +877,6 @@ def queue_cleanup_assessment(dry_run=False):
         print("queued %d anythingllm-cleanup handoff(s)" % n)
     return n
 
-
-
-
-EVAL_ITEMS = [
-    "plan:mlm-resource-call",
-    "int:n8n",
-]
 
 def queue_monthly_eval(dry_run=False):
     """First tick of each month: re-queue canned eval items (drift watch)."""
@@ -917,13 +888,18 @@ def queue_monthly_eval(dry_run=False):
     if marker == this_month:
         return 0
     n = 0
-    for nk in EVAL_ITEMS:
+    for scope_key, brief, _sql, extra in load_scopes("atlas-research"):
+        if not scope_key.startswith("eval-"):
+            continue
+        if scope_recently_queued(scope_key, days=28):
+            continue
+        node_key = extra.replace("EVAL ITEM:", "").strip() if extra else scope_key
         det = query(
             "SELECT left(details::text, 800), left(coalesce(summary,''), 300) "
-            "FROM atlas.nodes WHERE node_key = %s" % pq(nk))
-        if queue_handoff("Atlas research: " + nk + " [eval-monthly]",
+            "FROM atlas.nodes WHERE node_key = %s" % pq(node_key))
+        if queue_handoff("Atlas research: " + node_key + " [eval-monthly]",
                          "EVAL RUN — answer the research as normal. Output "
-                         "FINDINGS / PROPOSED PLANS / DATA GAPS exactly.",
+                         "FINDINGS / PROPOSED PLANS / DATA GAPS exactly. " + brief,
                          "atlas-research",
                          "EVAL ITEM (drift watch).\n" + det,
                          "Findings only.", dry_run=dry_run):

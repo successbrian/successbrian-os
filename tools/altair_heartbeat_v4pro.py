@@ -507,14 +507,24 @@ def parse_sections(text):
 def consume_research(rec, dry_run=False):
     """File V4 research: doc node with findings, plan proposals for Brian."""
     m = re.search(r"Atlas research:\s*(\S+)", rec["summary"])
-    if not m:
+    mc = re.search(r"AnythingLLM cleanup:\s*(.+)", rec["summary"])
+    if m:
+        nk = m.group(1)
+        link_nk = nk
+        doc_key = "doc:v4research-%s-%d" % (nk.replace(":", "-"), rec["id"])
+        doc_name = "V4 research: " + nk
+    elif mc:
+        nk = mc.group(1).strip()
+        link_nk = None
+        doc_key = "doc:allm-cleanup-%d" % rec["id"]
+        doc_name = "AnythingLLM cleanup assessment: " + nk
+    else:
         return
-    nk = m.group(1)
     secs = parse_sections(rec["result"])
     if not secs["findings"] and not secs["plans"]:
         print("research handoff #%d: no parseable sections — skip" % rec["id"])
         return
-    doc_key = "doc:v4research-%s-%d" % (nk.replace(":", "-"), rec["id"])
+    doc_key = doc_key
     body = "V4 Pro research on %s (handoff #%d).\n\nFINDINGS:\n%s\n\nDATA GAPS:\n%s" % (
         nk, rec["id"],
         "\n".join("%d. %s" % (i + 1, f) for i, f in enumerate(secs["findings"])) or "(none)",
@@ -523,13 +533,15 @@ def consume_research(rec, dry_run=False):
         exec_sql(
             "INSERT INTO atlas.nodes (node_key, node_type, name, status, summary, details) "
             "VALUES (%s, 'doc', %s, 'active', %s, %s) ON CONFLICT (node_key) DO NOTHING"
-            % (pq(doc_key), pq("V4 research: " + nk),
-               pq("V4 Pro findings on " + nk),
-               pq('{"researched_by": "v4pro", "handoff_id": %d}' % rec["id"])))
-        exec_sql(
-            "INSERT INTO atlas.edges (from_node, to_node, edge_type, notes) "
-            "VALUES (%s, %s, 'documents', 'V4 Pro research findings') "
-            "ON CONFLICT DO NOTHING" % (pq(doc_key), pq(nk)))
+            % (pq(doc_key), pq(doc_name),
+               pq("Lyra worker findings on " + nk),
+               pq('{"researched_by": "v4pro", "handoff_id": %d, "kind": "%s"}'
+                  % (rec["id"], rec["kind"]))))
+        if link_nk:
+            exec_sql(
+                "INSERT INTO atlas.edges (from_node, to_node, edge_type, notes) "
+                "VALUES (%s, %s, 'documents', 'Lyra worker research findings') "
+                "ON CONFLICT DO NOTHING" % (pq(doc_key), pq(link_nk)))
     print("research handoff #%d: doc node %s (%d findings)"
           % (rec["id"], doc_key, len(secs["findings"])))
     for p in secs["plans"]:
@@ -605,7 +617,7 @@ def consume_completed(dry_run=False):
         if not rec:
             continue
         consumed.append(rec)
-        if rec["kind"] == "atlas-research":
+        if rec["kind"] in ("atlas-research", "anythingllm-cleanup"):
             continue  # Lyra worker files its own Brian questions w/ priority
         for c in extract_pending_calls(rec["result"]):
             pending_calls.append((hid, rec["summary"], c))
@@ -624,7 +636,7 @@ def consume_completed(dry_run=False):
             save_consume_state(state)
         print("consumed %d completed handoff(s)" % len(consumed))
     for c in consumed:
-        if c["kind"] == "atlas-research":
+        if c["kind"] in ("atlas-research", "anythingllm-cleanup"):
             consume_research(c, dry_run)
             continue
         if c["kind"] != "hard-task":
@@ -684,6 +696,49 @@ def queue_deep_pass(tasks, prev_digest, dry_run=False):
                          dry_run=dry_run)
 
 
+
+
+
+
+CLEANUP_PER_TICK = 2
+
+def queue_cleanup_assessment(dry_run=False):
+    """Queue AnythingLLM cleanup assessment handoffs (assess + propose only).
+    Execution is separately gated on Brian's approval."""
+    scopes = [
+        ("workspace-duplicates",
+         "Duplicate/stale document assessment across all 15 workspaces"),
+        ("unsorted-triage",
+         "Triage plan for the 135 docs sitting in Unsorted"),
+    ]
+    n = 0
+    for scope, desc in scopes[:CLEANUP_PER_TICK]:
+        recent = query(
+            "SELECT count(*) FROM successbrian_os.v4pro_handoffs "
+            "WHERE task_summary LIKE '%%' || %s || '%%' "
+            "AND created_at > NOW() - INTERVAL '7 days'"
+            % pq("AnythingLLM cleanup: " + scope))
+        if recent.strip().isdigit() and int(recent) > 0:
+            continue
+        summary = "AnythingLLM cleanup: " + scope
+        ask = ("Assess and propose. %s. Work the stages, run the board, "
+               "escalate decisions. Output FINDINGS / PROPOSED PLANS / "
+               "DATA GAPS. Propose only — never execute deletions." % desc)
+        context = ("SCOPE: %s\n%s\n\nLibrary inventory (2026-10-17): "
+                   "Home Lab 1255 docs, DealsDesk 610, MLM Income 306, "
+                   "Unsorted 135, Blog Network 78, Crypto Trading & Yield 55, "
+                   "People Pipeline 14, Career 2, ContactFlowCRM 7, "
+                   "Money & Investing 10, Mountain North 6, TrafficStreemz 2, "
+                   "Gina & Immigration 1, Quarantine 10, successbrian-os 1. "
+                   "Instance: k11-alpha:3000." % (scope, desc))
+        if queue_handoff(summary, ask, "anythingllm-cleanup", context,
+                         "Assess and propose ONLY. No deletions, moves, or "
+                         "re-embeds without Brian's explicit approval.",
+                         dry_run=dry_run):
+            n += 1
+    if n:
+        print("queued %d anythingllm-cleanup handoff(s)" % n)
+    return n
 
 
 def rethink_answered(dry_run=False):
@@ -756,6 +811,7 @@ def main():
     print("buffer: Sonic decomposed %d additional task(s)" % b)
     queue_deep_pass(tasks, prev_digest, dry_run)
     queue_atlas_research(dry_run)
+    queue_cleanup_assessment(dry_run)
     rethink_answered(dry_run)
     return 0
 

@@ -297,6 +297,13 @@ def review_prompt(base_ctx, board_text, reviewer, reviewer_role, decision_tier):
            decision_tier.upper(), board_text[:8000]))
 
 
+
+def has_profile(kind):
+    r = subprocess.run(PSQL + ["-c",
+        "SELECT 1 FROM successbrian_os.worker_profiles WHERE worker_kind = %s;"
+        % pq(kind)], capture_output=True, text=True, timeout=30)
+    return "1" in r.stdout.split()
+
 def run_research_loop(key, h, hid):
     kind = "atlas-research"
     profile = load_profile(kind)
@@ -410,8 +417,8 @@ def worker_main(slots=SLOTS_PER_WORKER):
         print("#%d: sending to V4 Pro (%s, balance $%.2f)…"
               % (hid, h["summary"][:50], avail["usd"]))
         try:
-            if h["kind"] == "atlas-research":
-                print("#%d: profile-based research loop" % hid)
+            if has_profile(h["kind"]):
+                print("#%d: Lyra profile loop (%s)" % (hid, h["kind"]))
                 result = run_research_loop(key, h, hid)
             else:
                 result = call_v4pro(key, build_prompt(h))

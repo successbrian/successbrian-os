@@ -187,17 +187,19 @@ RESEARCH_STAGES = [
 # priority. Board reviews at the checkpoint; Altair then Meghan review
 # the board's findings. Brian's answers trigger a re-think.
 
-BOARD_SEATS = [
-    ("Chief MLM Officer", "Big-picture MLM decisions — strategy, focus, starts/stops."),
-    ("Chief Affiliate Marketing Officer", "Affiliate income streams — partnerships, commissions, conversion."),
-    ("Chief Marketing Officer", "Email/lifecycle direction — sequences, followup, campaigns."),
-    ("Chief People Enrichment Officer", "Lead strategy — where to find, what to enrich."),
-    ("Chief Blog Content Officer", "Content direction — blog topics, video readiness, audio slate."),
-    ("Chief Trading Desk Officer", "Trading strategy and risk posture."),
-    ("Chief Hardware Flipping Officer", "Flipping calls — sourcing, listing, repricing."),
-    ("Chief Ecosystem Build Officer", "Build priorities — fleet capabilities, lab progress, infra."),
-    ("Chief Financial Officer", "Closes the money conversation — revenue, spending, capital allocation."),
-]
+BOARD_CONFIG = "/home/successbrian/successbrian-os/board/config/brian.yaml"
+
+def load_board_seats():
+    """Full live board roster from the board config — however many seats.
+    Never hardcoded: the board's composition is a config concern."""
+    try:
+        sys.path.insert(0, "/home/successbrian/successbrian-os/board/harness")
+        from seats import load_seats
+        return [(st.title, st.mandate) for st in load_seats(BOARD_CONFIG)]
+    except Exception as e:
+        print("board seat load failed (%s) — session runs without seat roster"
+              % str(e)[:100])
+        return []
 
 def parse_escalations(text):
     """Find ALTAIR DECISION: / MEGHAN DECISION: / PENDING BRIAN CALL: lines."""
@@ -269,11 +271,13 @@ def file_escalation(hid, kind, tier, question, context, priority=2):
     return eid
 
 def board_session_prompt(base_ctx, notes_text):
-    seats = "\n".join("- %s: %s" % st for st in BOARD_SEATS)
+    live = load_board_seats()
+    seats = "\n".join("- %s: %s" % st for st in live) or "(roster unavailable)"
     return (base_ctx +
         "\n\n=== BOARD SESSION ===\n"
-        "You are Brian's board of directors in session — 9 seats, advisory only "
-        "(input via recommendations, never orders). The seats:\n" + seats +
+        "You are Brian's board of directors in session — the FULL board, "
+        "%d seats, advisory only (input via recommendations, never orders). "
+        "The seats:\n" % len(live) + seats +
         "\n\nReview the research state below. Each seat speaks briefly FROM ITS "
         "MANDATE — only seats with something real to say speak. Then output:\n\n"
         "BOARD FINDINGS:\n1. <finding>\n\nDISAGREEMENTS:\n- <where seats split>\n\n"

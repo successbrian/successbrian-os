@@ -878,6 +878,46 @@ def queue_cleanup_assessment(dry_run=False):
     return n
 
 
+
+
+def queue_full_boards(dry_run=False):
+    """Standing rule (Brian 2026-10-17): important + valuable decisions get
+    the full 14-seat board. Trigger: brian-tier escalation at priority 1
+    (blocks) with no full-board run yet."""
+    rows = query(
+        "SELECT e.id, e.question, e.context, e.accept_if "
+        "FROM successbrian_os.worker_escalations e "
+        "WHERE e.tier = 'brian' AND e.priority = 1 AND e.status = 'open' "
+        "AND NOT EXISTS (SELECT 1 FROM successbrian_os.v4pro_handoffs h "
+        "WHERE h.task_kind = 'full-board' "
+        "AND h.task_summary LIKE '%escalation #' || e.id || '%');")
+    n = 0
+    for ln in rows.split("\n"):
+        parts = ln.split("\t")
+        if len(parts) < 2:
+            continue
+        eid, question = parts[0].strip(), parts[1].strip()
+        ctx = parts[2].strip() if len(parts) > 2 else ""
+        accept = parts[3].strip() if len(parts) > 3 else ""
+        if not eid.isdigit() or not question:
+            continue
+        ask = ("The board must decide: %s\n\nAcceptance check: %s"
+               % (question, accept or "(none given)"))
+        if queue_handoff(
+                "Full board: escalation #%s" % eid,
+                "FULL-BOARD DELIBERATION. " + ask,
+                "full-board",
+                "ESCALATION CONTEXT:\n%s\n\nThis reached Brian's tier at "
+                "priority 1 (blocks). The full board deliberates before it "
+                "lands in his inbox." % ctx[:3000],
+                "Deliberate; the synthesis files the enriched decision.",
+                dry_run=dry_run):
+            n += 1
+    if n:
+        print("queued %d full-board deliberation(s)" % n)
+    return n
+
+
 def queue_monthly_eval(dry_run=False):
     """First tick of each month: re-queue canned eval items (drift watch)."""
     marker = query(
@@ -993,6 +1033,7 @@ def main():
     queue_atlas_research(dry_run)
     queue_cleanup_assessment(dry_run)
     queue_health_assessment(dry_run)
+    queue_full_boards(dry_run)
     queue_monthly_eval(dry_run)
     rethink_answered(dry_run)
     return 0

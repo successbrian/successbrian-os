@@ -404,6 +404,91 @@ def has_profile(kind):
         % pq(kind)], capture_output=True, text=True, timeout=30)
     return "1" in r.stdout.split()
 
+
+
+def run_full_board(key, h, hid):
+    """Full 14-seat board deliberation. One independent V4 call per seat,
+    then a synthesis that preserves disagreements."""
+    seats = load_board_seats()
+    if not seats:
+        return "FULL BOARD ABORTED: no seats loaded"
+    question = h["ask"] or h["summary"]
+    context = h.get("context") or "(none)"
+    constraints = h.get("constraints") or "(none)"
+
+    takes = []
+    for title, mandate in seats:
+        # Pull this seat's full row for domain/constraints
+        row = subprocess.run(
+            PSQL + ["-c",
+                    "SELECT domain, coalesce(constraints,'') "
+                    "FROM successbrian_os.board_seats WHERE title = %s;"
+                    % pq(title)],
+            capture_output=True, text=True, timeout=30)
+        domain, con = "", ""
+        if "\t" in row.stdout:
+            parts = row.stdout.strip().split("\t")
+            domain = parts[0] if len(parts) > 0 else ""
+            con = parts[1] if len(parts) > 1 else ""
+        prompt = (
+            "You are the %s on Brian's board of directors — advisory only, "
+            "you recommend, Brian decides.\n"
+            "Your domain: %s\nYour mandate: %s\n"
+            "%s\n\n"
+            "THE QUESTION BEFORE THE BOARD:\n%s\n\nCONTEXT:\n%s\n\n"
+            "CONSTRAINTS:\n%s\n\n"
+            "Give YOUR seat's independent take: your recommendation, your "
+            "reasoning from YOUR mandate, what worries you, and what you'd "
+            "need to know to be surer. Speak only for your seat — you have "
+            "not heard any other seat. End with: SEAT CALL: <your one-line call>."
+            % (title, domain, mandate,
+               ("Your hard constraints: " + con + "\n") if con else "",
+               question, context[:4000], constraints[:1000]))
+        try:
+            out = call_v4pro(key, prompt)
+        except Exception as e:
+            out = "SEAT SILENT (%s): %s" % (title, str(e)[:100])
+        takes.append((title, out))
+        print("#%d: board seat %s done (%d chars)" % (hid, title, len(out)))
+
+    takes_text = "\n\n".join(
+        "=== %s ===\n%s" % (t, o[:2500]) for t, o in takes)
+    synth = call_v4pro(
+        key,
+        "You are synthesizing a full board session — 14 directors each gave "
+        "an independent take on the question below. Merge them into a board "
+        "deliberation record. Do NOT smooth over disagreements — surface them.\n\n"
+        "QUESTION: %s\n\nTHE 14 TAKES:\n%s\n\n"
+        "Output EXACTLY:\n\nBOARD CONSENSUS:\n<where the seats agree>\n\n"
+        "BOARD DISAGREEMENTS:\n- <seat> vs <seat>: <what they split on and why>\n\n"
+        "SEAT CALLS:\n- <seat>: <their one-line call>\n\n"
+        "BOARD RECOMMENDATION:\n<the board's collective recommendation to Brian>\n\n"
+        "PENDING BRIAN CALL: <the decision Brian himself must make, if any>."
+        % (question, takes_text[:14000]))
+    print("#%d: board synthesis done (%d chars)" % (hid, len(synth)))
+
+    # File any Brian-call flags from the synthesis
+    seen = set()
+    for tier, q in parse_escalations(synth):
+        if q[:80] in seen:
+            continue
+        seen.add(q[:80])
+        prio = parse_brian_priority(synth, q) if tier == "brian" else 2
+        pkt = parse_packet(synth, q)
+        pkt["reason"] = "full-board synthesis flagged during board deliberation"
+        file_escalation(hid, "full-board", tier, q,
+                        "%s | full board" % h["summary"], prio, pkt)
+
+    # Learnings
+    learn_out = call_v4pro(
+        key, "You just ran a full 14-seat board deliberation. Output 1-3 "
+        "learnings about the deliberation itself (not the topic) as lines "
+        "starting with LEARNING: — e.g. which seats clashed, what the "
+        "synthesis missed. Skip generic filler.")
+    save_learnings("full-board", learn_out, hid)
+    return synth
+
+
 def run_research_loop(key, h, hid):
     kind = "atlas-research"
     profile = load_profile(kind)
@@ -524,7 +609,10 @@ def worker_main(slots=SLOTS_PER_WORKER):
         print("#%d: sending to V4 Pro (%s, balance $%.2f)…"
               % (hid, h["summary"][:50], avail["usd"]))
         try:
-            if has_profile(h["kind"]):
+            if h["kind"] == "full-board":
+                print("#%d: FULL BOARD deliberation (14 seats)" % hid)
+                result = run_full_board(key, h, hid)
+            elif has_profile(h["kind"]):
                 print("#%d: Lyra profile loop (%s)" % (hid, h["kind"]))
                 result = run_research_loop(key, h, hid)
             else:

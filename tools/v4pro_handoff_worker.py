@@ -112,6 +112,101 @@ def call_v4pro(key, prompt):
     return data["choices"][0]["message"]["content"]
 
 
+
+
+# ---- Profile-based research loop (Brian 2026-10-17) ----
+# Each run: load profile + recent learnings -> work stages -> write new
+# learnings -> die. Fresh context every run; learnings compound.
+
+def load_profile(kind):
+    r = subprocess.run(PSQL + ["-c",
+        "SELECT profile_md FROM successbrian_os.worker_profiles "
+        "WHERE worker_kind = %s;" % pq(kind)],
+        capture_output=True, text=True, timeout=30)
+    return r.stdout.strip() or "(no profile yet)"
+
+def load_learnings(kind, limit=12):
+    r = subprocess.run(PSQL + ["-c",
+        "SELECT learning FROM successbrian_os.v4pro_worker_learnings "
+        "WHERE worker_kind = %s ORDER BY created_at DESC LIMIT %d;"
+        % (pq(kind), limit)],
+        capture_output=True, text=True, timeout=30)
+    rows = [ln.strip() for ln in r.stdout.split("\n") if ln.strip()]
+    if not rows:
+        return "(no learnings yet — you are the first run)"
+    return "\n".join("- " + x for x in rows)
+
+def write_learning(kind, text, handoff_id):
+    subprocess.run(PSQL + ["-c",
+        "INSERT INTO successbrian_os.v4pro_worker_learnings "
+        "(worker_kind, learning, handoff_id) VALUES (%s, %s, %d);"
+        % (pq(kind), pq(text[:2000]), handoff_id)],
+        capture_output=True, text=True, timeout=30)
+
+RESEARCH_STAGES = [
+    ("UNDERSTAND",
+     "Restate the item in your own words. Map its Atlas connections — what "
+     "depends on it, what it feeds. State clearly what is actually unknown "
+     "vs. what the context already answers."),
+    ("ANALYZE",
+     "Work the substance. Tradeoffs, free-first cost reality, fit with the "
+     "ecosystem (self-hosted, his hardware, zero-chat-operation). Which "
+     "Atlas dependencies help or block it?"),
+    ("CHALLENGE",
+     "Steelman the case AGAINST. Find holes, hidden assumptions, ways this "
+     "fails in Brian's real world (two jobs, scrap hardware, no budget for "
+     "SaaS). Be brutal — a surviving idea is a better idea."),
+    ("PROPOSE",
+     "Concrete plan proposals, each one line of title plus one line of "
+     "rationale. Mark which ones need Brian's call vs. which the system "
+     "could just do."),
+]
+
+def run_research_loop(key, h, hid):
+    kind = "atlas-research"
+    profile = load_profile(kind)
+    learnings = load_learnings(kind)
+    base_ctx = ("WORKER PROFILE:\n" + profile +
+                "\n\nLEARNINGS FROM PREVIOUS RUNS (apply them):\n" + learnings +
+                "\n\nATLAS ITEM: %s\nASSIGNMENT: %s\n\nITEM CONTEXT:\n%s\n\nCONSTRAINTS:\n%s"
+                % (h["summary"], h["ask"], h["context"] or "(none)",
+                   h["constraints"] or "(none)"))
+    notes = []
+    for stage_name, stage_ask in RESEARCH_STAGES:
+        prior = ""
+        for n, o in notes:
+            prior += "\n--- %s (previous stage output) ---\n%s\n" % (n, o[:3000])
+        prompt = (base_ctx +
+                  "\n\nYou are in stage: %s. %s\n%s\n\n"
+                  "Output this stage's work only — thorough but tight."
+                  % (stage_name, stage_ask, prior))
+        out = call_v4pro(key, prompt)
+        notes.append((stage_name, out))
+        print("#%d: stage %s done (%d chars)" % (hid, stage_name, len(out)))
+    all_notes = "\n".join("--- %s ---\n%s" % (n, o) for n, o in notes)
+    final = call_v4pro(key, base_ctx +
+        "\n\nAll research stages complete. Their output:\n" + all_notes[:12000] +
+        "\n\nNow write the FINAL synthesis in EXACTLY this format:\n\n"
+        "FINDINGS:\n1. <finding>\n\nPROPOSED PLANS:\n1. <title> | <rationale>\n\n"
+        "DATA GAPS:\n- <what would sharpen this>\n\n"
+        "Flag anything needing Brian's call as: PENDING BRIAN CALL: <question>.")
+    learn_out = call_v4pro(key,
+        "You just researched: %s\n\nWrite 1-3 DURABLE learnings for FUTURE "
+        "research runs — things about HOW to research well in Brian's "
+        "ecosystem (methods, pitfalls, useful context, traps to avoid), NOT "
+        "facts about this item. One per line, each starting exactly with "
+        "'LEARNING: '. If nothing is worth keeping, output NONE."
+        % h["summary"])
+    n_learn = 0
+    for ln in learn_out.split("\n"):
+        t = ln.strip()
+        if t.upper().startswith("LEARNING:"):
+            write_learning(kind, t[len("LEARNING:"):].strip(), hid)
+            n_learn += 1
+    print("#%d: wrote %d learning(s)" % (hid, n_learn))
+    return final
+
+
 def mark(hid, status, result="", error=""):
     sql = ("UPDATE successbrian_os.v4pro_handoffs SET status = %s, "
            "v4pro_result = %s, error = %s, completed_at = now() WHERE id = %d;"
@@ -148,7 +243,11 @@ def worker_main(slots=SLOTS_PER_WORKER):
         print("#%d: sending to V4 Pro (%s, balance $%.2f)…"
               % (hid, h["summary"][:50], avail["usd"]))
         try:
-            result = call_v4pro(key, build_prompt(h))
+            if h["kind"] == "atlas-research":
+                print("#%d: profile-based research loop" % hid)
+                result = run_research_loop(key, h, hid)
+            else:
+                result = call_v4pro(key, build_prompt(h))
             mark(hid, "done", result=result)
             print("#%d: done (%d chars)" % (hid, len(result)))
         except Exception as e:
@@ -180,7 +279,7 @@ def main():
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         procs.append(p)
     for i, p in enumerate(procs):
-        out, _ = p.communicate(timeout=900)
+        out, _ = p.communicate(timeout=2400)
         tag = "[worker %d] " % i
         print(tag + out.replace("\n", "\n" + tag).rstrip())
     return 0

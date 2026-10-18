@@ -605,6 +605,8 @@ def consume_completed(dry_run=False):
         if not rec:
             continue
         consumed.append(rec)
+        if rec["kind"] == "atlas-research":
+            continue  # Lyra worker files its own Brian questions w/ priority
         for c in extract_pending_calls(rec["result"]):
             pending_calls.append((hid, rec["summary"], c))
     if consumed:
@@ -682,6 +684,53 @@ def queue_deep_pass(tasks, prev_digest, dry_run=False):
                          dry_run=dry_run)
 
 
+
+
+def rethink_answered(dry_run=False):
+    """Brian answered a Lyra worker's gated question — re-think the research
+    with his decision folded in, then let the chain run again."""
+    rows = query(
+        "SELECT e.id, e.handoff_id, e.worker_kind, e.question, q.answer "
+        "FROM successbrian_os.worker_escalations e "
+        "JOIN successbrian_os.pending_questions q ON q.id = e.pq_id "
+        "WHERE e.tier = 'brian' AND e.status = 'open' "
+        "AND q.status = 'answered' AND q.answer IS NOT NULL")
+    n = 0
+    for ln in rows.split("\n"):
+        parts = ln.split("\t")
+        if len(parts) < 5:
+            continue
+        eid, hid, kind = parts[0].strip(), parts[1].strip(), parts[2].strip()
+        question, answer = parts[3].strip(), parts[4].strip()
+        if not eid.isdigit():
+            continue
+        # Recover the research item from the original handoff
+        item = query(
+            "SELECT task_summary, context, ask FROM successbrian_os.v4pro_handoffs "
+            "WHERE id = %s" % hid)
+        iparts = item.split("\t")
+        summary = iparts[0].strip() if iparts else "Atlas research (re-think)"
+        context = (iparts[1] if len(iparts) > 1 else "")
+        ask = (iparts[2] if len(iparts) > 2 else "")
+        new_context = ("BRIAN DECIDED (re-think with this as settled law):\n"
+                       "Q: %s\nA: %s\n\nORIGINAL CONTEXT:\n%s"
+                       % (question, answer, context))
+        ok = queue_handoff(summary + " [re-think #%s]" % eid,
+                           ask, "atlas-research", new_context,
+                           "Findings only. Brian's decision above is settled — "
+                           "build on it, don't relitigate it.",
+                           dry_run=dry_run)
+        if ok and not dry_run:
+            exec_sql(
+                "UPDATE successbrian_os.worker_escalations "
+                "SET status = 'rethought', resolution = %s, resolved_at = now() "
+                "WHERE id = %s" % (pq("Re-thought after Brian's answer"), eid))
+            n += 1
+    if n:
+        print("re-think: re-queued %d research item(s) with Brian's decisions" % n)
+    return n
+
+
 def main():
     dry_run = "--dry-run" in sys.argv
     prev_digest = consume_completed(dry_run)
@@ -707,6 +756,7 @@ def main():
     print("buffer: Sonic decomposed %d additional task(s)" % b)
     queue_deep_pass(tasks, prev_digest, dry_run)
     queue_atlas_research(dry_run)
+    rethink_answered(dry_run)
     return 0
 
 

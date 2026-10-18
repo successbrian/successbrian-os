@@ -162,7 +162,9 @@ RESEARCH_STAGES = [
     ("UNDERSTAND",
      "Restate the item in your own words. Map its Atlas connections — what "
      "depends on it, what it feeds. State clearly what is actually unknown "
-     "vs. what the context already answers."),
+     "vs. what the context already answers. Flag decisions you cannot make: "
+     "ALTAIR DECISION: <q> for ecosystem-ops calls, MEGHAN DECISION: <q> for "
+     "CEO-level calls, PENDING BRIAN CALL: <q> for Brian's calls."),
     ("ANALYZE",
      "Work the substance. Tradeoffs, free-first cost reality, fit with the "
      "ecosystem (self-hosted, his hardware, zero-chat-operation). Which "
@@ -177,11 +179,128 @@ RESEARCH_STAGES = [
      "could just do."),
 ]
 
+
+
+# ---- Lyra escalation chain (Brian 2026-10-17) ----
+# Worker runs as Lyra (ecosystem manager). Decision points escalate:
+# ecosystem-ops -> Altair, CEO-level -> Meghan, Brian-level -> inbox w/
+# priority. Board reviews at the checkpoint; Altair then Meghan review
+# the board's findings. Brian's answers trigger a re-think.
+
+BOARD_SEATS = [
+    ("Chief MLM Officer", "Big-picture MLM decisions — strategy, focus, starts/stops."),
+    ("Chief Affiliate Marketing Officer", "Affiliate income streams — partnerships, commissions, conversion."),
+    ("Chief Marketing Officer", "Email/lifecycle direction — sequences, followup, campaigns."),
+    ("Chief People Enrichment Officer", "Lead strategy — where to find, what to enrich."),
+    ("Chief Blog Content Officer", "Content direction — blog topics, video readiness, audio slate."),
+    ("Chief Trading Desk Officer", "Trading strategy and risk posture."),
+    ("Chief Hardware Flipping Officer", "Flipping calls — sourcing, listing, repricing."),
+    ("Chief Ecosystem Build Officer", "Build priorities — fleet capabilities, lab progress, infra."),
+    ("Chief Financial Officer", "Closes the money conversation — revenue, spending, capital allocation."),
+]
+
+def parse_escalations(text):
+    """Find ALTAIR DECISION: / MEGHAN DECISION: / PENDING BRIAN CALL: lines."""
+    out = []
+    for ln in (text or "").split("\n"):
+        t = ln.strip()
+        u = t.upper()
+        for prefix, tier in (("ALTAIR DECISION:", "altair"),
+                             ("MEGHAN DECISION:", "meghan"),
+                             ("PENDING BRIAN CALL:", "brian")):
+            if u.startswith(prefix):
+                q = t[len(prefix):].strip()
+                if q:
+                    out.append((tier, q))
+                break
+    return out
+
+def parse_brian_priority(text, question):
+    """MEGHAN REVIEW assigns BRIAN PRIORITY: <1-3> near the question."""
+    best = 2
+    ql = question[:60].lower()
+    for ln in (text or "").split("\n"):
+        if "BRIAN PRIORITY" in ln.upper() and ql in ln.lower():
+            m = re.search(r"([1-3])", ln)
+            if m:
+                return int(m.group(1))
+    m = re.search(r"BRIAN PRIORITY:\s*([1-3])", text or "", re.I)
+    if m:
+        best = int(m.group(1))
+    return best
+
+def file_escalation(hid, kind, tier, question, context, priority=2):
+    """Record escalation; route to the real agent / Brian's inbox."""
+    r = subprocess.run(PSQL + ["-c",
+        "INSERT INTO successbrian_os.worker_escalations "
+        "(handoff_id, worker_kind, tier, question, context, priority) "
+        "VALUES (%d, %s, %s, %s, %s, %d) RETURNING id;"
+        % (hid, pq(kind), pq(tier), pq(question[:2000]),
+           pq((context or "")[:2000]), priority)],
+        capture_output=True, text=True, timeout=30)
+    eid = int(r.stdout.strip().split("\n")[0]) if r.returncode == 0 else None
+    pq_id = None
+    if tier in ("altair", "meghan"):
+        # Real agent sees it on their heartbeat via knowledge_bridge.
+        subprocess.run(PSQL + ["-c",
+            "INSERT INTO public.knowledge_bridge "
+            "(source_agent, target_agent, subject, message, urgency) "
+            "VALUES ('lyra', %s, %s, %s, 'high');"
+            % (pq(tier), pq("Lyra worker escalation (handoff #%d)" % hid),
+               pq(question[:2000] + "\n\nContext: " + (context or "")[:1500]))],
+            capture_output=True, text=True, timeout=30)
+        print("#%d: escalated to %s via bridge (esc #%s)" % (hid, tier, eid))
+    elif tier == "brian":
+        rq = subprocess.run(PSQL + ["-c",
+            "INSERT INTO successbrian_os.pending_questions "
+            "(asked_by, question, context, priority) VALUES ('lyra', %s, %s, %d) "
+            "RETURNING id;"
+            % (pq(question[:2000]),
+               pq("From Lyra worker handoff #%d (%s)" % (hid, (context or "")[:500])),
+               priority)],
+            capture_output=True, text=True, timeout=30)
+        if rq.returncode == 0:
+            pq_id = int(rq.stdout.strip().split("\n")[0])
+            subprocess.run(PSQL + ["-c",
+                "UPDATE successbrian_os.worker_escalations SET pq_id = %d "
+                "WHERE id = %d;" % (pq_id, eid)],
+                capture_output=True, text=True, timeout=30)
+        print("#%d: filed for Brian (priority %d, pq #%s)" % (hid, priority, pq_id))
+    return eid
+
+def board_session_prompt(base_ctx, notes_text):
+    seats = "\n".join("- %s: %s" % st for st in BOARD_SEATS)
+    return (base_ctx +
+        "\n\n=== BOARD SESSION ===\n"
+        "You are Brian's board of directors in session — 9 seats, advisory only "
+        "(input via recommendations, never orders). The seats:\n" + seats +
+        "\n\nReview the research state below. Each seat speaks briefly FROM ITS "
+        "MANDATE — only seats with something real to say speak. Then output:\n\n"
+        "BOARD FINDINGS:\n1. <finding>\n\nDISAGREEMENTS:\n- <where seats split>\n\n"
+        "QUESTIONS FOR BRIAN:\n- <question>\n\n"
+        "Research state:\n" + notes_text[:12000])
+
+def review_prompt(base_ctx, board_text, reviewer, reviewer_role, decision_tier):
+    return (base_ctx +
+        "\n\n=== %s REVIEW ===\nYou are %s — %s. "
+        "Review the board's findings below. For each open %s-level decision: "
+        "either RESOLVE it with your reasoning (RESOLVED: <decision> — <why>), "
+        "or confirm it needs escalation (%s DECISION: <question>). "
+        "For anything needing Brian, use PENDING BRIAN CALL: <question> and add "
+        "a line BRIAN PRIORITY: <1-3> (3 = blocks progress, 2 = matters, 1 = FYI)."
+        "\n\nBoard findings:\n%s"
+        % (reviewer.upper(), reviewer, reviewer_role, decision_tier,
+           decision_tier.upper(), board_text[:8000]))
+
+
 def run_research_loop(key, h, hid):
     kind = "atlas-research"
     profile = load_profile(kind)
     learnings = load_learnings(kind)
-    base_ctx = ("WORKER PROFILE:\n" + profile +
+    base_ctx = ("You are a Lyra worker — Lyra is the ecosystem manager, "
+                "a customized Hermes agent stripped down to run the ecosystem. "
+                "You research, you escalate, you never decide for Brian.\n\n"
+                "WORKER PROFILE:\n" + profile +
                 "\n\nLEARNINGS FROM PREVIOUS RUNS (apply them):\n" + learnings +
                 "\n\nATLAS ITEM: %s\nASSIGNMENT: %s\n\nITEM CONTEXT:\n%s\n\nCONSTRAINTS:\n%s"
                 % (h["summary"], h["ask"], h["context"] or "(none)",
@@ -199,6 +318,35 @@ def run_research_loop(key, h, hid):
         notes.append((stage_name, out))
         print("#%d: stage %s done (%d chars)" % (hid, stage_name, len(out)))
     all_notes = "\n".join("--- %s ---\n%s" % (n, o) for n, o in notes)
+    # BOARD SESSION at the checkpoint (Brian 2026-10-17)
+    board_out = call_v4pro(key, board_session_prompt(base_ctx, all_notes))
+    notes.append(("BOARD", board_out))
+    print("#%d: board session done (%d chars)" % (hid, len(board_out)))
+    # ALTAIR reviews the board's findings (ecosystem ops lens)
+    altair_out = call_v4pro(key, review_prompt(
+        base_ctx, board_out, "Altair", "Sr. VP, ecosystem operations — "
+        "owns the lab, the fleet, and day-to-day execution",
+        "ecosystem-ops"))
+    notes.append(("ALTAIR REVIEW", altair_out))
+    print("#%d: altair review done (%d chars)" % (hid, len(altair_out)))
+    # MEGHAN reviews (CEO lens), assigns Brian priorities
+    meghan_out = call_v4pro(key, review_prompt(
+        base_ctx, board_out + "\n\nAltair's review:\n" + altair_out[:4000],
+        "Meghan", "CEO — capital, strategy, and what Brian himself must decide",
+        "ceo"))
+    notes.append(("MEGHAN REVIEW", meghan_out))
+    print("#%d: meghan review done (%d chars)" % (hid, len(meghan_out)))
+    all_notes = "\n".join("--- %s ---\n%s" % (n, o) for n, o in notes)
+    # File every flagged decision to its tier
+    seen = set()
+    for stage_name, stage_out in notes:
+        for tier, q in parse_escalations(stage_out):
+            if q[:80] in seen:
+                continue
+            seen.add(q[:80])
+            prio = parse_brian_priority(meghan_out, q) if tier == "brian" else 2
+            file_escalation(hid, kind, tier, q,
+                            "%s | %s" % (h["summary"], stage_name), prio)
     final = call_v4pro(key, base_ctx +
         "\n\nAll research stages complete. Their output:\n" + all_notes[:12000] +
         "\n\nNow write the FINAL synthesis in EXACTLY this format:\n\n"

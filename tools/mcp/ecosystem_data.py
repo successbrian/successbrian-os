@@ -162,5 +162,89 @@ def inbox_recent(limit: int = 10) -> str:
     return "\n".join(out)
 
 
+@mcp.tool()
+def lyra_chain_status() -> str:
+    """Lyra worker chain status: halted?, queue depth, recent completions,
+    V4 balance. The fast way to see if the machine is running."""
+    out = []
+    rows, err = _psql(
+        "SELECT key, value FROM successbrian_os.chain_controls "
+        "WHERE key IN ('lyra_chain_halted', 'lyra_daily_spend_cap_usd');")
+    if not err and rows:
+        out.append("controls: " + ", ".join(
+            "%s=%s" % tuple(r.split("\t")) for r in rows))
+    rows, err = _psql(
+        "SELECT status, count(*) FROM successbrian_os.v4pro_handoffs "
+        "WHERE created_at > now() - interval '24 hours' "
+        "GROUP BY status;")
+    if not err and rows:
+        out.append("handoffs (24h): " + ", ".join(
+            "%s=%s" % (r.split("\t")[0], r.split("\t")[1]) for r in rows))
+    rows, err = _psql(
+        "SELECT usd, available FROM successbrian_os.v4pro_balance_history "
+        "ORDER BY checked_at DESC LIMIT 1;")
+    if not err and rows:
+        usd, avail = rows[0].split("\t")
+        out.append("V4 balance: $%s (available=%s)" % (usd, avail))
+    rows, err = _psql(
+        "SELECT count(*) FROM successbrian_os.v4pro_worker_learnings "
+        "WHERE status = 'active';")
+    if not err and rows:
+        out.append("active learnings: %s" % rows[0])
+    return "\n".join(out) if out else "chain status unavailable"
+
+
+@mcp.tool()
+def lyra_escalations(tier: str = "", limit: int = 10) -> str:
+    """Open Lyra worker escalations by tier (altair/meghan/brian).
+
+    Args:
+        tier: Filter by tier (default all open).
+        limit: Max results (default 10, max 50).
+    """
+    limit = max(1, min(int(limit), 50))
+    filt = ""
+    if tier:
+        if tier not in ("altair", "meghan", "brian"):
+            return "unknown tier '%s'" % tier
+        filt = "AND tier='%s'" % tier
+    rows, err = _psql(
+        "SELECT id, tier, priority, left(question, 120), status "
+        "FROM successbrian_os.worker_escalations "
+        "WHERE status = 'open' %s "
+        "ORDER BY priority DESC, created_at DESC LIMIT %d;" % (filt, limit))
+    if err:
+        return "error: %s" % err
+    if not rows:
+        return "no open escalations"
+    return "\n".join(
+        "#%s [%s p%s] %s (%s)" % tuple(r.split("\t")) for r in rows)
+
+
+@mcp.tool()
+def lyra_learnings(kind: str = "", limit: int = 10) -> str:
+    """Recent active Lyra worker learnings — what the fleet has learned.
+
+    Args:
+        kind: Filter by worker kind (default all).
+        limit: Max results (default 10, max 50).
+    """
+    limit = max(1, min(int(limit), 50))
+    filt = ""
+    if kind:
+        filt = "AND worker_kind='%s'" % _like_escape(kind)
+    rows, err = _psql(
+        "SELECT id, worker_kind, left(learning, 160) "
+        "FROM successbrian_os.v4pro_worker_learnings "
+        "WHERE status = 'active' %s "
+        "ORDER BY created_at DESC LIMIT %d;" % (filt, limit))
+    if err:
+        return "error: %s" % err
+    if not rows:
+        return "no learnings yet"
+    return "\n".join(
+        "#%s [%s] %s" % tuple(r.split("\t")) for r in rows)
+
+
 if __name__ == "__main__":
     mcp.run()

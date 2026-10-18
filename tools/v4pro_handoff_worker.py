@@ -159,6 +159,19 @@ def write_learning(kind, text, handoff_id):
         % (pq(kind), pq(text[:2000]), handoff_id)],
         capture_output=True, text=True, timeout=30)
 
+
+def save_learnings_from_text(kind, text, hid):
+    """Parse LEARNING: lines and write each one."""
+    n = 0
+    for ln in (text or "").split("\n"):
+        t = ln.strip()
+        if t.upper().startswith("LEARNING:"):
+            write_learning(kind, t[len("LEARNING:"):].strip(), hid)
+            n += 1
+    if n:
+        print("#%d: wrote %d learning(s)" % (hid, n))
+    return n
+
 RESEARCH_STAGES = [
     ("UNDERSTAND",
      "Restate the item in your own words. Map its Atlas connections — what "
@@ -411,6 +424,67 @@ def has_profile(kind):
 
 
 
+
+
+SONIC_CAPABLE = {"ecosystem-health"}  # kinds Sonic can run light
+SONIC_URL = "http://127.0.0.1:11439/v1/chat/completions"
+
+
+def lyra_mode():
+    r = subprocess.run(PSQL + ["-c",
+        "SELECT value FROM successbrian_os.chain_controls "
+        "WHERE key = 'lyra_mode';"],
+        capture_output=True, text=True, timeout=30)
+    return r.stdout.strip() or "v4"
+
+
+def call_sonic(prompt, max_tokens=2000):
+    import json, urllib.request
+    req = urllib.request.Request(
+        SONIC_URL,
+        data=json.dumps({
+            "model": "qwen3.6",
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens, "temperature": 0.3}).encode(),
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=600) as r:
+        return json.loads(r.read().decode())["choices"][0]["message"]["content"]
+
+
+def run_sonic_light(h, hid):
+    """Single-pass Sonic run for sonic-capable work. Emits HEALTH_FIX lines
+    for the deterministic applier, plus findings. The machine keeps working
+    while V4 is dry."""
+    prompt = (
+        "You are a Lyra health worker (light mode — V4 Pro is dry, you are "
+        "Sonic, the local model). Be mechanical and careful.\n\n"
+        "ASSIGNMENT: %s\n\nCONTEXT:\n%s\n\n"
+        "Output:\n"
+        "1. HEALTH_FIX lines for safe reversible fixes ONLY, one per line:\n"
+        "   HEALTH_FIX: DROP_DEAD_EDGE | from,to,type\n"
+        "   HEALTH_FIX: SUPERSEDE_LEARNING | drop_id,keep_id\n"
+        "   HEALTH_FIX: SET_NODE_STATUS | node_key,new_status\n"
+        "   HEALTH_FIX: WIRE_ORPHAN | from,to,type\n"
+        "   (Only emit a fix when you are certain. When unsure, skip it.)\n"
+        "2. FINDINGS: numbered list of what you found.\n"
+        "3. PROPOSED PLANS: anything needing Brian or deeper work."
+        % (h["summary"], (h.get("context") or "")[:4000]))
+    try:
+        out = call_sonic(prompt)
+    except Exception as e:
+        return "SONIC LIGHT-PASS FAILED: %s" % str(e)[:200]
+    print("#%d: sonic light-pass done (%d chars)" % (hid, len(out)))
+    # Learnings stay cheap too
+    try:
+        learn_out = call_sonic(
+            "One line starting with LEARNING: — what did this health sweep "
+            "teach about keeping the ecosystem clean? Skip filler.", 300)
+        save_learnings_from_text(h["kind"], learn_out, hid)
+    except Exception:
+        pass
+    return out
+
+
 def run_full_board(key, h, hid):
     """Full 14-seat board deliberation. One independent V4 call per seat,
     then a synthesis that preserves disagreements."""
@@ -490,7 +564,7 @@ def run_full_board(key, h, hid):
         "learnings about the deliberation itself (not the topic) as lines "
         "starting with LEARNING: — e.g. which seats clashed, what the "
         "synthesis missed. Skip generic filler.")
-    save_learnings("full-board", learn_out, hid)
+    save_learnings_from_text("full-board", learn_out, hid)
     return synth
 
 
@@ -617,6 +691,9 @@ def worker_main(slots=SLOTS_PER_WORKER):
             if h["kind"] == "full-board":
                 print("#%d: FULL BOARD deliberation (14 seats)" % hid)
                 result = run_full_board(key, h, hid)
+            elif lyra_mode() == "sonic" and h["kind"] in SONIC_CAPABLE:
+                print("#%d: V4 dry — Sonic light-pass (%s)" % (hid, h["kind"]))
+                result = run_sonic_light(h, hid)
             elif has_profile(h["kind"]):
                 print("#%d: Lyra profile loop (%s)" % (hid, h["kind"]))
                 result = run_research_loop(key, h, hid)

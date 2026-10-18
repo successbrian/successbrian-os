@@ -1122,5 +1122,13 @@ def main():
     return 0
 
 
+# Governor: sense -> decide -> act -> observe (Brian 2026-10-17, coded loop)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import governor as _gov
+    _gov.main(dry_run="--dry-run" in sys.argv)
+except Exception as _e:
+    print("governor failed: %s" % str(_e)[:100])
+
 if __name__ == "__main__":
     sys.exit(main())

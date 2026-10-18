@@ -741,6 +741,43 @@ def queue_cleanup_assessment(dry_run=False):
     return n
 
 
+
+
+EVAL_ITEMS = [
+    "plan:mlm-resource-call",
+    "int:n8n",
+]
+
+def queue_monthly_eval(dry_run=False):
+    """First tick of each month: re-queue canned eval items (drift watch)."""
+    marker = query(
+        "SELECT value FROM successbrian_os.chain_controls "
+        "WHERE key = 'lyra_eval_month';").strip()
+    import datetime
+    this_month = datetime.datetime.now().strftime("%Y-%m")
+    if marker == this_month:
+        return 0
+    n = 0
+    for nk in EVAL_ITEMS:
+        det = query(
+            "SELECT left(details::text, 800), left(coalesce(summary,''), 300) "
+            "FROM atlas.nodes WHERE node_key = %s" % pq(nk))
+        if queue_handoff("Atlas research: " + nk + " [eval-monthly]",
+                         "EVAL RUN — answer the research as normal. Output "
+                         "FINDINGS / PROPOSED PLANS / DATA GAPS exactly.",
+                         "atlas-research",
+                         "EVAL ITEM (drift watch).\n" + det,
+                         "Findings only.", dry_run=dry_run):
+            n += 1
+    if n and not dry_run:
+        exec_sql(
+            "UPDATE successbrian_os.chain_controls SET value = '%s', "
+            "updated_at = now() WHERE key = 'lyra_eval_month';" % this_month)
+    if n:
+        print("queued %d monthly eval handoff(s)" % n)
+    return n
+
+
 def rethink_answered(dry_run=False):
     """Brian answered a Lyra worker's gated question — re-think the research
     with his decision folded in, then let the chain run again."""
@@ -758,6 +795,14 @@ def rethink_answered(dry_run=False):
         eid, hid, kind = parts[0].strip(), parts[1].strip(), parts[2].strip()
         question, answer = parts[3].strip(), parts[4].strip()
         if not eid.isdigit():
+            continue
+        # Storm guard: max 2 re-thinks per escalation per 7 days
+        rc = query(
+            "SELECT count(*) FROM successbrian_os.v4pro_handoffs "
+            "WHERE task_summary LIKE '%re-think #' || %s || '%%' "
+            "AND created_at > NOW() - INTERVAL '7 days'" % pq(eid))
+        if rc.strip().isdigit() and int(rc.strip()) >= 2:
+            print("re-think cap hit for escalation #%s — skip" % eid)
             continue
         # Recover the research item from the original handoff
         item = query(
@@ -812,6 +857,7 @@ def main():
     queue_deep_pass(tasks, prev_digest, dry_run)
     queue_atlas_research(dry_run)
     queue_cleanup_assessment(dry_run)
+    queue_monthly_eval(dry_run)
     rethink_answered(dry_run)
     return 0
 

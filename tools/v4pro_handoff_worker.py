@@ -176,7 +176,9 @@ RESEARCH_STAGES = [
     ("PROPOSE",
      "Concrete plan proposals, each one line of title plus one line of "
      "rationale. Mark which ones need Brian's call vs. which the system "
-     "could just do."),
+     "could just do. For every flagged decision also write: GOAL: <one-line "
+     "goal> and TRIED: <what was already tried, short> and ACCEPT_IF: "
+     "<how to judge an acceptable answer — write the check before asking>."),
 ]
 
 
@@ -231,14 +233,18 @@ def parse_brian_priority(text, question):
         best = int(m.group(1))
     return best
 
-def file_escalation(hid, kind, tier, question, context, priority=2):
-    """Record escalation; route to the real agent / Brian's inbox."""
+def file_escalation(hid, kind, tier, question, context, priority=2, packet=None):
+    """Record escalation (packet v2); route to the real agent / Brian's inbox."""
+    packet = packet or {}
     r = subprocess.run(PSQL + ["-c",
         "INSERT INTO successbrian_os.worker_escalations "
-        "(handoff_id, worker_kind, tier, question, context, priority) "
-        "VALUES (%d, %s, %s, %s, %s, %d) RETURNING id;"
+        "(handoff_id, worker_kind, tier, question, context, priority, "
+        " goal, reason, tried, accept_if) "
+        "VALUES (%d, %s, %s, %s, %s, %d, %s, %s, %s, %s) RETURNING id;"
         % (hid, pq(kind), pq(tier), pq(question[:2000]),
-           pq((context or "")[:2000]), priority)],
+           pq((context or "")[:2000]), priority,
+           pq(packet.get("goal", "")[:300]), pq(packet.get("reason", "")[:500]),
+           pq(packet.get("tried", "")[:500]), pq(packet.get("accept_if", "")[:500]))],
         capture_output=True, text=True, timeout=30)
     eid = int(r.stdout.strip().split("\n")[0]) if r.returncode == 0 else None
     pq_id = None
@@ -270,6 +276,85 @@ def file_escalation(hid, kind, tier, question, context, priority=2):
         print("#%d: filed for Brian (priority %d, pq #%s)" % (hid, priority, pq_id))
     return eid
 
+
+
+# ---- v2: packet, guards, trajectories, kill-switch ----
+
+def chain_halted():
+    r = subprocess.run(PSQL + ["-c",
+        "SELECT value FROM successbrian_os.chain_controls "
+        "WHERE key = 'lyra_chain_halted';"],
+        capture_output=True, text=True, timeout=30)
+    return r.stdout.strip().lower() == "true"
+
+def chain_control(key):
+    r = subprocess.run(PSQL + ["-c",
+        "SELECT value FROM successbrian_os.chain_controls WHERE key = %s;"
+        % pq(key)], capture_output=True, text=True, timeout=30)
+    return r.stdout.strip()
+
+def record_worker_error():
+    """Auto-stop on error burst (v2 kill-switch): N failures in an hour halts."""
+    subprocess.run(PSQL + ["-c",
+        "INSERT INTO successbrian_os.chain_controls (key, value) "
+        "VALUES ('lyra_err_' || to_char(now(),'YYYYMMDDHH24MI'), '1') "
+        "ON CONFLICT (key) DO NOTHING;"],
+        capture_output=True, text=True, timeout=30)
+    r = subprocess.run(PSQL + ["-c",
+        "SELECT count(*) FROM successbrian_os.chain_controls "
+        "WHERE key LIKE 'lyra_err_%' AND updated_at > now() - interval '1 hour';"],
+        capture_output=True, text=True, timeout=30)
+    try:
+        thresh = int(chain_control("lyra_auto_stop_on_errors") or "5")
+    except ValueError:
+        thresh = 5
+    if r.stdout.strip().isdigit() and int(r.stdout.strip()) >= thresh:
+        subprocess.run(PSQL + ["-c",
+            "UPDATE successbrian_os.chain_controls SET value = 'true', "
+            "updated_at = now() WHERE key = 'lyra_chain_halted';"],
+            capture_output=True, text=True, timeout=30)
+        print("KILL-SWITCH: error burst (%s/hr) — chain halted, Brian must restart"
+              % r.stdout.strip())
+        return True
+    return False
+
+def parse_packet(text, question):
+    """Pull ACCEPT_IF / TRIED / GOAL lines associated with a flagged question."""
+    pkt = {"accept_if": "", "tried": "", "goal": ""}
+    ql = question[:50].lower()
+    lines = (text or "").split("\n")
+    for i, ln in enumerate(lines):
+        u = ln.strip().upper()
+        if u.startswith("ACCEPT_IF:") and ql in "\n".join(lines[max(0,i-6):i]).lower():
+            pkt["accept_if"] = ln.strip()[len("ACCEPT_IF:"):].strip()[:500]
+        elif u.startswith("TRIED:") and ql in "\n".join(lines[max(0,i-6):i]).lower():
+            pkt["tried"] = ln.strip()[len("TRIED:"):].strip()[:500]
+        elif u.startswith("GOAL:") and ql in "\n".join(lines[max(0,i-6):i]).lower():
+            pkt["goal"] = ln.strip()[len("GOAL:"):].strip()[:300]
+    return pkt
+
+def load_trajectories(kind, limit=2):
+    """ExpeL's second memory: recent successful runs as few-shot examples."""
+    r = subprocess.run(PSQL + ["-c",
+        "SELECT left(v4pro_result, 1500) FROM successbrian_os.v4pro_handoffs "
+        "WHERE task_kind = %s AND status = 'done' AND v4pro_result IS NOT NULL "
+        "ORDER BY completed_at DESC LIMIT %d;" % (pq(kind), limit)],
+        capture_output=True, text=True, timeout=30)
+    rows = [ln.strip() for ln in r.stdout.split("\n") if ln.strip()]
+    if not rows:
+        return ""
+    return ("\n\nPAST SUCCESSFUL RUNS (same kind — learn the shape of good output):\n" +
+            "\n---\n".join(rows))
+
+def tier_brief():
+    """Tiers as config, injected into review prompts."""
+    r = subprocess.run(PSQL + ["-c",
+        "SELECT tier || ': ' || label || ' | decides: ' || decision_classes "
+        "FROM successbrian_os.worker_tiers ORDER BY tier;"],
+        capture_output=True, text=True, timeout=30)
+    return r.stdout.strip() or "(tier config unavailable)"
+
+
 def board_session_prompt(base_ctx, notes_text):
     live = load_board_seats()
     seats = "\n".join("- %s: %s" % st for st in live) or "(roster unavailable)"
@@ -287,7 +372,11 @@ def board_session_prompt(base_ctx, notes_text):
 def review_prompt(base_ctx, board_text, reviewer, reviewer_role, decision_tier):
     return (base_ctx +
         "\n\n=== %s REVIEW ===\nYou are %s — %s. "
-        "Review the board's findings below. For each open %s-level decision: "
+        "CONFORMITY GUARD: evaluate the RAW findings below INDEPENDENTLY. "
+        "Do NOT defer to the board's verdict or any prior tier's take — "
+        "they can be wrong, and nodding along is the failure mode. Where you "
+        "disagree with the board, say so plainly and why. "
+        "For each open %s-level decision: "
         "either RESOLVE it with your reasoning (RESOLVED: <decision> — <why>), "
         "or confirm it needs escalation (%s DECISION: <question>). "
         "For anything needing Brian, use PENDING BRIAN CALL: <question> and add "
@@ -308,10 +397,12 @@ def run_research_loop(key, h, hid):
     kind = "atlas-research"
     profile = load_profile(kind)
     learnings = load_learnings(kind)
+    trajectories = load_trajectories(kind)
     base_ctx = ("You are a Lyra worker — Lyra is the ecosystem manager, "
                 "a customized Hermes agent stripped down to run the ecosystem. "
                 "You research, you escalate, you never decide for Brian.\n\n"
-                "WORKER PROFILE:\n" + profile +
+                "ESCALATION TIERS (configured):\n" + tier_brief() +
+                "\n\nWORKER PROFILE:\n" + profile + trajectories +
                 "\n\nLEARNINGS FROM PREVIOUS RUNS (apply them):\n" + learnings +
                 "\n\nATLAS ITEM: %s\nASSIGNMENT: %s\n\nITEM CONTEXT:\n%s\n\nCONSTRAINTS:\n%s"
                 % (h["summary"], h["ask"], h["context"] or "(none)",
@@ -356,8 +447,10 @@ def run_research_loop(key, h, hid):
                 continue
             seen.add(q[:80])
             prio = parse_brian_priority(meghan_out, q) if tier == "brian" else 2
+            pkt = parse_packet(stage_out, q)
+            pkt["reason"] = "%s flagged during %s" % (tier, stage_name)
             file_escalation(hid, kind, tier, q,
-                            "%s | %s" % (h["summary"], stage_name), prio)
+                            "%s | %s" % (h["summary"], stage_name), prio, pkt)
     final = call_v4pro(key, base_ctx +
         "\n\nAll research stages complete. Their output:\n" + all_notes[:12000] +
         "\n\nNow write the FINAL synthesis in EXACTLY this format:\n\n"
@@ -399,6 +492,9 @@ SLOTS_PER_WORKER = 2
 
 
 def worker_main(slots=SLOTS_PER_WORKER):
+    if chain_halted():
+        print("chain halted by kill-switch — worker idle (Brian must restart)")
+        return 0
     key = get_key()
     if not key:
         print("no DEEPSEEK_API_KEY — worker idle")
@@ -431,6 +527,8 @@ def worker_main(slots=SLOTS_PER_WORKER):
             else:
                 mark(hid, "failed", error=str(e))
                 print("#%d: failed: %s" % (hid, str(e)[:200]))
+                if record_worker_error():
+                    return 0
     return 0
 
 

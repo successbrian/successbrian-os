@@ -880,10 +880,52 @@ def queue_cleanup_assessment(dry_run=False):
 
 
 
+def judge_full_board_worthy(question, context):
+    """Sonic judges: is this important/valuable enough for the full 14-seat
+    board? Returns (worthy: bool, reason: str). The system figures it out."""
+    import json, urllib.request
+    prompt = (
+        "You judge whether a decision facing Brian warrants his full 14-seat "
+        "board of directors (14 separate deliberations — expensive, reserved "
+        "for important and valuable decisions).\n\n"
+        "WORTHY if: irreversible or hard-to-reverse; involves significant money, "
+        "direction, or commitments; has real tradeoffs where different "
+        "perspectives (compliance, audience, finance, etc.) would genuinely "
+        "disagree; affects multiple income streams or the ecosystem's future.\n\n"
+        "NOT WORTHY if: routine, easily reversible, purely informational, "
+        "narrow execution detail, or one perspective clearly suffices.\n\n"
+        "QUESTION: %s\n\nCONTEXT: %s\n\n"
+        "Reply EXACTLY: WORTHY: yes|no \n REASON: <one line>."
+        % (question[:1500], (context or "")[:1500]))
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:11439/v1/chat/completions",
+            data=json.dumps({
+                "model": "qwen3.6",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 150, "temperature": 0.3}).encode(),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            out = json.loads(r.read().decode())["choices"][0]["message"]["content"]
+        worthy = "WORTHY: YES" in out.upper()
+        reason = ""
+        for ln in out.split("\n"):
+            if ln.strip().upper().startswith("REASON:"):
+                reason = ln.strip()[7:].strip()[:300]
+        return worthy, reason or "(no reason given)"
+    except Exception as e:
+        print("full-board judgment failed (%s) — defaulting to no" % str(e)[:80])
+        return False, "judge unavailable"
+
+
 def queue_full_boards(dry_run=False):
-    """Standing rule (Brian 2026-10-17): important + valuable decisions get
-    the full 14-seat board. Trigger: brian-tier escalation at priority 1
-    (blocks) with no full-board run yet."""
+    """The system figures out when the full board should run.
+    - p1 brian-tier: deterministic, always.
+    - p2 brian-tier: Sonic judges worthiness.
+    - FULL BOARD RECOMMENDED flags in handoff results: honored directly."""
+    queued = 0
+
+    # 1. Deterministic: p1 brian-tier escalations
     rows = query(
         "SELECT e.id, e.question, e.context, e.accept_if "
         "FROM successbrian_os.worker_escalations e "
@@ -891,31 +933,72 @@ def queue_full_boards(dry_run=False):
         "AND NOT EXISTS (SELECT 1 FROM successbrian_os.v4pro_handoffs h "
         "WHERE h.task_kind = 'full-board' "
         "AND h.task_summary LIKE '%escalation #' || e.id || '%');")
-    n = 0
+    p1 = []
     for ln in rows.split("\n"):
         parts = ln.split("\t")
-        if len(parts) < 2:
+        if len(parts) >= 2 and parts[0].strip().isdigit() and parts[1].strip():
+            p1.append((parts[0].strip(), parts[1].strip(),
+                       parts[2].strip() if len(parts) > 2 else "",
+                       parts[3].strip() if len(parts) > 3 else "",
+                       "priority-1 escalation (deterministic)"))
+    # 2. Judgment: p2 brian-tier escalations
+    rows = query(
+        "SELECT e.id, e.question, e.context "
+        "FROM successbrian_os.worker_escalations e "
+        "WHERE e.tier = 'brian' AND e.priority = 2 AND e.status = 'open' "
+        "AND e.created_at > NOW() - INTERVAL '24 hours' "
+        "AND NOT EXISTS (SELECT 1 FROM successbrian_os.v4pro_handoffs h "
+        "WHERE h.task_kind = 'full-board' "
+        "AND h.task_summary LIKE '%escalation #' || e.id || '%');")
+    judged = []
+    for ln in rows.split("\n"):
+        parts = ln.split("\t")
+        if len(parts) >= 2 and parts[0].strip().isdigit() and parts[1].strip():
+            eid, q = parts[0].strip(), parts[1].strip()
+            ctx = parts[2].strip() if len(parts) > 2 else ""
+            if dry_run:
+                judged.append((eid, q, ctx, "", "p2 (judgment skipped in dry-run)"))
+                continue
+            worthy, reason = judge_full_board_worthy(q, ctx)
+            print("full-board judgment on escalation #%s: %s — %s"
+                  % (eid, "WORTHY" if worthy else "not worthy", reason[:100]))
+            if worthy:
+                judged.append((eid, q, ctx, "", "judged worthy: " + reason))
+    # 3. Worker flags: FULL BOARD RECOMMENDED in recent handoff results
+    rows = query(
+        "SELECT id, task_summary, v4pro_result FROM successbrian_os.v4pro_handoffs "
+        "WHERE status = 'done' AND v4pro_result LIKE '%FULL BOARD RECOMMENDED:%' "
+        "AND created_at > NOW() - INTERVAL '24 hours' "
+        "AND NOT EXISTS (SELECT 1 FROM successbrian_os.v4pro_handoffs h2 "
+        "WHERE h2.task_kind = 'full-board' "
+        "AND h2.task_summary LIKE '%handoff #' || v4pro_handoffs.id || '%');")
+    flagged = []
+    for ln in rows.split("\n"):
+        # rows may contain tabs/newlines in result; parse defensively
+        if not ln.strip():
             continue
-        eid, question = parts[0].strip(), parts[1].strip()
-        ctx = parts[2].strip() if len(parts) > 2 else ""
-        accept = parts[3].strip() if len(parts) > 3 else ""
-        if not eid.isdigit() or not question:
-            continue
+        hid = ln.split("\t")[0].strip()
+        if hid.isdigit():
+            m = ln.upper().find("FULL BOARD RECOMMENDED:")
+            why = ln[m + len("FULL BOARD RECOMMENDED:"):m + 400].strip().split("\n")[0]
+            flagged.append((hid, "handoff #" + hid, "", "",
+                            "worker recommended: " + why[:200]))
+
+    for eid, question, ctx, accept, why in (p1 + judged + flagged):
         ask = ("The board must decide: %s\n\nAcceptance check: %s"
                % (question, accept or "(none given)"))
+        label = "escalation #%s" % eid if not eid.startswith("handoff") else eid
         if queue_handoff(
-                "Full board: escalation #%s" % eid,
+                "Full board: %s" % label,
                 "FULL-BOARD DELIBERATION. " + ask,
                 "full-board",
-                "ESCALATION CONTEXT:\n%s\n\nThis reached Brian's tier at "
-                "priority 1 (blocks). The full board deliberates before it "
-                "lands in his inbox." % ctx[:3000],
+                "TRIGGER: %s\n\nCONTEXT:\n%s" % (why, ctx[:3000]),
                 "Deliberate; the synthesis files the enriched decision.",
                 dry_run=dry_run):
-            n += 1
-    if n:
-        print("queued %d full-board deliberation(s)" % n)
-    return n
+            queued += 1
+    if queued:
+        print("queued %d full-board deliberation(s)" % queued)
+    return queued
 
 
 def queue_monthly_eval(dry_run=False):

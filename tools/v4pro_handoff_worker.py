@@ -382,7 +382,11 @@ def board_session_prompt(base_ctx, notes_text):
         "Research state:\n" + notes_text[:12000])
 
 def review_prompt(base_ctx, board_text, reviewer, reviewer_role, decision_tier):
-    return (base_ctx +
+    flag_note = (" If a decision here is important and valuable enough to "
+                 "warrant the FULL 14-seat board (irreversible, big money, "
+                 "real tradeoffs across mandates), emit: FULL BOARD RECOMMENDED: "
+                 "<why>." if decision_tier == "ceo" else "")
+    return (base_ctx + flag_note +
         "\n\n=== %s REVIEW ===\nYou are %s — %s. "
         "CONFORMITY GUARD: evaluate the RAW findings below INDEPENDENTLY. "
         "Do NOT defer to the board's verdict or any prior tier's take — "

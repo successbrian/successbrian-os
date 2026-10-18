@@ -594,6 +594,100 @@ def fetch_result(hid):
             "result": "\t".join(parts[2:])}
 
 
+
+
+VALID_FIX_STATUSES = {"planned", "active", "inactive", "researching", "closed"}
+
+def apply_health_fix(line):
+    """Apply one HEALTH_FIX line. Returns (ok, note). Whitelist only."""
+    try:
+        _, rest = line.split("HEALTH_FIX:", 1)
+        ftype, args = [x.strip() for x in rest.split("|", 1)]
+    except ValueError:
+        return False, "malformed"
+    ftype = ftype.upper()
+    try:
+        if ftype == "DROP_DEAD_EDGE":
+            frm, to, et = [x.strip() for x in args.split(",")]
+            exists = query(
+                "SELECT 1 FROM atlas.nodes WHERE node_key = %s LIMIT 1;"
+                % pq(to)).strip()
+            if exists:
+                return False, "target exists — not dead, skipped"
+            exec_sql(
+                "DELETE FROM atlas.edges WHERE from_node = %s AND to_node = %s "
+                "AND edge_type = %s;" % (pq(frm), pq(to), pq(et)))
+            return True, "dropped dead edge %s->%s" % (frm, to)
+        if ftype == "SUPERSEDE_LEARNING":
+            drop, keep = [x.strip() for x in args.split(",")]
+            if not (drop.isdigit() and keep.isdigit()) or drop == keep:
+                return False, "bad ids"
+            ok = query(
+                "SELECT count(*) FROM successbrian_os.v4pro_worker_learnings "
+                "WHERE id IN (%s, %s) AND status = 'active';" % (drop, keep)
+                ).strip()
+            if ok != "2":
+                return False, "ids not both active"
+            exec_sql(
+                "UPDATE successbrian_os.v4pro_worker_learnings "
+                "SET status = 'superseded', superseded_by = %s WHERE id = %s;"
+                % (keep, drop))
+            return True, "learning #%s superseded by #%s" % (drop, keep)
+        if ftype == "SET_NODE_STATUS":
+            nk, ns = [x.strip() for x in args.split(",")]
+            if ns not in VALID_FIX_STATUSES:
+                return False, "invalid status"
+            exists = query(
+                "SELECT 1 FROM atlas.nodes WHERE node_key = %s LIMIT 1;"
+                % pq(nk)).strip()
+            if not exists:
+                return False, "node not found"
+            exec_sql(
+                "UPDATE atlas.nodes SET status = %s, updated_at = now() "
+                "WHERE node_key = %s;" % (pq(ns), pq(nk)))
+            return True, "%s -> %s" % (nk, ns)
+        if ftype == "WIRE_ORPHAN":
+            frm, to, et = [x.strip() for x in args.split(",")]
+            both = query(
+                "SELECT count(*) FROM atlas.nodes WHERE node_key IN (%s, %s);"
+                % (pq(frm), pq(to))).strip()
+            if both != "2":
+                return False, "node(s) missing"
+            dup = query(
+                "SELECT 1 FROM atlas.edges WHERE from_node = %s AND to_node = %s "
+                "AND edge_type = %s LIMIT 1;" % (pq(frm), pq(to), pq(et))).strip()
+            if dup:
+                return False, "edge already exists"
+            exec_sql(
+                "INSERT INTO atlas.edges (from_node, to_node, edge_type, notes) "
+                "VALUES (%s, %s, %s, 'wired by lyra health worker');"
+                % (pq(frm), pq(to), pq(et)))
+            return True, "wired %s->%s (%s)" % (frm, to, et)
+        return False, "type not whitelisted"
+    except Exception as e:
+        return False, "error: %s" % str(e)[:100]
+
+
+def consume_health(c, dry_run=False):
+    """Apply HEALTH_FIX lines from an ecosystem-health handoff result."""
+    text = c.get("result") or ""
+    applied, skipped = [], []
+    for ln in text.split("\n"):
+        if "HEALTH_FIX:" not in ln:
+            continue
+        if dry_run:
+            skipped.append("dry-run: " + ln.strip()[:80])
+            continue
+        ok, note = apply_health_fix(ln.strip())
+        (applied if ok else skipped).append(note)
+    if applied or skipped:
+        print("health #%d: %d fix(es) applied, %d skipped"
+              % (c["id"], len(applied), len(skipped)))
+        for n in (applied + ["SKIP: " + x for x in skipped])[:10]:
+            print("  -", n[:120])
+    return applied, skipped
+
+
 def consume_completed(dry_run=False):
     """Read newly completed handoffs; file Brian-calls; return digest."""
     state = load_consume_state()
@@ -636,6 +730,10 @@ def consume_completed(dry_run=False):
             save_consume_state(state)
         print("consumed %d completed handoff(s)" % len(consumed))
     for c in consumed:
+        if c["kind"] == "ecosystem-health":
+            consume_health(c, dry_run)
+            consume_research(c, dry_run)  # files findings + plan proposals too
+            continue
         if c["kind"] in ("atlas-research", "anythingllm-cleanup"):
             consume_research(c, dry_run)
             continue
@@ -701,6 +799,67 @@ def queue_deep_pass(tasks, prev_digest, dry_run=False):
 
 
 CLEANUP_PER_TICK = 2
+
+
+
+HEALTH_SCOPES = [
+    ("atlas-orphans",
+     "Find Atlas nodes with no edges (orphans). For each: determine what it "
+     "should connect to and emit HEALTH_FIX: WIRE_ORPHAN lines for obvious "
+     "links; propose plans for ambiguous ones.",
+     "SELECT node_key, name, node_type FROM atlas.nodes n WHERE NOT EXISTS "
+     "(SELECT 1 FROM atlas.edges e WHERE e.from_node = n.node_key "
+     "OR e.to_node = n.node_key) ORDER BY node_key LIMIT 40;"),
+    ("atlas-dead-edges",
+     "Find Atlas edges whose from_node or to_node no longer exists. Emit "
+     "HEALTH_FIX: DROP_DEAD_EDGE lines for each confirmed dead edge.",
+     "SELECT from_node, to_node, edge_type FROM atlas.edges e WHERE NOT EXISTS "
+     "(SELECT 1 FROM atlas.nodes n WHERE n.node_key = e.from_node) OR NOT EXISTS "
+     "(SELECT 1 FROM atlas.nodes n WHERE n.node_key = e.to_node) LIMIT 40;"),
+    ("stale-statuses",
+     "Find Atlas nodes stuck in 'researching' that already have research doc "
+     "nodes or completed handoffs, and plans marked 'planned' that look done. "
+     "Emit HEALTH_FIX: SET_NODE_STATUS lines with evidence, or proposals.",
+     "SELECT node_key, name, status, updated_at FROM atlas.nodes "
+     "WHERE status = 'researching' AND updated_at < now() - interval '3 days' "
+     "ORDER BY updated_at LIMIT 30;"),
+    ("learning-dupes",
+     "Scan active worker learnings for near-duplicates the weekly curation "
+     "missed. Emit HEALTH_FIX: SUPERSEDE_LEARNING lines.",
+     "SELECT id, worker_kind, left(learning, 200) FROM "
+     "successbrian_os.v4pro_worker_learnings WHERE status = 'active' "
+     "ORDER BY id DESC LIMIT 40;"),
+]
+
+HEALTH_PER_TICK = 2
+
+
+def queue_health_assessment(dry_run=False):
+    n = 0
+    for scope_key, brief, sql in HEALTH_SCOPES:
+        if n >= HEALTH_PER_TICK:
+            break
+        recent = query(
+            "SELECT 1 FROM successbrian_os.v4pro_handoffs "
+            "WHERE task_summary LIKE %s AND created_at > NOW() - INTERVAL '7 days' "
+            "LIMIT 1;" % pq("%" + scope_key + "%")).strip()
+        if recent:
+            continue
+        data = query(sql)
+        if queue_handoff("Ecosystem health: " + scope_key,
+                         "HEALTH SWEEP — fix what is safe, propose the rest. "
+                         "Output HEALTH_FIX lines for whitelisted fixes, plus "
+                         "FINDINGS / PROPOSED PLANS / DATA GAPS.",
+                         "ecosystem-health",
+                         "SCOPE: %s\n\n%s\n\nLIVE DATA:\n%s"
+                         % (scope_key, brief, data[:3000]),
+                         "Fix safe items via HEALTH_FIX lines; propose the rest.",
+                         dry_run=dry_run):
+            n += 1
+    if n:
+        print("queued %d ecosystem-health handoff(s)" % n)
+    return n
+
 
 def queue_cleanup_assessment(dry_run=False):
     """Queue AnythingLLM cleanup assessment handoffs (assess + propose only).
@@ -857,6 +1016,7 @@ def main():
     queue_deep_pass(tasks, prev_digest, dry_run)
     queue_atlas_research(dry_run)
     queue_cleanup_assessment(dry_run)
+    queue_health_assessment(dry_run)
     queue_monthly_eval(dry_run)
     rethink_answered(dry_run)
     return 0

@@ -123,7 +123,22 @@ def load_profile(kind):
         "SELECT profile_md FROM successbrian_os.worker_profiles "
         "WHERE worker_kind = %s;" % pq(kind)],
         capture_output=True, text=True, timeout=30)
-    return r.stdout.strip() or "(no profile yet)"
+    profile = r.stdout.strip() or "(no profile yet)"
+    # Relevant ecosystem SOPs, pulled LIVE from business_core.rules via the
+    # worker_profile_sops mapping — never hardcoded, never stale.
+    rs = subprocess.run(PSQL + ["-c",
+        "SELECT r.category || ': ' || r.rule "
+        "FROM successbrian_os.worker_profile_sops m "
+        "JOIN business_core.rules r ON r.id = m.rule_id "
+        "WHERE m.worker_kind = %s AND r.tenant_id = 'brian' "
+        "ORDER BY r.id;" % pq(kind)],
+        capture_output=True, text=True, timeout=30)
+    sops = [ln.strip() for ln in rs.stdout.split("\n") if ln.strip()]
+    if sops:
+        profile += ("\n\n## RELEVANT ECOSYSTEM SOPS "
+                    "(live from business_core.rules — these are standing law)\n" +
+                    "\n".join("- " + x[:600] for x in sops))
+    return profile
 
 def load_learnings(kind, limit=12):
     r = subprocess.run(PSQL + ["-c",

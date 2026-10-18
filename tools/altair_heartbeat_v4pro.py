@@ -409,7 +409,7 @@ def sonic_decompose_tasks(tasks, max_n, dry_run=False, skip_ids=None):
 
 
 # ---- Atlas research queue -> V4 Pro (Brian 2026-10-17) ----
-RESEARCH_PER_TICK = 2
+RESEARCH_PER_TICK = 5  # Brian 2026-10-17: not worried about V4 burn - use it
 RESEARCH_COOLDOWN_DAYS = 7
 
 def get_research_items():

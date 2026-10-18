@@ -54,18 +54,20 @@ def get_key():
 
 
 def claim_handoffs(limit=MAX_PER_RUN):
-    sql = ("SELECT id FROM successbrian_os.v4pro_handoffs "
-           "WHERE status = 'queued' ORDER BY created_at LIMIT %d;" % limit)
+    """Atomic claim: one statement, FOR UPDATE SKIP LOCKED — parallel
+    workers each get different rows, never the same handoff twice."""
+    sql = ("UPDATE successbrian_os.v4pro_handoffs SET status = 'working' "
+           "WHERE id IN (SELECT id FROM successbrian_os.v4pro_handoffs "
+           "WHERE status = 'queued' ORDER BY created_at LIMIT %d "
+           "FOR UPDATE SKIP LOCKED) RETURNING id;" % limit)
     r = subprocess.run(PSQL + ["-c", sql], capture_output=True, text=True, timeout=30)
-    ids = [ln.strip() for ln in r.stdout.split("\n") if ln.strip().isdigit()]
-    claimed = []
-    for hid in ids:
-        u = ("UPDATE successbrian_os.v4pro_handoffs SET status = 'working' "
-             "WHERE id = %s AND status = 'queued';" % hid)
-        ru = subprocess.run(PSQL + ["-c", u], capture_output=True, text=True, timeout=30)
-        if ru.returncode == 0:
-            claimed.append(int(hid))
-    return claimed
+    if r.returncode != 0:
+        print("claim failed: %s" % (r.stderr or "")[:150])
+        return []
+    # psql -t still prints the "UPDATE n" command tag — drop it, take ids only
+    lines = [ln.strip() for ln in r.stdout.split("\n") if ln.strip()]
+    lines = [ln for ln in lines if not ln.upper().startswith("UPDATE")]
+    return [int(x) for x in lines if x.isdigit()]
 
 
 def load_handoff(hid):
@@ -123,12 +125,16 @@ def release(hid):
     subprocess.run(PSQL + ["-c", sql], capture_output=True, text=True, timeout=30)
 
 
-def main():
+FLEET_WORKERS = 4  # Brian 2026-10-17: 4 parallel workers
+SLOTS_PER_WORKER = 2
+
+
+def worker_main(slots=SLOTS_PER_WORKER):
     key = get_key()
     if not key:
         print("no DEEPSEEK_API_KEY — worker idle")
         return 0
-    claimed = claim_handoffs()
+    claimed = claim_handoffs(slots)
     if not claimed:
         print("queue empty — nothing to do")
         return 0
@@ -146,8 +152,37 @@ def main():
             mark(hid, "done", result=result)
             print("#%d: done (%d chars)" % (hid, len(result)))
         except Exception as e:
-            mark(hid, "failed", error=str(e))
-            print("#%d: failed: %s" % (hid, str(e)[:200]))
+            if "429" in str(e):
+                release(hid)
+                print("#%d: rate-limited (429) — released back to queue" % hid)
+            else:
+                mark(hid, "failed", error=str(e))
+                print("#%d: failed: %s" % (hid, str(e)[:200]))
+    return 0
+
+
+def main():
+    """Fleet mode: spawn FLEET_WORKERS parallel workers, each claiming
+    different handoffs via the atomic claim. --worker runs one worker."""
+    if "--worker" in sys.argv:
+        slots = SLOTS_PER_WORKER
+        if "--slots" in sys.argv:
+            try:
+                slots = int(sys.argv[sys.argv.index("--slots") + 1])
+            except (ValueError, IndexError):
+                pass
+        return worker_main(slots)
+    procs = []
+    for w in range(FLEET_WORKERS):
+        p = subprocess.Popen(
+            [sys.executable, os.path.abspath(__file__),
+             "--worker", "--slots", str(SLOTS_PER_WORKER)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        procs.append(p)
+    for i, p in enumerate(procs):
+        out, _ = p.communicate(timeout=900)
+        tag = "[worker %d] " % i
+        print(tag + out.replace("\n", "\n" + tag).rstrip())
     return 0
 
 

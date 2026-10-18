@@ -20,6 +20,7 @@ NOTES:
     Sonic/Brian can re-queue. Nothing retries silently.
 """
 
+import re
 import json
 import os
 import subprocess

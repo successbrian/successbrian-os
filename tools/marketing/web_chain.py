@@ -46,6 +46,7 @@ CLI:
   add-feature --name N --provider P [--wix-site NAME] [--url U]
               [--purpose P] [--attach link|iframe|api] [--status S]
   features [--wix-site NAME]
+  workflow
   selftest
 """
 import argparse
@@ -367,6 +368,59 @@ def describe_flow():
     lines.append(FLOW_SPEC["capture"])
     return "\n".join(lines)
 
+
+SITE_WORKFLOW = [
+    (0, "PLAN",
+     "Name the site and its one job; decide domain/funnel/content; "
+     "record intent as a PM decision (idea approval is not execution)."),
+    (1, "REGISTER FIRST",
+     "Registry rows before building: wix site (planned), funnel "
+     "(planned, campaign slug, capture email+whatsapp, destinations "
+     "contactflowcrm+systeme_io), planned features."),
+    (2, "ACCOUNT",
+     "Existing Wix account (aiprofits2025, email + Wix password from "
+     "the vault); never Google sign-in; never a new account per site."),
+    (3, "BUILD (FREE PLAN ONLY)",
+     "Build from a written brief: hero, offer/content, links out, blog "
+     "section if articles are planned; decline all premium/domain "
+     "upsells in Wix."),
+    (4, "PUBLISH FREE",
+     "Publish on the wixsite.com subdomain; record the URL in the "
+     "registry (site -> published)."),
+    (5, "CONTENT",
+     "Drafts off-Wix first (AnythingLLM wix workspace / CampaignsDesk), "
+     "Brian approves, then post to the Wix blog; nothing publishes "
+     "without his approval."),
+    (6, "ANALYTICS",
+     "GA4 ID from the registry config; tag on FlexiFunnels + Substack "
+     "+ own servers, never on free Wix; every funnel->Wix redirect "
+     "built with utm_source=flexifunnels, utm_medium=funnel, "
+     "utm_campaign=<slug>."),
+    (7, "DOMAIN + FUNNEL (when promoting)",
+     "Domain at NameCheap; CNAME to target.flexifunnels.com; verify "
+     "\"Secured\"; FlexiFunnels capture page (email + WhatsApp; webhook "
+     "-> n8n -> ContactFlowCRM + systeme.io; redirect to the UTM'd Wix "
+     "URL); advance registry statuses as pieces land."),
+    (8, "LINK IT IN",
+     "GitHub profile/README, Substack, and other surfaces link into "
+     "the chain."),
+    (9, "VALIDATE",
+     "web_chain validate must be clean (or warnings explained) before "
+     "the site is called live; project QA watches daily."),
+    (10, "FEATURES (only when needed)",
+     "Supabase (data/auth), Netlify (JS/functions), own machines (live "
+     "data/APIs) registered as features, attached by link/iframe/API; "
+     "features never take over capture."),
+]
+
+
+def format_workflow():
+    """The standing Wix site-creation procedure, numbered."""
+    lines = ["WIX SITE WORKFLOW - the standing procedure for every new "
+             "Wix site", ""]
+    for n, title, text in SITE_WORKFLOW:
+        lines.append("%2d. %s - %s" % (n, title, text))
+    return "\n".join(lines)
 
 def init_schema(cur):
     cur.execute(SCHEMA_SQL)
@@ -906,6 +960,9 @@ def selftest():
                       {"name": "Selftest Fake", "provider": "wix",
                        "status": "planned", "url": None})),
               "violation caught: feature claiming provider 'wix'")
+        check(len(SITE_WORKFLOW) == 11
+              and [n for n, _t, _x in SITE_WORKFLOW] == list(range(11)),
+              "SITE_WORKFLOW has exactly 11 steps, numbered 0-10 in order")
     finally:
         c.rollback()
         c.close()
@@ -970,6 +1027,7 @@ def main(argv=None):
     fl.add_argument("--funnel")
     sub.add_parser("validate")
     sub.add_parser("describe")
+    sub.add_parser("workflow")
     sub.add_parser("selftest")
     args = ap.parse_args(argv)
 
@@ -977,6 +1035,9 @@ def main(argv=None):
         return selftest()
     if args.cmd == "describe":
         print(describe_flow())
+        return 0
+    if args.cmd == "workflow":
+        print(format_workflow())
         return 0
 
     c = conn()

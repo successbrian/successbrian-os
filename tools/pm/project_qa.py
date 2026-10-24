@@ -103,7 +103,8 @@ def add_check(cur, project, check_key, title, check_type, spec, interval_s):
               next_due_at)
            VALUES (%s, %s, %s, %s, %s::jsonb, %s, now())
            ON CONFLICT (project_key, check_key) DO UPDATE
-             SET title=EXCLUDED.title, spec=EXCLUDED.spec,
+             SET title=EXCLUDED.title, check_type=EXCLUDED.check_type,
+                 spec=EXCLUDED.spec,
                  interval_s=EXCLUDED.interval_s, enabled=true
            RETURNING id""", (project, check_key, title, check_type,
                              json.dumps(spec), interval_s))

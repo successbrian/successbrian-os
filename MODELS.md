@@ -12,9 +12,12 @@ fraction of the cost of a frontier API, fully private.
 - **Penny** — Qwen 2.5 7B — the extraction workhorse: structured data, heavier
   classification. (32K context)
 - **Morpheus** — Qwen 2.5 14B — deep analysis and intelligence discovery. (32K context)
+<<<<<<< Updated upstream
 - **Sonic** — Qwen3.6 35B A3B (Q6_K) — the workhorse: reasoning, coding,
   synthesis. A base model, not a QLoRA trainee; the routing source of truth
   for Sonic is `tools/model_tiers.py`.
+=======
+>>>>>>> Stashed changes
 - **Shakespeare** — Llama 3.3 70B — long-form content writing. (24K context)
 - **Prometheus** (32K / 128K) — long-context reasoning.
 - **Vision / Code / Embeddings / Speech** — the functional specialists.
@@ -37,6 +40,7 @@ Self-measured, self-trained, self-improving.
 
 ## Deployment (k11-alpha — verified 2026-09-29)
 
+<<<<<<< Updated upstream
 Deployment is a snapshot, not identity (Brian's rule, 2026-10-20): a named
 model is itself wherever it lives or runs — Shakespeare is Shakespeare on
 any node. This table records where each model currently lives; hosts
@@ -47,10 +51,18 @@ change, names don't.
 | Chuck | MiniCPM5-2B-Q8_0.gguf | Q8_0 | chuck.service (disabled) | 11439 | 8K | Weight ready, not running |
 | Penny | qwen2.5-7b-instruct-q6_k (2 parts, ≈6.25 GB) | Q6_K | penny.service | 11438 | 32K | Running, healthy |
 | Morpheus | qwen2.5-14b-instruct-q6_k (4 parts, ≈12.1 GB) | Q6_K | morpheus.service | 11437 | 32K | Running, healthy — Altair's chat engine |
+=======
+| Model | Weight file | Quant | Service | Port | Ctx | Status |
+|-------|------------|-------|---------|------|-----|--------|
+| Chuck | MiniCPM5-2B-Q8_0.gguf | Q8_0 | chuck.service (disabled) | 11439 | 8K | Weight ready, not running |
+| Penny | qwen2.5-7b-instruct-q6_k (2 parts) | Q6_K | penny.service | 11438 | 32K | Running, healthy |
+| Morpheus | qwen2.5-14b-instruct-q6_k (4 parts) | Q6_K | morpheus.service | 11437 | 32K | Running, healthy — Altair's chat engine |
+>>>>>>> Stashed changes
 | Shakespeare | — | Q4 | — | — | 24K | X79 node (2x Tesla M40), not on k11 |
 | Prometheus | meghan-q6.gguf (Gemma 4 26B A4B) | Q6 on disk / Q8 per Jul-31 lock | — | — | — | Weight on k11, no service |
 
 Note: Penny's service raised 16K → 32K on 2026-09-29 per Brian's spec (32K was never a decision — the 16K was deploy drift; spec confirmed in altair-model-ecosystem-training.md).
+<<<<<<< Updated upstream
 
 ## Streaming tier — Colibri (verified 2026-10-20)
 
@@ -79,3 +91,5 @@ Backends: Vulkan + CUDA + CPU + Metal — an AMD iGPU is usable via Vulkan.
   1.9–2.6 tok/s CPU measured); "jevos" is likely Colibri's System One API,
   which implements the Jev decision API (Laya / GLiNER2.5-Decide / Clef).
   Brian to confirm both.
+=======
+>>>>>>> Stashed changes

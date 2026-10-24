@@ -26,9 +26,53 @@ from datetime import date
 import scatter_clerk  # the sweep's implementation lives there
 
 
+CHECKIN_DDL = """
+CREATE TABLE IF NOT EXISTS successbrian_os.clerk_checkins (
+    id BIGSERIAL PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    source TEXT NOT NULL,
+    message TEXT NOT NULL,
+    tasks_created INT,
+    queue_depth INT
+)
+"""
+
+
+def write_checkin(tasks_created):
+    """One line in the table, hourly, for Lyra: the clerk is still ok.
+
+    Brian, 2026-10-24: 'maybe it puts one line hourly in a table
+    somewhere to tell Lyra it's still ok. hi lyra, clerk checking in.
+    created 14 tasks this hour, see ya next hour...' The line is the
+    pattern's liveness signal: if it stops appearing, the ladder
+    knows the pattern is broken (silence = death, never health).
+    """
+    con = scatter_clerk.pm_core.conn()
+    cur = con.cursor()
+    cur.execute(CHECKIN_DDL)
+    cur.execute(
+        "SELECT COUNT(*) FROM atlas.nodes WHERE node_type='atlas_task' "
+        "AND status = 'queued' AND node_key LIKE 'task:ssb-packet-%%'"
+    )
+    queue_depth = cur.fetchone()[0]
+    message = (
+        f"hi lyra, clerk checking in. created {tasks_created} task(s) "
+        f"this hour, see ya next hour"
+    )
+    cur.execute(
+        "INSERT INTO successbrian_os.clerk_checkins "
+        "(source, message, tasks_created, queue_depth) VALUES (%s, %s, %s, %s)",
+        ("clerk", message, tasks_created, queue_depth),
+    )
+    con.commit()
+    con.close()
+    print(f"check-in written: {message} (queue depth {queue_depth})")
+
+
 def job_sweep():
     """The hourly look at the Intel Bridge: packet everything new."""
-    scatter_clerk.main()
+    keys = scatter_clerk.run()
+    write_checkin(len(keys))
 
 
 def job_status():

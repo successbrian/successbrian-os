@@ -23,7 +23,8 @@ ever decides anything in this repo.
 
 Built and operated by **Brian Lathe** (Minneapolis area, MN) —
 [github.com/successbrian](https://github.com/successbrian) ·
-blog: [successbrianhub.substack.com](https://successbrianhub.substack.com).
+blog: [successbrianhub.substack.com](https://successbrianhub.substack.com) ·
+site: [aiprofits2025.wixsite.com/successbrian-os](https://aiprofits2025.wixsite.com/successbrian-os).
 Open to full-time roles in applied AI and AI operations.
 
 ## The systems

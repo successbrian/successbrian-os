@@ -5,8 +5,10 @@ Brian (2026-10-24): "every day the board should be looking at new
 entries to the scatter — our clerk should be creating packets."
 
 The clerk is a software role (the serious flow's build order starts
-with 'packet builder in software'). Every morning, after SSB triage
-(04:30) and the deadline radar (04:45), the clerk:
+with 'packet builder in software'). The clerk looks THROUGH THE DAY,
+every day (Brian: the 04:50-only cadence became an hourly sweep the
+same morning he ordered the clerk — a capture should never wait
+overnight to become a packet). On every pass, the clerk:
 
   1. Reads NEW raw captures from atlas.scattered_captures (a
      watermark guarantees each capture is packeted exactly once).

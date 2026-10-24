@@ -937,6 +937,24 @@ ALLOWED_EDGE_TYPES = {
 # kind: domain | intake | quarantine
 # status: live | determined
 REGISTRY = [
+    ("fragment-pipeline", "domain",
+     "Brian only — private system design", None,
+     "The Fragment Pipeline: Brian's intel extraction and "
+     "matching system. Scan at volume, extract fragments at "
+     "the edge (Penny on the DDR4 fleet), decide per fragment, "
+     "and match needs to offers across the store. Design "
+     "documents, taxonomy, per-source schema doctrine, the "
+     "thread walker, the matcher, and pain escalation.",
+     "System-design workspace (like successbrian-os / "
+     "campaignsdesk): the DESIGN lives here; extraction state "
+     "lives in PostgreSQL, work lives in the PM, and desk "
+     "outputs route to their own desks (R2/R7).",
+     "live",
+     "Brian, 2026-10-24: design converged in Q&A 2026-10-24; "
+     "workspace created at his direction ('document all these "
+     "ideas you may need to create a new anythingllm "
+     "workspace'). Canonical design doc: "
+     "fragment-pipeline-design-2026-10-24.md."),
     ("builds-we-are-not-building", "domain",
      "DealsDesk (builds governance)", None,
      "The negative registry: every build/class deliberately NOT "

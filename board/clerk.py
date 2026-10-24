@@ -33,46 +33,82 @@ CREATE TABLE IF NOT EXISTS successbrian_os.clerk_checkins (
     source TEXT NOT NULL,
     message TEXT NOT NULL,
     tasks_created INT,
-    queue_depth INT
+    queue_depth INT,
+    metrics JSONB NOT NULL DEFAULT '{}'::jsonb
 )
 """
+CHECKIN_ALTER = (
+    "ALTER TABLE successbrian_os.clerk_checkins "
+    "ADD COLUMN IF NOT EXISTS metrics JSONB NOT NULL DEFAULT '{}'::jsonb"
+)
 
 
-def write_checkin(tasks_created):
-    """One line in the table, hourly, for Lyra: the clerk is still ok.
+def write_checkin(tasks_created, metrics):
+    """The hourly report to Lyra: one line, with the flow's numbers.
 
     Brian, 2026-10-24: 'maybe it puts one line hourly in a table
     somewhere to tell Lyra it's still ok. hi lyra, clerk checking in.
-    created 14 tasks this hour, see ya next hour...' The line is the
-    pattern's liveness signal: if it stops appearing, the ladder
-    knows the pattern is broken (silence = death, never health).
+    created 14 tasks this hour, see ya next hour...' — extended the
+    same morning: 'hourly numbers to measure the flow — as part of
+    the hourly report to lyra.' The line is both the pattern's
+    liveness signal (if it stops appearing, the ladder knows the
+    pattern is broken — silence = death, never health) and the
+    flow's hourly instrument reading. The metrics JSONB grows as
+    the pattern gains phases (Sonic/Gemma timings, bounce counts);
+    the message stays one human line.
     """
+    import json as _json
+
     con = scatter_clerk.pm_core.conn()
     cur = con.cursor()
     cur.execute(CHECKIN_DDL)
+    cur.execute(CHECKIN_ALTER)
     cur.execute(
         "SELECT COUNT(*) FROM atlas.nodes WHERE node_type='atlas_task' "
         "AND status = 'queued' AND node_key LIKE 'task:ssb-packet-%%'"
     )
     queue_depth = cur.fetchone()[0]
+    metrics = dict(metrics or {})
+    metrics["queue_depth"] = queue_depth
     message = (
         f"hi lyra, clerk checking in. created {tasks_created} task(s) "
-        f"this hour, see ya next hour"
+        f"this hour — {metrics.get('captures_in', 0)} capture(s) in, "
+        f"{metrics.get('board_filed', 0)} filed to the board, "
+        f"queue at {queue_depth}. see ya next hour"
     )
     cur.execute(
         "INSERT INTO successbrian_os.clerk_checkins "
-        "(source, message, tasks_created, queue_depth) VALUES (%s, %s, %s, %s)",
-        ("clerk", message, tasks_created, queue_depth),
+        "(source, message, tasks_created, queue_depth, metrics) "
+        "VALUES (%s, %s, %s, %s, %s)",
+        ("clerk", message, tasks_created, queue_depth, _json.dumps(metrics)),
     )
     con.commit()
     con.close()
-    print(f"check-in written: {message} (queue depth {queue_depth})")
+    print(f"hourly report written: {message}")
 
 
 def job_sweep():
     """The hourly look at the Intel Bridge: packet everything new."""
+    state = scatter_clerk.load_state()
+    before = state.get("last_capture_id", 0)
     keys = scatter_clerk.run()
-    write_checkin(len(keys))
+    after = scatter_clerk.load_state().get("last_capture_id", before)
+    captures_in = 0
+    if keys:
+        con = scatter_clerk.pm_core.conn()
+        cur = con.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM atlas.scattered_captures "
+            "WHERE id > %s AND id <= %s", (before, after))
+        captures_in = cur.fetchone()[0]
+        con.close()
+    metrics = {
+        "captures_in": captures_in,
+        "board_filed": len(keys),
+        "sent_altair": 0,
+        "bounced": 0,
+    }
+    write_checkin(len(keys), metrics)
 
 
 def job_status():

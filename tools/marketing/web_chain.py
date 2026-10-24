@@ -18,8 +18,11 @@ Hard rules (violations, not preferences):
   * Capture happens BEFORE Wix — the list is owned regardless of the
     content host.
   * A published Wix site's URL is always a wixsite.com URL.
-  * Every funnel redirects to a Wix site; a funnel with no Wix target
-    is a broken chain.
+  * Every funnel has exactly ONE destination — a free Wix site or a
+    gated external URL (decision id 109: high-value outbound links,
+    e.g. the Wix homepage's GitHub link, route through a FlexiFunnels
+    capture first, then hand off). Both set, or neither, is a broken
+    chain.
   * A funnel may not outrun its domain: 'built' needs the domain's DNS
     set, 'live' needs the domain verified 'Secured' at FlexiFunnels.
   * Capture spec (decision id 107): every capture form collects email
@@ -38,6 +41,8 @@ CLI:
   add-funnel --name N [--domain D] [--funnel-url U] [--capture C]
              [--wix-site NAME] [--status S] [--campaign SLUG]
              [--capture-fields F1,F2] [--destinations D1,D2]
+             [--destination-type wix_site|external_url]
+             [--external-url U]
   flow [--domain D | --funnel F]
   validate
   describe
@@ -83,6 +88,14 @@ FLOW_SPEC = {
         "on its wixsite.com subdomain — long-form detail, proof, video. "
         "The address bar shows wixsite.com after the handoff and free "
         "Wix ads appear; both accepted.",
+        "5. GATED OUTBOUND (external destinations): not every funnel "
+        "ends at a Wix site. A high-value outbound link on a Wix page "
+        "(the homepage GitHub link is the first citizen) points at a "
+        "FlexiFunnels capture page instead; after capture, the funnel "
+        "hands the visitor to the external destination. The funnel "
+        "carries destination_type 'external_url' and the external URL; "
+        "capture fields and lead routing are identical to "
+        "Wix-destination funnels.",
     ],
     "rules": [
         "No Wix premium plans, ever; no domains bought through Wix.",
@@ -92,7 +105,8 @@ FLOW_SPEC = {
         "NameCheap domain.",
         "Unlimited free Wix subdomains: one content site per offer or "
         "campaign, at zero marginal cost.",
-        "Every funnel has a Wix redirect target; capture precedes it.",
+        "Every funnel has exactly one destination — a free Wix site "
+        "or a gated external URL; capture precedes the handoff.",
     ],
     "analytics": (
         "Analytics layer (verified 2026-10-24): GA4 sits on the "
@@ -143,6 +157,32 @@ FLOW_SPEC = {
         "until Brian says what it is. This module models the "
         "registry and the routing only - no webhook endpoints or "
         "n8n workflows are built here."),
+    "gated": (
+        "Gated outbound links (Brian, 2026-10-24; PM decision id "
+        "109): from the Wix home page, the GitHub link must route "
+        "through a FlexiFunnels lead capture FIRST, then onward to "
+        "GitHub - the GitHub click is the highest-intent click on "
+        "the page, so the relationship is captured before the "
+        "handoff. Generalized: a funnel's destination may be an "
+        "EXTERNAL URL, not only a Wix site. High-value outbound "
+        "links from Wix pages (GitHub first, others as Brian names "
+        "them) point at a capture funnel whose destination_type is "
+        "'external_url'. Every funnel has exactly one destination - "
+        "(destination_type 'wix_site' with a Wix site set) XOR "
+        "(destination_type 'external_url' with an external URL "
+        "set); both or neither is a violation. Capture fields "
+        "(email + WhatsApp) and lead routing (ContactFlowCRM + "
+        "systeme.io) are identical to Wix-destination funnels, and "
+        "the UTM rule applies to external destinations too: the "
+        "stored external URL of a live gated funnel carries "
+        "utm_source/utm_medium/utm_campaign itself, because the "
+        "funnel redirects to exactly that URL. The first gated "
+        "funnel is 'homepage-github-gate' -> "
+        "https://github.com/successbrian/successbrian-os (campaign "
+        "'github-gate', planned): the homepage link flips to the "
+        "funnel only when the FlexiFunnels capture page exists - "
+        "until then the direct link stays, rather than pointing at "
+        "a funnel that does not exist yet."),
 }
 
 DOMAIN_STATUS_RANK = {"named": 0, "dns_set": 1, "verified_secured": 2,
@@ -196,6 +236,17 @@ ALTER TABLE successbrian_os.marketing_funnels
 ALTER TABLE successbrian_os.marketing_funnels
     ADD COLUMN IF NOT EXISTS lead_destinations text[]
         NOT NULL DEFAULT '{contactflowcrm,systeme_io}';
+-- Gated outbound links (decision id 109): a funnel's destination may
+-- be an external URL instead of a Wix site. Existing rows keep the
+-- 'wix_site' default; exactly-one-destination is enforced by
+-- validate_chain, not by the schema (the two halves live in
+-- different columns/tables).
+ALTER TABLE successbrian_os.marketing_funnels
+    ADD COLUMN IF NOT EXISTS destination_type text
+        NOT NULL DEFAULT 'wix_site'
+        CHECK (destination_type IN ('wix_site','external_url'));
+ALTER TABLE successbrian_os.marketing_funnels
+    ADD COLUMN IF NOT EXISTS external_url text;
 CREATE TABLE IF NOT EXISTS successbrian_os.marketing_features (
     id          serial PRIMARY KEY,
     wix_site_id integer REFERENCES successbrian_os.marketing_wix_sites(id),
@@ -277,14 +328,24 @@ def slugify(text):
     return s or "funnel"
 
 
-def build_redirect_url(wixsite_url, funnel_row):
-    """The effective FlexiFunnels -> Wix redirect URL: the Wix site's
-    URL carrying the chain's UTM discipline (utm_source=flexifunnels,
+def destination_url(chain):
+    """The funnel's ONE destination URL, before UTM: the external
+    URL for destination_type 'external_url' funnels, the Wix site's
+    URL otherwise. None when the destination is not set yet."""
+    if (chain.get("destination_type") or "wix_site") == "external_url":
+        return chain.get("external_url") or None
+    return chain.get("wixsite_url")
+
+
+def build_redirect_url(dest_url, funnel_row):
+    """The effective FlexiFunnels redirect URL: the destination URL
+    (a Wix site's URL, or a gated funnel's external URL) carrying the
+    chain's UTM discipline (utm_source=flexifunnels,
     utm_medium=funnel, utm_campaign=<the funnel's campaign slug, or
     its name slugified>). Existing query parameters are preserved and
     existing UTM values are never overwritten or duplicated. Returns
     None when there is no destination URL yet."""
-    if not wixsite_url:
+    if not dest_url:
         return None
     if isinstance(funnel_row, dict):
         campaign = funnel_row.get("campaign") or \
@@ -292,7 +353,7 @@ def build_redirect_url(wixsite_url, funnel_row):
                     or funnel_row.get("name"))
     else:
         campaign = slugify(funnel_row)
-    parts = urlsplit(wixsite_url)
+    parts = urlsplit(dest_url)
     params = dict(parse_qsl(parts.query, keep_blank_values=True))
     params.setdefault("utm_source", UTM_SOURCE)
     params.setdefault("utm_medium", UTM_MEDIUM)
@@ -366,6 +427,8 @@ def describe_flow():
     lines.append(FLOW_SPEC["features"])
     lines.append("")
     lines.append(FLOW_SPEC["capture"])
+    lines.append("")
+    lines.append(FLOW_SPEC["gated"])
     return "\n".join(lines)
 
 
@@ -497,11 +560,15 @@ def add_wix_site(cur, name, url=None, purpose=None, status="planned"):
 
 def add_funnel(cur, name, domain=None, funnel_url=None, capture=None,
                wix_site=None, status="planned", provider="FlexiFunnels",
-               campaign=None, capture_fields=None, destinations=None):
+               campaign=None, capture_fields=None, destinations=None,
+               destination_type="wix_site", external_url=None):
     if capture_fields is None:
         capture_fields = list(CAPTURE_FIELDS_REQUIRED)
     if destinations is None:
         destinations = list(LEAD_DESTINATIONS_DEFAULT)
+    if destination_type not in ("wix_site", "external_url"):
+        raise SystemExit("destination_type must be 'wix_site' or "
+                         "'external_url': %s" % destination_type)
     domain_id = None
     if domain:
         cur.execute("SELECT id FROM successbrian_os.marketing_domains "
@@ -510,22 +577,34 @@ def add_funnel(cur, name, domain=None, funnel_url=None, capture=None,
         if not row:
             raise SystemExit("no such domain in registry: %s" % domain)
         domain_id = row["id"]
+    # Exactly one destination (decision id 109): an external-url
+    # funnel never carries a Wix site, and a wix funnel never carries
+    # an external URL — the unused half is stored NULL so the row
+    # itself can never hold both.
     wix_site_id = None
-    if wix_site:
-        cur.execute("SELECT id FROM successbrian_os.marketing_wix_sites "
-                    "WHERE name = %s", (wix_site,))
-        row = cur.fetchone()
-        if not row:
-            raise SystemExit("no such Wix site in registry: %s" % wix_site)
-        wix_site_id = row["id"]
+    if destination_type == "external_url":
+        external_url = external_url or None
+    else:
+        external_url = None
+        if wix_site:
+            cur.execute(
+                "SELECT id FROM successbrian_os.marketing_wix_sites "
+                "WHERE name = %s", (wix_site,))
+            row = cur.fetchone()
+            if not row:
+                raise SystemExit("no such Wix site in registry: %s"
+                                 % wix_site)
+            wix_site_id = row["id"]
     cur.execute(
         """INSERT INTO successbrian_os.marketing_funnels
              (name, provider, domain_id, funnel_url, capture, campaign,
-              wix_site_id, status, capture_fields, lead_destinations)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+              wix_site_id, status, capture_fields, lead_destinations,
+              destination_type, external_url)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
            RETURNING id""",
         (name, provider, domain_id, funnel_url, capture, campaign,
-         wix_site_id, status, capture_fields, destinations))
+         wix_site_id, status, capture_fields, destinations,
+         destination_type, external_url))
     return cur.fetchone()["id"]
 
 
@@ -602,6 +681,7 @@ def fetch_chains(cur):
         """SELECT f.id AS funnel_id, f.name AS funnel_name,
                   f.provider, f.funnel_url, f.capture, f.campaign,
                   f.capture_fields, f.lead_destinations,
+                  f.destination_type, f.external_url,
                   f.status AS funnel_status,
                   d.id AS domain_id, d.domain, d.registrar, d.dns_host,
                   d.dns_target, d.status AS domain_status,
@@ -634,10 +714,43 @@ def validate_chain(chain):
     """(violations, warnings) for one composed funnel chain."""
     violations, warnings = [], []
     name = chain.get("funnel_name") or "?"
-    if not chain.get("wix_id"):
+    # Destination law (decision id 109): exactly ONE destination —
+    # (destination_type 'wix_site' AND a Wix site set) XOR
+    # (destination_type 'external_url' AND a non-empty external URL).
+    # Both set, or neither set, is a broken chain.
+    dtype = (chain.get("destination_type") or "wix_site").lower()
+    has_wix = bool(chain.get("wix_id"))
+    has_ext = bool((chain.get("external_url") or "").strip())
+    if dtype == "wix_site":
+        if has_ext:
+            violations.append(
+                "funnel '%s' has two destinations — destination_type "
+                "is 'wix_site' but an external URL is also set; "
+                "exactly one destination per funnel" % name)
+        if not has_wix:
+            violations.append(
+                "funnel '%s' has no destination — destination_type "
+                "is 'wix_site' but no Wix site is set; every funnel "
+                "has exactly one destination (a free Wix site or a "
+                "gated external URL) and capture precedes the "
+                "handoff" % name)
+    elif dtype == "external_url":
+        if has_wix:
+            violations.append(
+                "funnel '%s' has two destinations — destination_type "
+                "is 'external_url' but a Wix site is also set; "
+                "exactly one destination per funnel" % name)
+        if not has_ext:
+            violations.append(
+                "funnel '%s' has no destination — destination_type "
+                "is 'external_url' but the external URL is empty; "
+                "every funnel has exactly one destination (a free "
+                "Wix site or a gated external URL) and capture "
+                "precedes the handoff" % name)
+    else:
         violations.append(
-            "funnel '%s' has no Wix redirect target — every funnel must "
-            "hand the visitor to a free Wix site after capture" % name)
+            "funnel '%s' has unknown destination_type '%s' — known "
+            "types: wix_site, external_url" % (name, dtype))
     fstatus = chain.get("funnel_status") or "planned"
     need = FUNNEL_MIN_DOMAIN_RANK.get(fstatus, 0)
     if need > 0:
@@ -670,25 +783,47 @@ def validate_chain(chain):
                 "Wix site '%s' is published but its URL (%s) is not a "
                 "wixsite.com URL — published Wix sites are always free "
                 "subdomains" % (chain.get("wix_name"), url or "none"))
-    # UTM discipline: free Wix runs no GA, so the handoff IS the
-    # measurement — the effective redirect URL must carry all three
-    # UTM parameters. Missing on a live funnel is a violation; not
-    # yet complete on a non-live funnel is a warning.
-    effective = build_redirect_url(chain.get("wixsite_url"), chain)
-    if effective:
-        q = dict(parse_qsl(urlsplit(effective).query))
-        missing = [p for p in ("utm_source", "utm_medium",
-                               "utm_campaign") if not q.get(p)]
+    # UTM discipline: neither free Wix nor an external destination
+    # (e.g. GitHub) runs our GA, so the handoff IS the measurement —
+    # the effective redirect URL must carry all three UTM
+    # parameters. For a Wix destination the effective URL is the
+    # UTM-built redirect; for an external destination the STORED
+    # external URL must itself carry the UTMs, because the funnel
+    # redirects to exactly that URL. Missing on a live funnel is a
+    # violation; not yet complete on a non-live funnel is a warning.
+    dest = destination_url(chain)
+    if dtype == "external_url":
+        if dest:
+            q = dict(parse_qsl(urlsplit(dest).query))
+            missing = [p for p in ("utm_source", "utm_medium",
+                                   "utm_campaign") if not q.get(p)]
+        else:
+            missing = ["utm_source", "utm_medium", "utm_campaign"]
     else:
-        missing = ["utm_source", "utm_medium", "utm_campaign"]
+        effective = build_redirect_url(dest, chain)
+        if effective:
+            q = dict(parse_qsl(urlsplit(effective).query))
+            missing = [p for p in ("utm_source", "utm_medium",
+                                   "utm_campaign") if not q.get(p)]
+        else:
+            missing = ["utm_source", "utm_medium", "utm_campaign"]
     if missing:
+        if dtype == "external_url":
+            why = ("a gated funnel's stored external URL must "
+                   "itself carry utm_source/utm_medium/"
+                   "utm_campaign — the funnel redirects to exactly "
+                   "that URL, and the external destination cannot "
+                   "run GA")
+        else:
+            why = ("the FlexiFunnels -> Wix handoff must carry "
+                   "utm_source/utm_medium/utm_campaign because free "
+                   "Wix cannot run GA")
         msg = ("funnel '%s': effective redirect URL lacks UTM "
-               "attribution (%s) — the FlexiFunnels -> Wix handoff "
-               "must carry utm_source/utm_medium/utm_campaign because "
-               "free Wix cannot run GA" % (name, ", ".join(missing)))
+               "attribution (%s) — %s"
+               % (name, ", ".join(missing), why))
         if fstatus == "live":
             violations.append(msg)
-        elif chain.get("wix_id"):
+        elif chain.get("wix_id") or dest:
             warnings.append(msg + " (not live yet)")
     # Capture spec (decision id 107): a live funnel must collect
     # BOTH email and WhatsApp, and its leads must reach
@@ -760,14 +895,20 @@ def format_chain(chain):
             (chain.get("dns_host") or "@"), chain.get("dns_target"))
     else:
         dom_line = "(no domain yet)"
-    wix = chain.get("wix_name")
-    if wix:
-        wix_line = "%s [%s] %s" % (wix, chain.get("wix_status"),
-                                   chain.get("wixsite_url")
-                                   or "(URL not published yet)")
+    if (chain.get("destination_type") or "wix_site") == "external_url":
+        dest_label = "dest    "
+        dest_line = "external %s" % (chain.get("external_url")
+                                     or "(no URL yet)")
     else:
-        wix_line = "(no Wix target — BROKEN)"
-    redirect = build_redirect_url(chain.get("wixsite_url"), chain)
+        dest_label = "wix     "
+        wix = chain.get("wix_name")
+        if wix:
+            dest_line = "%s [%s] %s" % (
+                wix, chain.get("wix_status"),
+                chain.get("wixsite_url") or "(URL not published yet)")
+        else:
+            dest_line = "(no destination — BROKEN)"
+    redirect = build_redirect_url(destination_url(chain), chain)
     fields = ", ".join(chain.get("capture_fields") or []) or "-"
     dests = ", ".join(chain.get("lead_destinations") or []) or "-"
     return ("CHAIN '%s' [%s]\n"
@@ -775,13 +916,13 @@ def format_chain(chain):
             "  funnel  : %s (%s) capture: %s\n"
             "  collects: %s\n"
             "  leads ->: %s\n"
-            "  wix     : %s\n"
+            "  %s: %s\n"
             "  redirect: %s" % (
                 chain.get("funnel_name"), chain.get("funnel_status"),
                 dom_line, chain.get("funnel_url") or "(no URL yet)",
                 chain.get("provider"), chain.get("capture") or "-",
-                fields, dests,
-                wix_line, redirect or "(none — no destination URL yet)"))
+                fields, dests, dest_label,
+                dest_line, redirect or "(none — no destination URL yet)"))
 
 
 def selftest():
@@ -877,8 +1018,8 @@ def selftest():
         mine = [ch for ch in chains["funnels"]
                 if ch["funnel_name"] == "Selftest Funnel"][0]
         v, _ = validate_chain(mine)
-        check(any("no Wix redirect target" in x for x in v),
-              "violation caught: funnel without Wix target")
+        check(any("has no destination" in x for x in v),
+              "violation caught: funnel without a destination")
 
         # Deliberate violation (b): live funnel, domain only 'named'.
         cur.execute("UPDATE successbrian_os.marketing_funnels "
@@ -932,6 +1073,79 @@ def selftest():
         v, _ = validate_chain(mine)
         check(any("UTM" in x for x in v),
               "violation caught: live funnel missing UTM attribution")
+
+        # Gated outbound (decision id 109): a funnel's destination
+        # may be an external URL. A planned gate (UTMs not yet on
+        # the stored URL) validates clean with only the warning; a
+        # live gate whose stored external URL carries the UTMs
+        # validates fully clean.
+        add_funnel(cur, "Selftest Gate Planned",
+                   capture="email + whatsapp opt-in",
+                   destination_type="external_url",
+                   external_url="https://github.com/example/repo",
+                   campaign="gate-planned", status="planned")
+        add_funnel(cur, "Selftest Gate Live",
+                   domain="selftest-chain.example",
+                   funnel_url="https://go.selftest-chain.example/gate",
+                   capture="email + whatsapp opt-in",
+                   destination_type="external_url",
+                   external_url=("https://github.com/example/repo"
+                                 "?utm_source=flexifunnels"
+                                 "&utm_medium=funnel"
+                                 "&utm_campaign=gate-live"),
+                   campaign="gate-live", status="live")
+        chains = fetch_chains(cur)
+        gate_p = [ch for ch in chains["funnels"]
+                  if ch["funnel_name"] == "Selftest Gate Planned"][0]
+        v, w_ = validate_chain(gate_p)
+        check(v == [] and any("UTM" in x for x in w_),
+              "planned external-destination funnel validates clean "
+              "(UTM warning only)")
+        gate_l = [ch for ch in chains["funnels"]
+                  if ch["funnel_name"] == "Selftest Gate Live"][0]
+        v, _ = validate_chain(gate_l)
+        check(v == [],
+              "live external-destination funnel with UTM'd external "
+              "URL validates clean")
+
+        # Both destinations set is a violation.
+        cur.execute("UPDATE successbrian_os.marketing_funnels "
+                    "SET wix_site_id = %s "
+                    "WHERE name = 'Selftest Gate Planned'", (wid,))
+        chains = fetch_chains(cur)
+        gate_p = [ch for ch in chains["funnels"]
+                  if ch["funnel_name"] == "Selftest Gate Planned"][0]
+        v, _ = validate_chain(gate_p)
+        check(any("two destinations" in x for x in v),
+              "violation caught: funnel with both destinations set")
+        cur.execute("UPDATE successbrian_os.marketing_funnels "
+                    "SET wix_site_id = NULL "
+                    "WHERE name = 'Selftest Gate Planned'")
+
+        # Neither destination set is a violation.
+        cur.execute("UPDATE successbrian_os.marketing_funnels "
+                    "SET external_url = NULL "
+                    "WHERE name = 'Selftest Gate Live'")
+        chains = fetch_chains(cur)
+        gate_l = [ch for ch in chains["funnels"]
+                  if ch["funnel_name"] == "Selftest Gate Live"][0]
+        v, _ = validate_chain(gate_l)
+        check(any("has no destination" in x for x in v),
+              "violation caught: external funnel with no destination")
+
+        # A live gate whose stored external URL lacks the UTMs is a
+        # violation — the funnel redirects to exactly that URL.
+        cur.execute("UPDATE successbrian_os.marketing_funnels "
+                    "SET external_url = "
+                    "'https://github.com/example/repo' "
+                    "WHERE name = 'Selftest Gate Live'")
+        chains = fetch_chains(cur)
+        gate_l = [ch for ch in chains["funnels"]
+                  if ch["funnel_name"] == "Selftest Gate Live"][0]
+        v, _ = validate_chain(gate_l)
+        check(any("UTM" in x for x in v),
+              "violation caught: live external funnel missing UTM "
+              "attribution")
 
         # Analytics with no ID set is a normal, clean state.
         cfg = get_analytics(cur)
@@ -996,6 +1210,13 @@ def main(argv=None):
     f.add_argument("--funnel-url")
     f.add_argument("--capture")
     f.add_argument("--wix-site")
+    f.add_argument("--destination-type", default="wix_site",
+                   choices=["wix_site", "external_url"],
+                   help="where the funnel hands the visitor after "
+                        "capture (default: wix_site)")
+    f.add_argument("--external-url",
+                   help="the destination URL when --destination-type "
+                        "is external_url (a gated outbound link)")
     f.add_argument("--campaign")
     f.add_argument("--capture-fields",
                    help="comma-separated capture form fields "
@@ -1065,7 +1286,9 @@ def main(argv=None):
                          capture=args.capture, wix_site=args.wix_site,
                          status=args.status, campaign=args.campaign,
                          capture_fields=_csv(args.capture_fields),
-                         destinations=_csv(args.destinations))
+                         destinations=_csv(args.destinations),
+                         destination_type=args.destination_type,
+                         external_url=args.external_url)
         c.commit()
         print("funnel id=%d %s [%s]" % (rid, args.name, args.status))
     elif args.cmd == "set-ga":

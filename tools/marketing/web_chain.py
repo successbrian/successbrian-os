@@ -38,6 +38,9 @@ CLI:
   describe
   set-ga --measurement-id G-XXXX [--gtm GTM-XXXX]
   analytics
+  add-feature --name N --provider P [--wix-site NAME] [--url U]
+              [--purpose P] [--attach link|iframe|api] [--status S]
+  features [--wix-site NAME]
   selftest
 """
 import argparse
@@ -101,6 +104,20 @@ FLOW_SPEC = {
         "utm_campaign=<campaign slug>); Wix's built-in analytics is "
         "the on-Wix view. GitHub pages/README cannot run GA and are "
         "not a surface."),
+    "features": (
+        "Feature layer: the Wix site is the content shell; FEATURES "
+        "live where the capability fits and attach to the site by "
+        "link, iframe, or API. Data-backed features (Postgres, auth, "
+        "storage, edge functions — waitlists, member data, app "
+        "backends) live on Supabase. JS microsites, serverless "
+        "functions and embeddable widgets live on Netlify — also the "
+        "free host that DOES allow custom domains when a feature "
+        "outgrows an iframe. Live fleet data and APIs live on Brian's "
+        "own machines (the VPS and the fleet; the proof is the live "
+        "PM dashboard on successbrianvps.com). Features add capability "
+        "INSIDE the experience — they never replace the funnel as the "
+        "capture point of first contact: capture stays in "
+        "FlexiFunnels, per the chain rules."),
 }
 
 DOMAIN_STATUS_RANK = {"named": 0, "dns_set": 1, "verified_secured": 2,
@@ -148,6 +165,21 @@ CREATE TABLE IF NOT EXISTS successbrian_os.marketing_funnels (
 );
 ALTER TABLE successbrian_os.marketing_funnels
     ADD COLUMN IF NOT EXISTS campaign text;
+CREATE TABLE IF NOT EXISTS successbrian_os.marketing_features (
+    id          serial PRIMARY KEY,
+    wix_site_id integer REFERENCES successbrian_os.marketing_wix_sites(id),
+    name        text NOT NULL,
+    provider    text NOT NULL
+                CHECK (provider IN ('supabase','netlify','own','other')),
+    url         text,
+    purpose     text,
+    attach      text NOT NULL DEFAULT 'link'
+                CHECK (attach IN ('link','iframe','api')),
+    status      text NOT NULL DEFAULT 'planned'
+                CHECK (status IN ('planned','building','live')),
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS successbrian_os.marketing_analytics (
     id                  serial PRIMARY KEY,
     ga4_measurement_id  text,
@@ -280,6 +312,8 @@ def describe_flow():
     lines.extend("  - %s" % r for r in FLOW_SPEC["rules"])
     lines.append("")
     lines.append(FLOW_SPEC["analytics"])
+    lines.append("")
+    lines.append(FLOW_SPEC["features"])
     return "\n".join(lines)
 
 
@@ -287,8 +321,20 @@ def init_schema(cur):
     cur.execute(SCHEMA_SQL)
 
 
+SEED_FEATURE = {
+    "name": "Live PM dashboard",
+    "provider": "own",
+    "url": "https://successbrianvps.com/pm/",
+    "purpose": "Live operations dashboard — the first own-machine "
+               "feature, linked from the SuccessBrian OS Wix site",
+    "attach": "link",
+    "status": "live",
+    "wix_site": "SuccessBrian OS",
+}
+
+
 def seed(cur):
-    """Idempotent seed of the one real row known today."""
+    """Idempotent seeds of the real rows known today."""
     cur.execute(
         """INSERT INTO successbrian_os.marketing_wix_sites
              (name, purpose, status)
@@ -296,6 +342,16 @@ def seed(cur):
            WHERE NOT EXISTS (
              SELECT 1 FROM successbrian_os.marketing_wix_sites
              WHERE name = %(name)s)""", SEED_WIX_SITE)
+    cur.execute(
+        """INSERT INTO successbrian_os.marketing_features
+             (wix_site_id, name, provider, url, purpose, attach, status)
+           SELECT w.id, %(name)s, %(provider)s, %(url)s, %(purpose)s,
+                  %(attach)s, %(status)s
+             FROM successbrian_os.marketing_wix_sites w
+            WHERE w.name = %(wix_site)s
+              AND NOT EXISTS (
+                SELECT 1 FROM successbrian_os.marketing_features f
+                 WHERE f.name = %(name)s)""", SEED_FEATURE)
 
 
 def add_domain(cur, domain, host=None, dns_target=None, status="named",
@@ -361,6 +417,73 @@ def add_funnel(cur, name, domain=None, funnel_url=None, capture=None,
         (name, provider, domain_id, funnel_url, capture, campaign,
          wix_site_id, status))
     return cur.fetchone()["id"]
+
+
+FEATURE_PROVIDERS = ("supabase", "netlify", "own", "other")
+
+
+def add_feature(cur, name, provider, wix_site=None, url=None,
+                purpose=None, attach="link", status="planned"):
+    wix_site_id = None
+    if wix_site:
+        cur.execute("SELECT id FROM successbrian_os.marketing_wix_sites "
+                    "WHERE name = %s", (wix_site,))
+        row = cur.fetchone()
+        if not row:
+            raise SystemExit("no such Wix site in registry: %s"
+                             % wix_site)
+        wix_site_id = row["id"]
+    cur.execute(
+        """INSERT INTO successbrian_os.marketing_features
+             (wix_site_id, name, provider, url, purpose, attach, status)
+           VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+        (wix_site_id, name, provider, url, purpose, attach, status))
+    return cur.fetchone()["id"]
+
+
+def fetch_features(cur, wix_site=None):
+    """All registered features, each with its Wix site's name."""
+    sql = ("SELECT f.*, w.name AS wix_name "
+           "FROM successbrian_os.marketing_features f "
+           "LEFT JOIN successbrian_os.marketing_wix_sites w "
+           "ON w.id = f.wix_site_id")
+    if wix_site:
+        cur.execute(sql + " WHERE w.name = %s ORDER BY f.id",
+                    (wix_site,))
+    else:
+        cur.execute(sql + " ORDER BY f.id")
+    return [dict(r) for r in cur.fetchall()]
+
+
+def validate_feature(f):
+    """Violations for one feature row/dict. Features are EXTERNAL by
+    definition — they add the capabilities a free Wix site cannot do
+    itself, so 'wix' as a provider is a category error; and a feature
+    claiming to be live must have somewhere to point."""
+    violations = []
+    if (f.get("provider") or "").lower() == "wix":
+        violations.append(
+            "feature '%s' claims provider 'wix' — features are "
+            "external by definition (supabase/netlify/own/other); the "
+            "free Wix site is the content shell, never a feature "
+            "provider" % f.get("name"))
+    if f.get("status") == "live" and not f.get("url"):
+        violations.append(
+            "feature '%s' is live but has no URL — a live feature "
+            "must have somewhere for the link/iframe/API to point"
+            % f.get("name"))
+    return violations
+
+
+def format_features(features):
+    lines = []
+    for f in features:
+        lines.append("  - '%s' [%s] provider=%s attach=%s %s" % (
+            f["name"], f["status"], f["provider"], f["attach"],
+            f.get("url") or "(no URL yet)"))
+        if f.get("purpose"):
+            lines.append("      %s" % f["purpose"])
+    return lines
 
 
 def fetch_chains(cur):
@@ -485,6 +608,8 @@ def validate_all(cur):
             "Wix site '%s' (%s) has no funnel pointing at it — orphan "
             "content until a FlexiFunnels chain sends it visitors"
             % (w["name"], w["status"]))
+    for f in fetch_features(cur):
+        violations.extend(validate_feature(f))
     return violations, warnings
 
 
@@ -632,6 +757,25 @@ def selftest():
         check("NOT SET" in txt and "wix-free" in txt
               and "NOT SUPPORTED" in txt,
               "analytics report renders with NULL ID + surface map")
+
+        # Feature layer.
+        add_feature(cur, "Selftest Waitlist", "supabase",
+                    wix_site="Selftest Content",
+                    url="https://example.supabase.co/waitlist",
+                    purpose="selftest", attach="api", status="live")
+        add_feature(cur, "Selftest Ghost", "netlify",
+                    wix_site="Selftest Content", status="live")
+        feats = {f["name"]: f for f in fetch_features(cur)}
+        check(validate_feature(feats["Selftest Waitlist"]) == [],
+              "live feature with URL validates clean")
+        check(any("no URL" in x
+                  for x in validate_feature(feats["Selftest Ghost"])),
+              "violation caught: live feature without URL")
+        check(any("external by definition" in x
+                  for x in validate_feature(
+                      {"name": "Selftest Fake", "provider": "wix",
+                       "status": "planned", "url": None})),
+              "violation caught: feature claiming provider 'wix'")
     finally:
         c.rollback()
         c.close()
@@ -672,6 +816,19 @@ def main(argv=None):
     sg.add_argument("--measurement-id", required=True)
     sg.add_argument("--gtm")
     sub.add_parser("analytics")
+    fe = sub.add_parser("add-feature")
+    fe.add_argument("--name", required=True)
+    fe.add_argument("--provider", required=True,
+                    choices=list(FEATURE_PROVIDERS))
+    fe.add_argument("--wix-site")
+    fe.add_argument("--url")
+    fe.add_argument("--purpose")
+    fe.add_argument("--attach", default="link",
+                    choices=["link", "iframe", "api"])
+    fe.add_argument("--status", default="planned",
+                    choices=["planned", "building", "live"])
+    fl2 = sub.add_parser("features")
+    fl2.add_argument("--wix-site")
     fl = sub.add_parser("flow")
     fl.add_argument("--domain")
     fl.add_argument("--funnel")
@@ -720,6 +877,22 @@ def main(argv=None):
                  row.get("gtm_container_id") or "not set"))
     elif args.cmd == "analytics":
         print(format_analytics(cur))
+    elif args.cmd == "add-feature":
+        rid = add_feature(cur, args.name, args.provider,
+                          wix_site=args.wix_site, url=args.url,
+                          purpose=args.purpose, attach=args.attach,
+                          status=args.status)
+        c.commit()
+        print("feature id=%d '%s' provider=%s [%s]"
+              % (rid, args.name, args.provider, args.status))
+    elif args.cmd == "features":
+        feats = fetch_features(cur, wix_site=args.wix_site)
+        if args.wix_site:
+            print("FEATURES for Wix site '%s':" % args.wix_site)
+        if not feats:
+            print("  (none registered)")
+        for line in format_features(feats):
+            print(line)
     elif args.cmd == "flow":
         chains = fetch_chains(cur)
         rows = chains["funnels"]
@@ -738,6 +911,18 @@ def main(argv=None):
                 print("  warning: %s" % x)
             if not v:
                 print("  verdict: chain OK")
+        features = fetch_features(cur)
+        by_site = {}
+        for f in features:
+            by_site.setdefault(f.get("wix_name") or "(fleet general)",
+                               []).append(f)
+        print("FEATURES BY WIX SITE:")
+        if not by_site:
+            print("  (none registered)")
+        for site, fs in by_site.items():
+            print(" %s:" % site)
+            for line in format_features(fs):
+                print(line)
     elif args.cmd == "validate":
         violations, warnings = validate_all(cur)
         for x in violations:

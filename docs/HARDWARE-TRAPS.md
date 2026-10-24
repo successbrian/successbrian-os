@@ -1,4 +1,19 @@
-# Hardware traps — GPUs to never recommend
+# Hardware traps — hardware we avoid completely
+
+The unifying concept (Brian 2026-10-20): some hardware is a trap — the
+spec sheet promises value the silicon cannot deliver for our workloads, so
+it won't help us no matter the price. The K80's fake 24 GB and Raptor
+Lake's self-degrading cores are the same trap wearing different clothes.
+Items on this list are banned outright, not discounted: never recommend,
+never buy, never let a deal scan surface one as a win. Bans track
+documented failure mechanisms, not brands — a ban widens only on
+evidence.
+
+**Scope: universal.** A trap fails in *every* machine class — inference,
+web hosting, database hosting, scrapers, code runners, any class added
+later — at any price, including free. The trap registry
+(`hardware_traps.py`) sits above the machine-class system; no class
+scorer may pass what it bans. Never, never, never means exactly that.
 
 Owner directive 2026-10-12: the Tesla K80 is a trap. This rule is enforced in
 the agent contract ("What you never do" / contract rules). This doc is the
@@ -43,3 +58,54 @@ When NVIDIA ends driver support for an architecture, enterprise supply floods
 the secondary market — that is the buying opportunity. But it only counts for
 cards whose architecture still runs a modern stack. Kepler doesn't. The R580
 generation does, with the pins above. VRAM number alone is never the analysis.
+
+## Banned: Intel 13th/14th gen (Raptor Lake) — the burn-out class
+
+Owner directive 2026-10-20: "we are NOT looking for any of the intel cpu's
+that potentially will burn themselves out."
+
+- The fault is documented and specific: elevated voltages on Raptor Lake
+  desktop silicon cause Vmin-shift degradation — chips permanently lose
+  stability over time. A used one may test fine today and be dying.
+- Scope: Core 13xxx / 14xxx desktop processors and any machine built on
+  them, T variants included. Enforced in code:
+  `tools/dealsdesk/mini_node_scorer.py` (CPU_BURNOUT_RE gate),
+  `dealsdesk/src/validation_gates.py` (listing reject), and the agent
+  contract (rule 12).
+- NOT in scope: Core Ultra / Arrow Lake — a different design with no such
+  finding. Exclusions track failure mechanisms, not brands or generation
+  vibes; widen a ban only on evidence (Brian 2026-10-20).
+- The fleet's current Intel stock (8th/9th-gen Coffee Lake) predates the
+  class entirely.
+
+## Sourcing traps — mini PCs and RAM (verified 2026-10-20)
+
+Not GPUs, but the same shape of trap: the headline spec is real, the fine
+print is where the value leaks out.
+
+- **x2-wired secondary M.2 slots.** AOOSTAR MACO 470 and Acemagic F5A both
+  advertise 3× M.2 2280 — only the primary slot is Gen4 x4; the other two are
+  Gen4 x2. For Colibri expert streaming the slot's lane width is the spec,
+  not the slot count. The GMKtec K11 is the exception in its class: both
+  M.2 slots are full Gen4 x4. (Bosgame VTA-439's expansion-slot widths are
+  unpublished everywhere — treat as unknown until a teardown or Bosgame
+  support answers.)
+- **Soldered RAM wearing an upgradeable-class price.** The MACO 470's 32 GB
+  LPDDR5-8000 is soldered, max 32 GB, forever (AOOSTAR's own FAQ). Fine
+  machine, wrong mental model: price it as a sealed appliance, never as a
+  platform with headroom.
+- **Barebones under the 2026 RAM regime.** RAM is the real gold: DDR5-5600
+  SO-DIMM 64 GB kits run $800–$1,700 new; DDR4-3200 SO-DIMM 64 GB runs
+  ~$399 new / $300–430 used (3–5× the 2023–24 norms; Gartner sees no relief
+  until late 2027). A barebones box plus market-price RAM can cost ~2× the
+  bundled equivalent. Buy RAM already installed; treat empty slots as
+  insurance, not as a plan. Full verified price tables live in DealsDesk
+  (`tools/dealsdesk/ram_price_reference.json`).
+- **Amazon is a sourcing blind spot.** Amazon refuses AI-agent access, so
+  no automated scan, sweep, or price check can see it. DealsDesk coverage
+  silently excludes Amazon until a human browses it by hand — never read
+  "not found" as "not available."
+- **Crucial is winding down.** Micron is exiting the Crucial consumer brand
+  (shipments through Feb 2026; warranty/support continue). Crucial kits are
+  not a trap at the right price, but don't build a fleet standard on a
+  brand that is leaving.

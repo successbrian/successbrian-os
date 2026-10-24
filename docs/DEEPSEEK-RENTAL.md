@@ -33,3 +33,14 @@ Flag correctly reads exhausted, which is why Altair's profile currently
 defaults to the local Morpheus model. Nothing for Brian to do — when
 InstantlyClaw refills, the hourly check sees it and routing resumes
 on its own.
+
+## The owned path (added 2026-10-20)
+
+The rental stays the burst top tier for hard tasks when funded. In
+parallel, the fleet is building owned V4-class capacity: the DeepSeek V4
+Flash REAP 150B build (85 GB, Colibri streaming) on k11-alpha today, with
+DL380 slices and cheap DDR4 nodes as background lanes (see MODELS.md,
+"Streaming tier", and docs/fleet-map.md, expansion idea 9). The 150B is
+retired as a routing tier — the local nodes contribute inference capacity;
+they don't take the rental's place in routing, and none of this changes
+the key handling above.

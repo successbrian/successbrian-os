@@ -14,7 +14,7 @@ CALLED BY:
     - Future entrepreneurs' own schedulers, via board/config/*.yaml
 
 NOTES:
-    Harness = the loop machinery (seats, worker, gate, sinks, session).
+    Harness = the loop machinery (seats, worker, agenda, gate, sinks, session).
     System  = a bent config (seats, briefs, sink). Never hardcode one
     entrepreneur's domains into the harness modules.
 """

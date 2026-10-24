@@ -19,6 +19,22 @@ retry:
 gate:
   threshold: 0.90
 
+agenda:
+  # Brian 2026-10-21: the board loops the ENTIRE agenda queue instead of
+  # each seat picking 2-3 calls. Source: Atlas open gates + tasks.
+  source: atlas                 # atlas (bent) | jsonl (generic, uses path below)
+  via: kssh                     # DB lives on k11-alpha; harness reaches it via kssh
+  deadline_s: 7200              # TWO-HOUR CAP (Brian delegated the call, Muse set 2h,
+                                # 2026-10-21): 02:30 start Mon-Fri (rule 14 quiet window) ->
+                                # 04:30 cap, ahead of the 04:42 context-bundle
+                                # refresh. HARD END: the session wraps at the cap even if the
+                                # queue is unfinished - chipping at it morning by
+                                # morning is the design; unprocessed
+                                # items stay queued and lead the next session
+  fallback_seat: Chief Ecosystem Build Officer
+  # ledger_path defaults to <minutes_dir>/board-agenda-ledger.jsonl —
+  # an item leaves the queue only when the board has ruled on it.
+
 sink:
   type: second_brain                 # decisions land in PG second_brain; 4:40 AM 150B bundle picks them up
 
@@ -81,7 +97,7 @@ seats:
 
   - title: Chief Financial Officer
     domain: Consolidated money picture
-    mandate: "Closes the money conversation. Takes all wave-1 chiefs' calls and consolidates: revenue streams together, spending, runway, capital allocation. Returns the money synthesis + 2-3 financial calls."
+    mandate: "Closes the money conversation. Takes all wave-1 chiefs' calls and consolidates: revenue streams together, spending, runway, capital allocation. Returns the money synthesis + financial calls on the money items."
     wave: 2
     depends_on: [Chief MLM Officer, Chief Affiliate Marketing Officer, Chief Marketing Officer, Chief People Enrichment Officer, Chief Blog Content Officer, Chief Trading Desk Officer, Chief Hardware Flipping Officer, Chief Ecosystem Build Officer]
     brief_keys: [mlm, affiliate, systemeio, leads, trading, flipping]

@@ -18,8 +18,8 @@ CALLED BY:
 
 NOTES:
     Conflict checks are still hard-coded — they don't scale to new plan
-    tables. AnythingLLM upload needs ANYTHINGLLM_API_KEY and is untested
-    against the real workspace. Erroneous decisions propagate downstream
+    tables. AnythingLLM upload uses the key from successbrian-os/.env;
+    verified live 2026-10-22. Erroneous decisions propagate downstream
     unless corrected at the source; see the X79-20260927-03 correction.
 """
 
@@ -33,43 +33,51 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Load the shared env (successbrian-os/.env) when present —
+# ANYTHINGLLM_API_KEY / ANYTHINGLLM_URL live there (2026-10-22).
+_env_file = Path.home() / "successbrian-os" / ".env"
+if _env_file.exists():
+    for _line in _env_file.read_text().splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _v = _line.split("=", 1)
+            os.environ.setdefault(_k.strip(), _v.strip())
+
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
 STAGING_DIR = Path(os.environ.get(
     "DECISION_SYNC_STAGING",
-    str(Path.home() / "workspace" / "successbrian-os" / "tools" /
-        "decision_sync" / "staging"),
+    str(Path(__file__).resolve().parent / "staging"),
 ))
-ANYTHINGLLM_URL = os.environ.get("ANYTHINGLLM_URL", "http://100.118.53.47:3001")
+ANYTHINGLLM_URL = os.environ.get("ANYTHINGLLM_URL", "http://127.0.0.1:3000")
 ANYTHINGLLM_KEY = os.environ.get("ANYTHINGLLM_API_KEY", "")
 WORKSPACE_SLUG = "home-lab"  # AnythingLLM workspace for ecosystem docs
 
 PG = dict(host="localhost", user="successbrian", dbname="ecosystem_central")
 
 
-def kssh(cmd: str) -> str:
-    """Run a command on k11-alpha via the kssh helper."""
-    out = subprocess.run(
-        [str(Path.home() / "workspace" / "bin" / "kssh"), cmd],
-        capture_output=True, text=True, timeout=60,
-    )
-    if out.returncode != 0:
-        raise RuntimeError(f"kssh failed: {out.stderr.strip()}")
-    return out.stdout
+def pg_query(sql: str) -> list:
+    """Run a read query against ecosystem_central (psycopg2).
 
+    History: this originally shelled out through a helper
+    script that was supposed to run the query from another
+    machine. That helper never existed on alpha and the sync
+    has always run ON alpha (sunday_shift calls it here), so
+    the indirection is retired (2026-10-22).
+    Returns rows as lists, in SELECT column order.
+    """
+    import psycopg2
+    conn = psycopg2.connect(**PG)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            return [list(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
 
-def pg_query(sql: str) -> list[dict]:
-    """Run a read query against ecosystem_central, return list of dicts."""
-    # Use json output for reliable parsing
-    wrapped = (
-        f"psql -h {PG['host']} -U {PG['user']} -d {PG['dbname']} "
-        f"-t -A -F'\x1f' -c \"{sql}\""
-    )
-    raw = kssh(wrapped)
-    # Caller parses; we return raw lines and let each query define columns
-    return [line.split("\x1f") for line in raw.strip().split("\n") if line.strip()]
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +270,24 @@ def push_to_anythingllm(title: str, content: str, slug: str) -> bool:
         with urllib.request.urlopen(req, timeout=60) as resp:
             result = json.loads(resp.read())
         print(f"  [ok] Uploaded {slug}: {result}")
+        locs = []
+        if isinstance(result, dict):
+            for _d in result.get('documents') or []:
+                if _d.get('location'):
+                    locs.append(_d['location'])
+        if locs:
+            try:
+                req2 = urllib.request.Request(
+                    f"{ANYTHINGLLM_URL}/api/v1/workspace/{WORKSPACE_SLUG}/update-embeddings",
+                    data=json.dumps({'adds': locs}).encode(),
+                    headers={'Authorization': f'Bearer {ANYTHINGLLM_KEY}',
+                             'Content-Type': 'application/json'},
+                )
+                with urllib.request.urlopen(req2, timeout=60) as resp2:
+                    resp2.read()
+                print(f'  [ok] Embedded into workspace {WORKSPACE_SLUG}: {locs}')
+            except Exception as e2:  # noqa: BLE001
+                print(f'  [warn] upload ok but embed failed for {slug}: {e2}')
         return True
     except Exception as e:  # noqa: BLE001 — report, don't crash the sync
         print(f"  [error] AnythingLLM push failed for {slug}: {e}")

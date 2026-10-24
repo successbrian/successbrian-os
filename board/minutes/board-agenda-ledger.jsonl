@@ -1,0 +1,73 @@
+{"item_key": "fridley-move", "kind": "gate", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "gate:gb40-lead-budget", "kind": "gate", "seat": "Chief MLM Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "gate:hardware-flipping-space", "kind": "gate", "seat": "Chief Hardware Flipping Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "gate:zilara-executive-nov1", "kind": "gate", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:board-research:future-better", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:broken-audit:atlas-summaries", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:broken-audit:backup-the-record", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:broken-audit:crontab-passwords", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:broken-audit:delivery-channel", "kind": "task", "seat": "Chief Trading Desk Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:broken-audit:gamma-fleet-rotation", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:broken-audit:gamma-transfer-finish", "kind": "task", "seat": "Chief People Enrichment Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:broken-audit:goal-deadlines-as-data", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:broken-audit:idea-producers", "kind": "task", "seat": "Chief Trading Desk Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:broken-audit:knowledge-bridge", "kind": "task", "seat": "Chief Trading Desk Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:broken-audit:meghan-engine", "kind": "task", "seat": "Chief Blog Content Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:broken-audit:pg-tailnet-bind-race", "kind": "task", "seat": "Chief Affiliate Marketing Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:broken-audit:producer-routing", "kind": "task", "seat": "Chief Trading Desk Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:broken-audit:travel-laptops", "kind": "task", "seat": "Chief Blog Content Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:critique-graph-design", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:gate-criteria:fridley-move", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:orphan:plan-intel-refinery", "kind": "task", "seat": "Chief Financial Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:orphan:plan-proposal-only-scanner-pilot", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:orphan:plan-v4prop-allm-data-points-dry-run-candidate-scan-268", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:orphan:plan-v4prop-allm-inventory-rows-table-268", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:orphan:plan-v4prop-allm-pricing-rows-table-268", "kind": "task", "seat": "Chief Hardware Flipping Officer", "verdict": "recommendation", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:orphan:plan-v4prop-allm-spec-rows-table-268", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:orphan:plan-v4prop-allm-structured-extraction-audit-table-268", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:orphan:plan-v4prop-allm-timeline-rows-table-268", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:orphan:plan-v4prop-allm-vendor-rows-table-268", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:orphan:plan-v4prop-altair-decision-should-the-first-read-on-259", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:orphan:plan-v4prop-pending-brian-call-final-stale-threshold-259", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:orphan:plan-v4prop-phase-gate-read-only-anythingllm-documen-259", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:orphan:plan-v4prop-quarantine-separate-safety-assessment-259", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:orphan:plan-v4prop-recurring-scheduled-doc-hygiene-audit-259", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:orphan:plan-v4prop-stale-risk-model-after-verified-atlas-ma-259", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:orphan:plan-v4prop-workspace-by-workspace-duplicate-candida-259", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:orphan:proj-per-user-db", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:orphan:proj-timeblock-engine", "kind": "task", "seat": "Chief Blog Content Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:company-gvo", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:company-le-vel", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:company-my-lead-gen-secret", "kind": "task", "seat": "Chief People Enrichment Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:initiative-aegeanvedaflow", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "recommendation", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:initiative-agent-fleet-self-healing", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:initiative-clickstaff-ai-multi-agent-chief-of-staff-platform", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:initiative-dealsdesk", "kind": "task", "seat": "Chief Hardware Flipping Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:initiative-ecosystem-hygiene-autonomous-operations", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "recommendation", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:initiative-ecosystem-plan-gating-sop-compliance", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:initiative-financial-operations-auto-pilot", "kind": "task", "seat": "Chief Financial Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:initiative-gotbackup", "kind": "task", "seat": "Chief MLM Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:initiative-gottahavetraffic", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "recommendation", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:initiative-hardware-fleet-automation", "kind": "task", "seat": "Chief Hardware Flipping Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:initiative-infrastructure-builds", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "recommendation", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:initiative-knowledge-graph-auto-expansion", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:initiative-le-vel", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "recommendation", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:initiative-n8n-automations", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:initiative-network-marketing", "kind": "task", "seat": "Chief Affiliate Marketing Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:initiative-node-echo-build-out", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:initiative-operations", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:prospect:initiative-revenue-pipeline-automation", "kind": "task", "seat": "Chief Affiliate Marketing Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:readiness:blog-network", "kind": "task", "seat": "Chief Blog Content Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:readiness:campaignsdesk", "kind": "task", "seat": "Chief Blog Content Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:readiness:coaching-program", "kind": "task", "seat": "Chief Blog Content Officer", "verdict": "recommendation", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:readiness:contactflowcrm", "kind": "task", "seat": "Chief Blog Content Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:readiness:dealsdesk", "kind": "task", "seat": "Chief Blog Content Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:readiness:sbos-trafficstreemz", "kind": "task", "seat": "Chief Blog Content Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:readiness:tradesdesk", "kind": "task", "seat": "Chief Blog Content Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:staff:ceo-heartbeat-timer", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:staff:endpoint-11436", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:staff:meghan-engine", "kind": "task", "seat": "Chief Affiliate Marketing Officer", "verdict": "recommendation", "session_tag": "board-20261023"}
+{"item_key": "task:discovery:staff:research-worker", "kind": "task", "seat": "Chief Ecosystem Build Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:gamma-local-ollama-switch", "kind": "task", "seat": "Chief Blog Content Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:gb40:baseline", "kind": "task", "seat": "Chief MLM Officer", "verdict": "binding", "session_tag": "board-20261023"}
+{"item_key": "task:gb40:closing-kit", "kind": "task", "seat": "Chief Financial Officer", "verdict": "binding", "session_tag": "board-20261023"}

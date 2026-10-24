@@ -61,7 +61,7 @@ def _q(s: str) -> str:
 class SecondBrainSink(DecisionSink):
     """Brian's bent sink: PostgreSQL second_brain via tools/second_brain.py."""
 
-    TOOL = os.path.expanduser("~/workspace/successbrian-os/tools/second_brain.py")
+    TOOL = os.path.expanduser("~/successbrian-os/tools/second_brain.py")
     KSSH = os.path.expanduser("~/workspace/bin/kssh")
 
     def record(self, decision: Decision) -> str | None:

@@ -1,0 +1,3144 @@
+#!/usr/bin/env python3
+"""allm_workspaces.py — AnythingLLM workspace registry + determination.
+
+Atlas registers AnythingLLM workspaces as nodes (allm:<slug>), but a
+name tag is not management. This module is the determination layer
+(Brian, 2026-10-22): it says what each workspace is FOR, who owns it,
+what lands in it, and — for new material — WHERE it goes and why.
+
+Brian's determination rules, encoded:
+  R1. A workspace is one domain of questions owned by one part of
+      the ecosystem (a business line, desk, project, or person-matter).
+  R2. Separation is PER BUSINESS, never per category: "keep Zilara
+      details separate even though both are MLMs" (Brian, 2026-10-22).
+      A shared category (e.g. MLM) is NEVER a reason to route material
+      into a sibling business's workspace.
+  R3. All data about a business lives in that business's workspace:
+      "Oliabo is a workspace we need to store all data Oliabo"
+      (Brian, 2026-10-22) — regardless of which desk produced it.
+  R4. unsorted is an intake tray, not a home; quarantine holds
+      untrusted content and never mixes with trusted bodies.
+  R5. New workspace only when: no existing workspace's owner covers
+      the subject AND the subject is a named owner in its own right.
+      Otherwise the material goes to the owning workspace, or to
+      unsorted until an owner is determined.
+  R6. Every MLM business Brian is ACTIVELY BUILDING has its own
+      workspace (Brian, 2026-10-22). The active list is Brian's
+      (2026-10-21: exactly three — Zilara, GotBackup, Vate Life);
+      audit() flags any active MLM lacking a workspace. Businesses
+      not on the active list get no workspace from this rule —
+      Oliabo's rests on its own ruling (R3), and names that merely
+      appear in campaign data (Sipology, LiveGood, le-Vel, ...)
+      get nothing until Brian designates them active.
+  R7. Every MARKETING SKIN has its own workspace (Brian,
+      2026-10-22: 'TrafficStreemz needs its own workspace. Also
+      AegeanVedaFlow, CryptoStreemz — each marketing skin needs
+      its own anythingllm workspace'). Skins on record:
+      TrafficStreemz (already live), AegeanVedaFlow,
+      CryptoStreemz. A skin's workspace holds the SKIN's material
+      (its offers, bundles, campaigns); business details still
+      live in each business's own workspace (R2/R3).
+  R8. THE NEGATIVE REGISTRY (Brian, 2026-10-22): builds Brian is
+      intentionally NOT building get a workspace of their own —
+      'builds-we-are-not-building' — holding the WHY of each
+      rejection: the evidence, the mechanism, and what would have
+      to change to reopen it. It is the mirror of the build_zones
+      'why' (why chosen builds ARE built). determine() checks the
+      NOT_BUILDING list FIRST: material about a rejected build
+      routes to the negative registry, never to a builds body —
+      so no dead end is re-researched or quietly revived.
+      First citizen: Epyc 7001 — 'we are not building epyc 7001;
+      i am intentionally not building that one' (Brian).
+  R9. COACHING BODIES ARE PER AUDIENCE (Brian, 2026-10-22: 'we
+      need an anythingllm workspace to put all the AI Strategies
+      that I am planning to coach to Network Marketers; and
+      another ... to coach to other users of successbrian os').
+      The AI strategies Brian teaches live in one workspace PER
+      COACHED AUDIENCE — never one merged 'AI strategies' pile:
+      what he teaches a network marketer is framed, priced, and
+      sequenced differently from what he teaches a fellow
+      SuccessBrian OS operator. Audiences on record:
+      network-marketers, sbos-users.
+  R10. COMPETITIVE RESEARCH IS ITS OWN BODY, sibling to the
+      domain it studies — it holds what OTHERS are doing, never
+      Brian's own material (first instance ruled by Brian,
+      2026-10-22: 'ai-strategies-competitive-research — where
+      we hold ideas of what other influencers and coaches are
+      promoting'). Research organizes by the market/question;
+      R2's separation protects Brian's own businesses, it does
+      not scatter his intel. Further research bodies from the
+      2026-10-22 ideas slate (Health MLM, Systeme.io, Blood
+      Sugar Systems) remain IDEAS until Brian designates them.
+  R11. SPACES FOLLOW AUDIENCES (Brian, 2026-10-22: 'every
+      audience we are trying to build gets a space; and in
+      many cases a competitive research one to store the other
+      stuff'). The general law R6/R7/R9 converge on: once an
+      audience is being built, it gets its own space — the
+      SPACE is mandatory; a competitive-research sibling is
+      common but ruled per audience, never automatic. audit()
+      enforces space coverage for every audience on record
+      and reports each audience still lacking a research body
+      as a standing question, not a violation.
+  R12. PROJECTS AND BLOGS GET SPACES TOO (Brian, 2026-10-22:
+      'all of our vibe coded projects need their own
+      anythingllm workspace; when appropriate, we need
+      workspaces for competitive research; we need spaces for
+      each blog; we need spaces for blog niche competitive
+      research (where appropriate)'). (a) Every vibe-coded
+      project on the PROJECTS list has its own workspace —
+      the list is Brian's, extended by designation; a
+      directory on a disk is not automatically a project.
+      (b) Every blog on the BLOGS list has its own workspace;
+      the blog-network body is the network-level body, not a
+      substitute for per-blog spaces. (c) Competitive-
+      research siblings for projects and blogs follow R10:
+      created where Brian rules them appropriate, never
+      automatically.
+  R13. PRIVATE BODIES VS PUBLIC SKINS (Brian, 2026-10-22:
+      'CampaignsDesk is a special brian only private repo;
+      it's a different idea than the marketing skin
+      AegeanVedaFlow'). Some bodies are Brian-only private
+      working spaces — CampaignsDesk is the archetype: his
+      private desk/repo. It SERVES the marketing skins but
+      is not one, is never audience-facing, and never gets
+      classed with public products or skins. Privacy class
+      is recorded per workspace in its registry row.
+  R14. THE CORE FIGURES OUT THE NEED; DEALSDESK BUILDS THE
+      NODES (Brian, 2026-10-22: 'successbrian-os core needs
+      to figure these things out... and DealsDesk needs to
+      be able to read that need and build out the nodes the
+      right way'). Placement is a core determination: which
+      segment a body belongs to, what that segment's
+      resource character is, and which node it should live
+      on — recorded in SEGMENTS/PLACEMENT below and printed
+      by the `placement` command. DealsDesk consumes that
+      readout as a NEED and builds/provisions the nodes to
+      the segment's spec — the same find-the-items role it
+      already plays for hosting, extended to whole nodes.
+      Segments exist so domains do not mix resources
+      (Brian: the MLM segment is 'a little segment of nodes
+      somewhere' and doesn't need to mix with crypto).
+  R15. PLACEMENT FOLLOWS WHAT A THING IS — NEVER WHAT IT
+      IS ASSOCIATED WITH (Brian, 2026-10-22: 'i don't want
+      my systeme.io plugins; my vibe coded projects; and
+      other things to get thrown into "mlm" buckets
+      anymore'). The segment-level twin of R2. A skin that
+      markets MLM offers is MARKETING, not MLM. A CRM sold
+      to network marketers is a PRODUCT, not an MLM. A
+      systeme.io plugin is a systeme.io thing. The 'mlm'
+      segment holds the MLM businesses themselves and
+      nothing else; association with a market never places
+      a body.
+  R16. THE DESKS ARE PLUGINS (Brian, 2026-10-22:
+      'TradesDesk is more like CampaignsDesk and DealsDesk
+      -- they are private repos; plugins to
+      successbrian-os'). All three desks — CampaignsDesk,
+      DealsDesk, TradesDesk — are private repos and plugins
+      to SuccessBrian OS. As machinery they sit in the core
+      segment with the OS they plug into; the knowledge
+      bodies for the domains they work in (trading,
+      campaigns, deals) live in those domains.
+  R17. SCALE (Brian, 2026-10-22: 'Each unique blog and
+      site I am planning to build. I'm building out 100
+      blogs. That's 100 anythingllm workspaces plus more
+      if they need competitive research or niche specific
+      stuff. All my unique vibe coded projects — they each
+      need a unique workspace plus more for each
+      competitive research'). The per-thing rules (R12)
+      hold at program scale: every unique blog/site gets
+      its own workspace WHEN IT IS NAMED — the program
+      target is 100 blogs — with niche competitive-
+      research bodies where ruled appropriate (R10);
+      every unique vibe-coded project likewise, plus its
+      competitive-research body where ruled. Nothing is
+      pre-created as an empty shell for an unnamed thing;
+      the registry, audit, and segment map are the
+      machinery that makes hundreds of bodies governable,
+      and blogs get their own segment so the publishing
+      network never swamps core.
+  R18. THE DEAD-BUSINESS REGISTRY (Brian, 2026-10-23:
+      'Dead MLMs (sipology is a dead mlm)'). Businesses
+      Brian rules dead get ONE shared body — dead-mlms —
+      holding each as a tagged entry (what it was, why it
+      died, the evidence, the reopen condition), never a
+      workspace per dead business. determine() routes a
+      dead business's material there before any owner
+      match, the way R8 routes rejected builds. 'Not on
+      the active list' is not 'dead': only an explicit
+      ruling enters a business here.
+  R19. TRACKED PUBLIC FIGURES (Brian, 2026-10-23:
+      'People: Donald Trump, Amy Klobuchar, Tim Walz,
+      Elon Musk, Mark Zuckerberg, JD Vance, ... and many
+      other people — each needs their unique anythingllm
+      workspace'). A public figure Brian names for
+      tracking gets their own dossier body: sourced public
+      statements, coverage, and Brian's analysis of their
+      bearing on his world. This is a WATCH list, not his
+      relationships — his people (friends, contacts,
+      network) live in the relationship layer
+      (people-pipeline / ContactFlowCRM) and never get
+      per-person workspaces. Figures join the class when
+      Brian names them — or, per his standing build-out
+      order (2026-10-23: 'build the people and companies
+      out to more and more as needed'), when Brian's own
+      record evidences tracking (Atlas nodes, goals,
+      arena maps, registered events). Additions are
+      reported with their evidence so Brian can strike
+      any. Association alone never adds a dossier (R15),
+      and a relationship never becomes one.
+  R20. TRACKED COMPANIES (Brian, 2026-10-23: 'companies:
+      Anthropic, Open AI, Nvidia, AMD, Intel ....'). The
+      company twin of R19: a company Brian names for
+      tracking gets its own dossier body — sourced public
+      announcements, product and market moves, and Brian's
+      analysis. Vendor dealings (quotes, orders,
+      support) live with the desk or project that deals;
+      the dossier is the watch record. Companies join the
+      class when Brian names them — or under the same
+      build-out order and evidence standard as R19.
+  R21. PLATFORMS (Brian, 2026-10-23: 'Windows, Android,
+      Linux — others'). Each platform or operating
+      system Brian runs gets its own body: platform
+      knowledge, configuration, hardening, updates, and
+      ecosystem moves. A platform is not its vendor —
+      windows is not microsoft, android is not google
+      (R15) — and machine-specific material stays in
+      home-lab / the builds bodies. Others join when
+      named or when his fleet actually runs them.
+  R22. FAVORITE MACHINE MAKERS (Brian, 2026-10-23: 'each
+      of my favorite machines: GMK Tec, Aoostar,
+      Minisforum, others'). Each machine maker Brian
+      favors gets its own body: product lines and
+      models, pricing and supply moves, support notes,
+      and his fleet experience. This class supersedes
+      the earlier supplier exclusion — these makers are
+      not mere vendors in the companies watch list,
+      they are the brands his fleet is built from.
+      Purchase hunts stay in DealsDesk (R14's find-the-
+      items role); hardware-class knowledge stays in
+      the builds bodies. Others join when named.
+  R23. THE DISLIKE REGISTRY (Brian, 2026-10-23: 'maybe a
+      workspace of things Brian doesn't like — apple,
+      iphones, chocolate, onions'). The personal twin
+      of R8/R18: ONE body — things-brian-doesnt-like —
+      and disliked things are TAGGED ENTRIES inside it,
+      never workspaces of their own. determine() checks
+      DISLIKES before owner matching, so a disliked
+      subject can never be promoted to a body. Charter
+      entries: #APPLE, #IPHONES, #CHOCOLATE, #ONIONS —
+      joined minutes later at the same 'extremely
+      strong hatred' strength (Brian, 2026-10-23) by
+      #DEMOCRATS, #SATANISTS, #MEN-IN-WOMENS-SPORTS
+      (the advocates), and #ABORTION (those who like
+      it).
+  R24. THE LIKE REGISTRY (Brian, 2026-10-23: 'people I
+      like: Donald Trump, Lisa Demuth, Mike (the my
+      pillow guy)'). The positive twin of R23: ONE body —
+      people-brian-likes — holds Brian's stance entries
+      for people he likes, with the evidence. A liked
+      public figure ALSO holds their own dossier under
+      R19 (the registry records the stance; the dossier
+      holds the material). Likes never reroute
+      determine() — they block nothing. Charter entries:
+      Donald Trump (dossier already live), Lisa Demuth,
+      Mike Lindell.
+  R25. DESIGNATED THESIS / BELIEF / METHOD BODIES
+      (Brian, 2026-10-23). Individual bodies Brian
+      designates for a position or a playbook, filed as
+      his record: ai-bubble-crash (his thesis: an AI
+      bubble is going to pop), flat-earth (his stated
+      belief: he thinks the earth is flat), and
+      name-finding-and-enrichment (the playbook: the
+      strategies the ecosystem uses to find people's
+      names and enhance them — the methods live there,
+      people's data stays in people-pipeline /
+      ContactFlowCRM).
+  R26. GEOGRAPHY (Brian, 2026-10-23: 'Geography:
+      Continents, Countries — to help me market to
+      these various bodies'). Continents and countries
+      get bodies holding the PLACE knowledge for
+      marketing: audiences, languages, platforms,
+      payment rails, culture, and marketing rules.
+      Offers/campaigns stay with the desks and skins;
+      business details stay in business bodies.
+      Continents are built as the regional rollups;
+      countries join when Brian names them or his
+      marketing actually targets them (the R19/R20
+      evidence standard) — no empty-shell world atlas
+      (R17). Charter: six marketed continents
+      (Antarctica skipped — no market, no population)
+      + united-states, philippines, nigeria.
+  R27. TIGHT INTEGRATION (Brian, 2026-10-23: 'all of
+      these needs to be integrated tightly now'). The
+      bodies are ONE system, wired in the Atlas graph:
+      segment hubs (segment:<name>) contain their
+      bodies; successbrian-os contains the hubs; coded
+      cross-links wire the pairs the registry text
+      names (principal_of, vendor_of, containment,
+      stance, GTM channels, family). `integrate`
+      applies the wiring idempotently, reconciles
+      registry = live workspaces = Atlas nodes, and
+      reports floaters — target zero: no workspace
+      node stands alone. The workspace map is
+      generated from the registry and embedded in
+      successbrian-os, so the OS body itself can
+      answer where anything lives.
+  R29. BUSINESS GOALS (Brian, 2026-10-23: 'goals drive
+      successbrian-os to build the systems that help me
+      manage the daily chaos and achieve the success I
+      want'). The goals get their own body —
+      business-goals — the driver record of the whole
+      OS: each business goal with its why, its measure,
+      and the systems SBOS builds because of it. It
+      sits in core beside the OS it drives, linked
+      business-goals —[enables]-> successbrian-os.
+      (R28, the systems integration layer, lives in the
+      sibling module systems_integration.py.)
+  R30. PLANNING BODIES (Brian, 2026-10-23: 'when I plan
+      something out, I think an anythingllm workspace
+      needs to be created to dump ideas that I'm
+      working with to help me plan it'). Starting a plan
+      creates its own workspace — plan-<subject> — the
+      idea dump for that plan, seeded with the planning
+      template. While a plan is ACTIVE, determine()
+      routes its subject's material to the planning
+      body (after the negative registries, before owner
+      matching). Planning bodies live in
+      atlas.planning_workspaces (their own table — the
+      static REGISTRY is for settled bodies), sit in
+      the core segment, and are wired under the core
+      hub at creation. Lifecycle: a plan GRADUATES when
+      it becomes a real thing — its material promotes
+      to the owning body (R3) and the plan is marked
+      graduated; a dead plan is marked abandoned with
+      its why. Nothing about a plan is deleted silently.
+  R31. THE SCATTERED SECOND BRAIN (Brian, 2026-10-23:
+      'I'm kind of a scattered person... I might
+      offshoot into 14 or more other things... it needs
+      to help me sort the chaos... this is the scattered
+      second brain — that takes the really raw stuff
+      and refines it into something more workable').
+      Brian's idea-refinery, machinery in
+      scattered_brain.py: stray ideas are captured raw
+      in one call, triaged in his downtime (clustered,
+      scored against the business goals and the
+      workspace map, given a recommendation), and ruled
+      on by Brian — promote (a planning body starts,
+      R30), park (held, alive), or discard (with why,
+      never deleted). Its own body —
+      scattered-second-brain — holds the method, the
+      criteria, and the digests. It is NOT Altair's
+      second brain: that one is the agent's curriculum;
+      this one is Brian's chaos, sorted.
+  R32. THE SANCTIONED HOMES (Brian, 2026-10-23: 'if we
+      have files, I want those files in anythingllm.
+      I'd rather have anythingllm and postgresql, n8n,
+      and CODE — not just random files and scripts').
+      Every artifact the ecosystem produces has exactly
+      four sanctioned homes: KNOWLEDGE and DOCUMENTS go
+      to AnythingLLM, embedded in the owning workspace
+      (routed by determine()); STATE goes to
+      PostgreSQL; AUTOMATION goes to n8n; LOGIC goes to
+      real code in a repo. A loose file or a one-off
+      script is a migration candidate, never a
+      destination. Generated briefs and digests are
+      documents: their canonical copy is embedded in
+      their workspace (allm_embed.py replaces the prior
+      edition, so exactly one current copy lives there).
+  R33. THE BOARD WATCHES SPRAWL (Brian, 2026-10-23:
+      'the board of directors should be watching any
+      sprawl that is getting too far'). The sprawl
+      census snapshots into PostgreSQL
+      (atlas.sprawl_snapshots); the watch
+      (sprawl_census.py watch) runs Mon–Fri 02:10,
+      ahead of the 02:30 board session, and compares
+      against the baseline under SPRAWL_LIMITS — loose
+      documents +10% (or 1,250 absolute), loose scripts
+      +10%, loose data +25%, and ANY new loose cron
+      script. A trip files task:sprawl-watch into
+      Atlas — which IS the board's agenda queue (Atlas
+      open gates + tasks, per the board harness spec)
+      — so it reaches the session like any agenda
+      item. The board suggests; Meghan and Altair
+      decide (R35).
+  R34. CONVERGENCE — PUSH TO THE MIDDLE (Brian,
+      2026-10-23: 'the board can look at the top a
+      little, look at the bottom a little (the oldest
+      tasks that aren't completed)... basically looking
+      at all sides of the process and keep pushing
+      everything to the middle'). The board's attention
+      is stratified: pending gates and the newest
+      arrivals (the top), the oldest uncompleted tasks
+      (the bottom — nothing starves at the end of the
+      queue), and the mass between. Every session
+      samples all sides; the direction of everything is
+      the middle — ruled, resolved, done. queue_watch.py
+      is the instrument: strata, ages, starvation flags,
+      and the session's suggested pull order.
+  R35. WHO DECIDES (Brian, 2026-10-23: 'the board
+      doesn't over-ride meghan or altair... they just
+      offer suggestions. meghan and altair actually
+      decide'). The decision hierarchy of the fleet:
+      the Board of Directors ADVISES — its output is
+      suggestions, however strong its gate score (the
+      0.90 score is the strength of a suggestion, not
+      a binding ruling); MEGHAN and ALTAIR DECIDE
+      (Altair the operations, Meghan the executive
+      layer above him — escalation altair -> meghan ->
+      brian); BRIAN OWNS — his word overrides all of
+      it, and the approval-scope rule is unchanged
+      (an executive decision is still not a send).
+      This settles the spec's open question: Meghan is
+      the chair in substance. The board never
+      over-rides the executives; it makes sure the
+      executives decide with the whole picture in
+      front of them.
+  R36. THE BOARD LEARNS (Brian, 2026-10-23: 'the board
+      must learn how to make better and better
+      suggestions over time'). A suggestion is a
+      tracked claim, not a moment: board_learning.py
+      keeps the ledger — suggestion (seat, item, gate
+      score) -> executive decision (accepted /
+      modified / rejected, per R35) -> outcome
+      (worked / failed / mixed). Per-seat scorecards
+      and calibration feed the next session's brief:
+      a seat whose high-scored suggestions keep
+      getting rejected is miscalibrated, and the brief
+      says so in plain words. The board's memory is
+      the ledger — without outcomes recorded there is
+      no learning, only repetition.
+  R37. THE 95% RELEASE LINE + THE IDEA TABLE (Brian,
+      2026-10-23: 'the board only releases what it is
+      95% certain of. For things it is 94.9999% or less
+      certain of, it records separately (a board idea
+      table)... and issues research orders to find out
+      ways it can increase the surety'). Two output
+      streams: RELEASES at >= 0.95 certainty go to the
+      executives (the suggestions ledger enforces the
+      line in its schema — a sub-0.95 release cannot
+      be written); everything below goes to
+      atlas.board_ideas with RESEARCH ORDERS
+      (atlas.board_research_orders, executed as Atlas
+      tasks) whose job is to raise the idea's surety
+      until it crosses the line or the research kills
+      it, with the why recorded. The board also works
+      four standing IMPROVEMENT FRONTS, each a research
+      beat: ways we can get better in the future; ways
+      to improve ecosystem efficiency; ways to do
+      things better and burn fewer tokens; ways to
+      burn less energy while keeping the budget. A
+      front with no open research orders is a gap the
+      brief names. (The harness gate.py 0.90 heuristic
+      is superseded for releases by Brian's 0.95 line
+      — flagged for the step-zero harness review.)
+
+Registry: atlas.allm_workspace_registry (ecosystem_central), seeded
+idempotently from this file. Live truth (which workspaces exist and
+their document counts) is read from AnythingLLM's own database,
+read-only. Determined workspaces are created inside AnythingLLM
+via its API (key wired into successbrian-os/.env, 2026-10-22);
+status 'live' means the workspace exists there.
+
+CLI:
+  allm_workspaces.py list                 registry vs live counts
+  allm_workspaces.py determine <subject> [--category C]
+  allm_workspaces.py audit                drift report
+  allm_workspaces.py seed                 (re)seed registry + sync nodes
+  allm_workspaces.py selftest             assert the rules hold
+"""
+
+import os
+import sqlite3
+import sys
+
+import psycopg2
+
+DBNAME = "ecosystem_central"
+ALLM_DB = "/home/successbrian/anything-llm/server/storage/anythingllm.db"
+INGEST_DIR = "/home/successbrian/anythingllm-ingest-20261015"
+
+# Brian's active MLMs (2026-10-21: exactly three). Rule R6: each
+# one has its own workspace; audit() enforces coverage.
+ACTIVE_MLMS = ["zilara", "gotbackup", "vate-life"]
+
+# Marketing skins (Brian, 2026-10-22). Rule R7: each skin has its
+# own workspace; audit() enforces coverage.
+SKINS = ["trafficstreemz", "aegeanvedaflow", "cryptostreemz"]
+
+# Coaching audiences (Brian, 2026-10-22). Rule R9: the AI
+# strategies Brian coaches live in one workspace PER AUDIENCE;
+# audit() enforces coverage.
+COACHING = [("network-marketers", "ai-strategies-network-marketers"),
+            ("sbos-users", "ai-strategies-sbos-users")]
+
+# Competitive-research bodies (R10): one per domain studied,
+# each ruled by Brian individually. The ideas slate's other
+# research bodies stay undesignated until he rules them.
+RESEARCH_BODIES = ["ai-strategies-competitive-research"]
+
+# Audiences being built (R11). Each gets a SPACE (mandatory);
+# a competitive-research sibling is ruled per audience.
+# space=None records a known gap the audit reports until
+# Brian determines one.
+AUDIENCES = [
+    {"audience": "network-marketers",
+     "space": "ai-strategies-network-marketers",
+     "research": "ai-strategies-competitive-research"},
+    {"audience": "sbos-users",
+     "space": "ai-strategies-sbos-users",
+     "research": None},
+    {"audience": "trafficstreemz-public (under-$100k)",
+     "space": "trafficstreemz",
+     "research": None},
+    {"audience": "aegeanvedaflow-public (over-$100k)",
+     "space": "aegeanvedaflow",
+     "research": None},
+    {"audience": "cryptostreemz-public",
+     "space": "cryptostreemz",
+     "research": None},
+    {"audience": "old-school tech audience",
+     "space": "tech-audience",
+     "research": None},
+]
+
+# Vibe-coded projects (R12a). Brian's governed list — the ERP
+# pieces and products he has named; extended by designation,
+# never by sweeping a filesystem.
+PROJECTS = ["contactflowcrm", "trafficstreemz",
+            "successbrian-os", "dealsdesk", "campaignsdesk",
+            "tradesdesk", "roadchat"]
+
+# Blogs (R12b). The network-level body plus each named blog.
+# More blogs join the list as they are named (gamma's blog
+# inventory is the expected source); unnamed blogs are not
+# invented here.
+BLOGS = [
+    {"blog": "Blog network (network-level body)",
+     "space": "blog-network"},
+    {"blog": "Medium — SuccessBrian OS",
+     "space": "medium"},
+]
+
+# Segments and placement (R14). The core's determination of
+# where bodies belong and what each domain's resource
+# character is. DealsDesk reads the `placement` output as a
+# need and builds nodes to the segment's spec. Assignments
+# drafted by Muse from Brian's rules (2026-10-22) — Brian
+# corrects placements by ruling; home_node is where the
+# body lives TODAY (k11-alpha for all, until a split is
+# ruled and executed).
+SEGMENTS = {
+    "mlm": {
+        "character": "The MLM BUSINESSES themselves — and "
+                     "nothing else (R15). Batch-shaped "
+                     "relationship and enrichment work; "
+                     "latency-tolerant; storage grows with "
+                     "people data. Runs well on cheap fleet "
+                     "nodes.",
+        "bodies": ["zilara", "gotbackup", "vate-life",
+                   "oliabo", "mlm-income", "people-pipeline",
+                   "dead-mlms"],
+    },
+    "marketing": {
+        "character": "Marketing as its own function across "
+                     "many areas (R15): the skins, coaching "
+                     "bodies, and competitive research. Serves "
+                     "every business; belongs to none of "
+                     "them. Content-shaped, batch-friendly "
+                     "work.",
+        "bodies": ["trafficstreemz", "aegeanvedaflow",
+                   "cryptostreemz",
+                   "ai-strategies-network-marketers",
+                   "ai-strategies-competitive-research"],
+    },
+    "products": {
+        "character": "Vibe-coded products and projects — "
+                     "SaaS, plugins, tools, and platform "
+                     "businesses (R15). Placed by "
+                     "what they ARE; a product's market is "
+                     "not its segment. (Machinery serving a "
+                     "domain — the desks — sits in core as "
+                     "SBOS plugins, R16; the domain's "
+                     "knowledge bodies sit in the domain.)",
+        "bodies": ["contactflowcrm", "systeme-io"],
+    },
+    "crypto": {
+        "character": "Time-sensitive trading and yield "
+                     "work. Latency matters; the segment "
+                     "keeps its own resource budget so batch "
+                     "work elsewhere can never starve it.",
+        "bodies": ["crypto-trading-yield"],
+    },
+    "blogs": {
+        "character": "The publishing network (R17): Brian "
+                     "is building out 100 blogs — each "
+                     "unique blog/site gets its own body, "
+                     "plus niche competitive-research "
+                     "bodies where ruled appropriate. Batch "
+                     "content work; belongs on publishing "
+                     "nodes when the split comes.",
+        "bodies": ["blog-network", "medium",
+                   "blogging-strategy", "tech-audience"],
+    },
+    "people": {
+        "character": "Tracked public figures (R19): "
+                     "dossier bodies for people whose "
+                     "statements and moves Brian tracks — "
+                     "one body per named person. NOT his "
+                     "relationships: his people live in the "
+                     "relationship layer (people-pipeline / "
+                     "ContactFlowCRM), never in per-person "
+                     "workspaces.",
+        "bodies": ["donald-trump", "amy-klobuchar",
+                   "tim-walz", "elon-musk",
+                   "mark-zuckerberg", "jd-vance",
+                   "sam-altman", "dario-amodei",
+                   "jensen-huang", "lisa-su",
+                   "pallab-ghosal", "joel-therien",
+                   "lisa-demuth", "mike-lindell"],
+    },
+    "platforms": {
+        "character": "Platforms and operating systems "
+                     "(R21): the systems Brian's fleet "
+                     "runs on — platform knowledge, "
+                     "configuration, hardening, updates, "
+                     "and ecosystem moves. Machine-specific "
+                     "docs stay in home-lab and the builds "
+                     "bodies; vendor dossiers stay in "
+                     "companies.",
+        "bodies": ["windows", "android", "linux"],
+    },
+    "machines": {
+        "character": "Favorite machine makers (R22): the "
+                     "brands of the machines Brian runs and "
+                     "favors — product lines, models, "
+                     "pricing and supply moves, and his "
+                     "fleet experience with them. Purchase "
+                     "hunts stay in DealsDesk; hardware-"
+                     "class knowledge stays in the builds "
+                     "bodies.",
+        "bodies": ["gmktec", "aoostar", "minisforum"],
+    },
+    "geography": {
+        "character": "Geographic market bodies (R26): "
+                     "continents and countries Brian "
+                     "markets to — the place knowledge "
+                     "(audiences, languages, platforms, "
+                     "payments, culture, marketing rules) "
+                     "that helps him market into each. "
+                     "Offers and campaigns stay with the "
+                     "desks and skins; business details "
+                     "stay in the business bodies.",
+        "bodies": ["africa", "asia", "europe",
+                   "north-america", "south-america",
+                   "oceania", "united-states",
+                   "philippines", "nigeria"],
+    },
+    "companies": {
+        "character": "Tracked companies (R20): dossier "
+                     "bodies for companies whose products, "
+                     "prices, and moves Brian tracks — one "
+                     "body per named company. Vendor "
+                     "dealings live with the desks/projects "
+                     "that deal; this segment is the watch "
+                     "list.",
+        "bodies": ["anthropic", "openai", "nvidia", "amd",
+                   "intel", "meta", "google", "microsoft",
+                   "deepseek", "gohighlevel", "locus-ai",
+                   "gvo"],
+    },
+    "core": {
+        "character": "The OS itself, private desks, intake "
+                     "and quarantine, publishing, and "
+                     "personal bodies. Home iron "
+                     "(k11-alpha class).",
+        "bodies": ["home-lab", "successbrian-os", "dealsdesk",
+                   "campaignsdesk", "tradesdesk",
+                   "builds-we-are-not-building",
+                   "ai-strategies-sbos-users",
+                   "money-investing", "roadchat",
+                   "chicago-tardis", "console-room",
+                   "wearables",
+                   "deepseek-reap-150b-inference", "colibri",
+                   "strata", "epyc-builds",
+                   "epyc-7002-builds", "epyc-7003-builds",
+                   "saturday-podcast", "career",
+                   "gina-immigration",
+                   "mountain-north-rural-network", "unsorted",
+                   "quarantine", "things-brian-doesnt-like",
+                   "people-brian-likes", "ai-bubble-crash",
+                   "flat-earth",
+                   "name-finding-and-enrichment",
+                   "business-goals", "scattered-second-brain"],
+    },
+}
+
+# Body -> home node today. Every body sits on k11-alpha
+# until Brian rules a split; this map is what changes then.
+PLACEMENT = {slug: "k11-alpha"
+             for seg in SEGMENTS.values()
+             for slug in seg["bodies"]}
+
+
+def segment_of(slug):
+    for name, seg in SEGMENTS.items():
+        if slug in seg["bodies"]:
+            return name
+    return None
+
+# Builds intentionally NOT being built (R8). Key = normalized
+# subject key; value = the rejection's TAG inside the
+# builds-we-are-not-building workspace + the recorded why.
+# A rejected build is a TAG inside that one workspace — never a
+# workspace of its own (Brian, 2026-10-22). determine() checks
+# this list before any owner match.
+NOT_BUILDING = {
+    "epyc7001": {
+        "tag": "#EPYC7001",
+        "why": "Epyc 7001 (Naples, Zen 1): 'we are not building "
+               "epyc 7001 — i am intentionally not building that "
+               "one' (Brian, 2026-10-22). First-generation "
+               "platform, superseded by the Rome (7002) class "
+               "Brian is standardizing on; every dollar into "
+               "7001 is a dollar out of the pursued classes.",
+    },
+}
+
+# Businesses ruled DEAD (R18) — the business twin of
+# NOT_BUILDING. A dead MLM is a TAG inside the one
+# dead-mlms workspace, never a workspace of its own.
+# Only businesses Brian has explicitly ruled dead belong
+# here; 'not on the active list' is NOT the same as dead.
+DEAD_MLMS = {
+    "sipology": {
+        "tag": "#SIPOLOGY",
+        "why": "Sipology: ruled a dead MLM by Brian "
+               "(2026-10-23: 'sipology is a dead mlm'). It "
+               "was gamma's one producing campaign line "
+               "(Sipology Orphan Distributors) but is not "
+               "one of Brian's active three and is not "
+               "being built. Reopen condition: Brian revives "
+               "it explicitly.",
+    },
+}
+
+# Things Brian doesn't like (R23) — the personal twin of
+# NOT_BUILDING / DEAD_MLMS. A disliked thing is a TAG inside
+# the one things-brian-doesnt-like workspace, never a
+# workspace of its own. Entries in Brian's own words.
+DISLIKES = {
+    "apple": {
+        "tag": "#APPLE",
+        "why": "Apple (the company): Brian records an "
+               "extremely strong hatred of Apple (his "
+               "words, 2026-10-23 — upgraded from his "
+               "earlier, softer 'not really big on Apple'). "
+               "The fleet evidence agrees — no Apple device "
+               "anywhere: Pixel/Android phone, a Windows "
+               "Acer, Ubuntu everywhere else.",
+    },
+    "iphone": {
+        "tag": "#IPHONES",
+        "why": "iPhones: Brian records an extremely "
+               "strong hatred of iPhones (his words, "
+               "2026-10-23). His phone is a Pixel 10 Pro "
+               "(Android).",
+    },
+    "chocolate": {
+        "tag": "#CHOCOLATE",
+        "why": "Chocolate: named by Brian (2026-10-23) "
+               "among the things he doesn't like — a "
+               "personal taste entry, filed as given.",
+    },
+    "onion": {
+        "tag": "#ONIONS",
+        "why": "Onions: named by Brian (2026-10-23) among "
+               "the things he doesn't like — a personal "
+               "taste entry, filed as given.",
+    },
+    "democrat": {
+        "tag": "#DEMOCRATS",
+        "why": "Democrats: Brian records an extremely "
+               "strong hatred of Democrats (his words, "
+               "2026-10-23). Filed as his stated position, "
+               "in his own registry.",
+    },
+    "satanist": {
+        "tag": "#SATANISTS",
+        "why": "Satanists: Brian records an extremely "
+               "strong hatred of Satanists (his words, "
+               "2026-10-23). Filed as his stated position, "
+               "in his own registry.",
+    },
+    "meninwomenssports": {
+        "tag": "#MEN-IN-WOMENS-SPORTS",
+        "why": "Those who like to put men in women's "
+               "sports (Brian's formulation, 2026-10-23): "
+               "Brian records an extremely strong hatred "
+               "of them. The entry targets the advocates, "
+               "not women's sports themselves.",
+    },
+    "abortion": {
+        "tag": "#ABORTION",
+        "why": "Those who like abortion (Brian's "
+               "formulation, 2026-10-23): Brian records an "
+               "extremely strong hatred of them. Filed as "
+               "his stated position, in his own registry.",
+    },
+}
+
+# People Brian likes (R24) — the stance registry. Key =
+# the person's workspace slug; every person here holds (or
+# earns) their own dossier under R19; this dict records the
+# STANCE and its evidence. Unlike DISLIKES, likes do not
+# reroute determine() — they block nothing; they mark the
+# figure as one of Brian's.
+LIKED_PEOPLE = {
+    "donald-trump": {
+        "why": "Named by Brian (2026-10-23) in 'people I "
+               "like'. His dossier (donald-trump) predates "
+               "the stance — created in the tracked-people "
+               "batch; the like is recorded here and in "
+               "people-brian-likes.",
+    },
+    "lisa-demuth": {
+        "why": "Named by Brian (2026-10-23) in 'people I "
+               "like'. Minnesota politician — Speaker of "
+               "the Minnesota House (Republican, Cold "
+               "Spring, MN). Dossier created with the "
+               "stance.",
+    },
+    "mike-lindell": {
+        "why": "Named by Brian (2026-10-23) in 'people I "
+               "like' as 'Mike (the my pillow guy)' — Mike "
+               "Lindell, founder of My Pillow. Dossier "
+               "created with the stance.",
+    },
+}
+
+# Cross-links between bodies (R27). Segment containment is
+# generated from SEGMENTS; these are the hand-coded pairs the
+# registry text names. (from_slug, to_slug, edge_type, note)
+RELATIONSHIPS = [
+    ("sam-altman", "openai", "principal_of",
+     "Sam Altman is CEO of OpenAI — separate bodies, "
+     "linked (R19/R20)."),
+    ("dario-amodei", "anthropic", "principal_of",
+     "Dario Amodei is CEO of Anthropic."),
+    ("jensen-huang", "nvidia", "principal_of",
+     "Jensen Huang is CEO of Nvidia."),
+    ("lisa-su", "amd", "principal_of",
+     "Lisa Su is CEO of AMD."),
+    ("mark-zuckerberg", "meta", "principal_of",
+     "Mark Zuckerberg is CEO of Meta."),
+    ("pallab-ghosal", "locus-ai", "principal_of",
+     "Pallab Ghosal is the principal of Locus AI."),
+    ("joel-therien", "gvo", "principal_of",
+     "Joel Therien founded GVO."),
+    ("microsoft", "windows", "vendor_of",
+     "Windows is Microsoft's platform — platform body "
+     "and vendor dossier stay separate (R21)."),
+    ("google", "android", "vendor_of",
+     "Android is Google's platform — platform body and "
+     "vendor dossier stay separate (R21)."),
+    ("deepseek-reap-150b-inference", "deepseek", "requires",
+     "The fleet program targets DeepSeek's models — "
+     "program body and company dossier stay separate."),
+    ("gohighlevel", "systeme-io", "near",
+     "Competitive rivals: Brian sells systeme.io "
+     "against GoHighLevel."),
+    ("people-brian-likes", "donald-trump", "about",
+     "Stance entry (R24): one of the people Brian likes."),
+    ("people-brian-likes", "lisa-demuth", "about",
+     "Stance entry (R24): one of the people Brian likes."),
+    ("people-brian-likes", "mike-lindell", "about",
+     "Stance entry (R24): one of the people Brian likes."),
+    ("north-america", "united-states", "contains",
+     "Continent contains country (R26)."),
+    ("asia", "philippines", "contains",
+     "Continent contains country (R26)."),
+    ("africa", "nigeria", "contains",
+     "Continent contains country (R26)."),
+    ("epyc-builds", "epyc-7002-builds", "contains",
+     "The builds family body contains the Rome (7002) "
+     "class body."),
+    ("epyc-builds", "epyc-7003-builds", "contains",
+     "The builds family body contains the Milan (7003) "
+     "class body."),
+    ("epyc-7002-builds", "amd", "requires",
+     "Rome-class builds are AMD EPYC builds."),
+    ("epyc-7003-builds", "amd", "requires",
+     "Milan-class builds are AMD EPYC builds."),
+    ("blog-network", "medium", "contains",
+     "The network body contains the Medium blog body "
+     "(R12/R17)."),
+    ("blogging-strategy", "blog-network", "supports",
+     "The 100-blog strategy layer supports the "
+     "network's operations."),
+    ("name-finding-and-enrichment", "people-pipeline",
+     "supports",
+     "The playbook supports the people data layer "
+     "(R25)."),
+    ("name-finding-and-enrichment", "contactflowcrm",
+     "supports",
+     "The playbook supports ContactFlowCRM's data "
+     "layer (R25)."),
+    ("trafficstreemz", "contactflowcrm", "supports",
+     "GTM phase 1: ContactFlowCRM is sold first "
+     "through TrafficStreemz (band routing)."),
+    ("aegeanvedaflow", "contactflowcrm", "supports",
+     "GTM phase 2: ContactFlowCRM is sold next through "
+     "AegeanVedaFlow (band routing)."),
+    ("wearables", "android", "runs-on",
+     "The wearables stack pairs through Brian's "
+     "Android phone."),
+    ("console-room", "chicago-tardis", "near",
+     "Sibling event bodies: Brian's annual convention "
+     "and his annual Chicago trip."),
+    ("business-goals", "successbrian-os", "enables",
+     "R29: goals drive SuccessBrian OS to build the "
+     "systems that manage the daily chaos (Brian, "
+     "2026-10-23)."),
+    ("scattered-second-brain", "business-goals", "supports",
+     "R31: the refinery sorts stray ideas against the "
+     "driver record — ideas that serve a standing goal "
+     "score, survive, and get planning finished."),
+]
+
+# Edge vocabulary: the types already in use in atlas.edges,
+# plus the two precise types R27 adds.
+ALLOWED_EDGE_TYPES = {
+    "about", "backup-for", "becomes", "blocks", "contains",
+    "documents", "enables", "extends", "feeds", "hosts",
+    "implements", "maps-to", "near", "plugin_of", "requires",
+    "researches", "runs-on", "supports",
+    "principal_of", "vendor_of",
+}
+
+# slug, kind, owner, category, purpose, ingest_rule, status, note
+# kind: domain | intake | quarantine
+# status: live | determined
+REGISTRY = [
+    ("builds-we-are-not-building", "domain",
+     "DealsDesk (builds governance)", None,
+     "The negative registry: every build/class deliberately NOT "
+     "pursued, with the why — evidence, mechanism, and the "
+     "condition that would reopen it.",
+     "Each rejected build/class is a TAG inside this workspace "
+     "(e.g. #EPYC7001) carrying what it is, why it is out, the "
+     "evidence, and what would have to change to reopen it — "
+     "never a workspace of its own. Material about a rejected "
+     "build lands HERE, never in a builds workspace (R8).",
+     "live",
+     "Brian, 2026-10-22: 'we need to create a workspace that "
+     "contains details of the whys of all sorts of builds we "
+     "are not building.' First entry: Epyc 7001. Not yet "
+     "created in AnythingLLM (API-key gap)."),
+    ("ai-strategies-network-marketers", "domain",
+     "AI coaching — AI Profits / Brian as coach", None,
+     "All AI strategies Brian is planning to coach to network "
+     "marketers: the teaching material — strategies, plays, "
+     "walkthroughs, and examples, framed in marketer terms.",
+     "Coaching material FOR network marketers lands here "
+     "(strategy content, coaching plays, marketer-facing "
+     "examples). Not the businesses' own details — those live "
+     "in each business's workspace (R2) — and not general MLM "
+     "knowledge (mlm-income) or the SBOS-user curriculum "
+     "(separate audience, R9).",
+     "live",
+     "Brian, 2026-10-22: 'we need an anythingllm workspace to "
+     "put all the AI Strategies that I am planning to coach to "
+     "Network Marketers.' Not yet created in AnythingLLM "
+     "(API-key gap)."),
+    ("ai-strategies-sbos-users", "domain",
+     "AI coaching — SuccessBrian OS / Brian as coach", None,
+     "All AI strategies Brian is planning to coach to other "
+     "users of SuccessBrian OS: operator-level strategies — "
+     "fleets, agents, desks, workflows — framed in builder "
+     "terms.",
+     "Coaching material FOR SuccessBrian OS users/operators "
+     "lands here. Not the OS's own state and docs "
+     "(successbrian-os workspace), and not the "
+     "network-marketer curriculum (separate audience, R9).",
+     "live",
+     "Brian, 2026-10-22: 'another anythingllm workspace to "
+     "put all the AI Strategies that I am planning to coach "
+     "to other users of successbrian os.' Not yet created in "
+     "AnythingLLM (API-key gap)."),
+    ("ai-strategies-competitive-research", "domain",
+     "CampaignsDesk (competitive intel for AI coaching)", None,
+     "What other influencers and coaches are promoting in the "
+     "AI-strategies space: their offers, angles, claims, "
+     "pricing, and funnels — the market Brian's coaching "
+     "competes in, held as intel.",
+     "Intel about OTHER coaches' and influencers' "
+     "AI-strategy promotions lands here — offer breakdowns, "
+     "angles, launches, screenshots. Not Brian's own "
+     "strategies (those live per coached audience, R9) and "
+     "not his businesses' details (R2).",
+     "live",
+     "Brian, 2026-10-22: 'we need an "
+     "ai-strategies-competitive-research workspace — where "
+     "we hold ideas of what other influencers and coaches "
+     "are promoting.' Not yet created in AnythingLLM "
+     "(API-key gap)."),
+    ("campaignsdesk", "domain",
+     "Brian only — private working desk", None,
+     "Brian's PRIVATE CampaignsDesk: a plugin to "
+     "SuccessBrian OS, housed in its own private repo and "
+     "related specifically to the private resource. A "
+     "general marketing desk — marketing across many areas, "
+     "NOT MLM-specific (MLM is one area it serves among "
+     "several). The plugin's machinery, code documentation, "
+     "operating notes, and design decisions. Brian-only: "
+     "never shared, never audience-facing.",
+     "PRIVATE (R13): this desk serves the marketing skins "
+     "but is NOT one — it is a different idea from "
+     "AegeanVedaFlow (a public marketing skin) and is never "
+     "classed with public products or skins. Campaign "
+     "records themselves live in PostgreSQL/CAMPAIGNS.md; "
+     "campaign knowledge lives with the lines and skins "
+     "served (R2/R3/R7).",
+     "live",
+     "Brian, 2026-10-22 (R12): every vibe-coded project gets "
+     "its own workspace. Created in AnythingLLM 2026-10-22 "
+     "via the API. Privacy class corrected by Brian "
+     "2026-10-22 23:23 CDT: 'a special brian only private "
+     "repo — a different idea than the marketing skin "
+     "AegeanVedaFlow.' Scope corrected by Brian 2026-10-22 "
+     "23:32 CDT: not MLM-specific — general marketing, many "
+     "areas. Segment placement: CORE (R14) — the desk "
+     "serves every segment and belongs to none of them. "
+     "Nature clarified by Brian 2026-10-22 23:37 CDT: "
+     "'related specifically to the private resource; it's "
+     "a plugin to successbrian-os, just a private repo.'"),
+    ("tradesdesk", "domain",
+     "Brian only — private desk (SBOS plugin)", None,
+     "TradesDesk: one of the three desks — like "
+     "CampaignsDesk and DealsDesk, a plugin to "
+     "SuccessBrian OS in its own private repo. The trading "
+     "desk's systems, bot operations, journals, and design "
+     "decisions.",
+     "Desk machinery lands here (the desk is core "
+     "machinery, R16). Topic-level trading knowledge "
+     "(crypto-trading-yield) stays in its own body in the "
+     "crypto segment — this is the desk's home, not a "
+     "topic dump.",
+     "live",
+     "Brian, 2026-10-22 (R12): every vibe-coded project gets "
+     "its own workspace. Created in AnythingLLM 2026-10-22 "
+     "via the API. Nature ruled by Brian 2026-10-22 23:47 "
+     "CDT: the desks are private repos, plugins to "
+     "successbrian-os."),
+    ("roadchat", "domain",
+     "SuccessBrian OS — Road Chat (plugin)", None,
+     "All Road Chat material: the road platform (console, "
+     "road agents, sync fabric) and the travel kit it runs "
+     "on — the two Dell laptops to be built for the "
+     "Chicago TARDIS trip (Dell Vostro = road-vostro; Dell "
+     "Latitude 7420 = road-7420, TPM 2.0; both Ubuntu "
+     "26.04), the road mini/engine room they travel with, "
+     "trip preparation and acceptance evidence.",
+     "Road Chat material lands here — the road body is "
+     "separate from home-lab (the home fleet) even though "
+     "it syncs home. Laptop build details, provisioning "
+     "records, and trip evidence belong here.",
+     "live",
+     "Brian, 2026-10-22 23:52 CDT: 'Road Chat needs to be "
+     "an anythingllm workspace — with details about these "
+     "two laptops i need to build for the Chicago Tardis "
+     "trip.' Road Chat is an optional plugin of "
+     "SuccessBrian OS (Brian, 2026-10-20). Created in "
+     "AnythingLLM 2026-10-22 via the API."),
+    ("chicago-tardis", "domain",
+     "Brian — annual Chicago TARDIS trip", None,
+     "The Chicago TARDIS trip — an ANNUAL trip (Brian "
+     "plans to go every year; train Minneapolis to "
+     "Chicago; the 2026 instance runs Nov 27-29). Holds "
+     "per-year trip records: logistics, what gets carried "
+     "(both Dell laptops and their road mini), scenarios, "
+     "the acceptance pass marks and post-trip grading, and "
+     "lessons carried into the next year.",
+     "Trip/event material lands here. The travel KIT's "
+     "build material stays in roadchat (the kit); this "
+     "body is the trip itself (the event) — aboutness "
+     "decides (R3).",
+     "live",
+     "Brian, 2026-10-22 23:53 CDT: 'Chicago TARDIS needs "
+     "to be an anythingllm workspace — I plan to go there "
+     "every year.' Created in AnythingLLM 2026-10-22 via "
+     "the API."),
+    ("console-room", "domain",
+     "Brian — CONsole Room (Bloomington Doctor Who con)",
+     None,
+     "CONsole Room — the Doctor Who convention in "
+     "Bloomington that Brian attends; sibling event to "
+     "Chicago TARDIS. Holds per-year convention records: "
+     "logistics, programming, people met, and lessons for "
+     "the next year.",
+     "Convention/event material lands here. Chicago "
+     "TARDIS material stays in chicago-tardis; travel-kit "
+     "build material stays in roadchat — aboutness "
+     "decides (R3).",
+     "live",
+     "Brian, 2026-10-22 23:54 CDT: 'CONsole Room, the "
+     "Bloomington doctor who con needs to be another "
+     "anythingllm workspace.' Created in AnythingLLM "
+     "2026-10-22 via the API."),
+    ("wearables", "domain",
+     "Brian — wearables & health-tech stack", None,
+     "Brian's wearables as ONE system: Garmin watches, "
+     "the Pixel Pro phone, Gemini Pro (in the kit because "
+     "of the free usage), the wearable ring, sleep study "
+     "material — how they all work together, how they "
+     "synergize, how he can market them, and how he can "
+     "make money with them.",
+     "Material about the wearables SYSTEM lands here — "
+     "the synergy map, the marketing angles, the "
+     "monetization paths. Device-specific fleet/hardware "
+     "documentation stays in home-lab; health content for "
+     "audiences is shaped in the coaching/marketing "
+     "bodies — this body is the kit and its economics.",
+     "live",
+     "Brian, 2026-10-22 23:56 CDT: 'the wearables — "
+     "garmin watches, pixel pro phone, gemini pro "
+     "(because you get the free usage), wearable ring, "
+     "sleep study stuff... how they all work together, "
+     "how i can market them, how they synergize, and how "
+     "i can make money with them.' Created in AnythingLLM "
+     "2026-10-22 via the API."),
+    ("deepseek-reap-150b-inference", "domain",
+     "Brian — DeepSeek REAP 150B inference fleet", None,
+     "The DeepSeek V4 Flash REAP 150B inference program: "
+     "the fleet built to run it (nodes, Colibri catalog "
+     "facts, measurements, benchmarks) and the program's "
+     "own record.",
+     "REAP-150B program material lands here. General "
+     "fleet documentation stays in home-lab; the Colibri "
+     "engine's own body is colibri — this is the program, "
+     "not the engine manual.",
+     "live",
+     "Designated by Brian 2026-10-23 ('DeepSeek Reap 150B "
+     "Inference'); Atlas proj:150b-inference on record. "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("colibri", "domain",
+     "Brian — Colibri inference engine", None,
+     "The Colibri inference engine as Brian runs it: "
+     "deployment, configuration, model catalog behavior, "
+     "his measurements and vetted upstream changes.",
+     "Engine material lands here. Programs that run ON "
+     "Colibri (the REAP fleet, Sonic) keep their own "
+     "bodies — this is the engine itself.",
+     "live",
+     "Designated by Brian 2026-10-23 ('Colibri'); Atlas "
+     "proj:colibri + code:colibri-engine on record. "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("strata", "domain",
+     "Brian — Strata inference engine", None,
+     "The Strata inference engine as Brian runs it: "
+     "deployment, configuration, expert-placement "
+     "behavior, his measurements and vetted upstream "
+     "changes.",
+     "Engine material lands here, twin to colibri — the "
+     "two engines stay separate bodies (R2).",
+     "live",
+     "Designated by Brian 2026-10-23 ('Strata'). Created "
+     "in AnythingLLM 2026-10-23 via the API."),
+    ("epyc-builds", "domain",
+     "Brian — EPYC builds (family common)", None,
+     "EPYC builds, family-common: the knowledge that "
+     "holds across EPYC build classes — sourcing rules, "
+     "documented traps, power/cooling patterns, platform "
+     "judgment.",
+     "Class-common material lands here; class-specific "
+     "material goes to its class body (epyc-7002-builds, "
+     "epyc-7003-builds). Rejected classes are tags in "
+     "builds-we-are-not-building, never bodies (R8).",
+     "live",
+     "Designated by Brian 2026-10-23 ('workspaces needed "
+     "for Epyc Builds' — the per-class builds slate of "
+     "2026-10-22). Created in AnythingLLM 2026-10-23 via "
+     "the API."),
+    ("epyc-7002-builds", "domain",
+     "Brian — EPYC 7002 (Rome) builds", None,
+     "The EPYC 7002/Rome build class: Brian's "
+     "standardization target — boards (MZ32-AR0 class), "
+     "recipes, per-build records, class measurements.",
+     "Rome-class build material lands here; family-common "
+     "judgment lives in epyc-builds.",
+     "live",
+     "Designated by Brian 2026-10-23 (Epyc Builds slate). "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("epyc-7003-builds", "domain",
+     "Brian — EPYC 7003 (Milan) builds", None,
+     "The EPYC 7003/Milan build class: boards, recipes, "
+     "per-build records, class measurements.",
+     "Milan-class build material lands here; "
+     "family-common judgment lives in epyc-builds.",
+     "live",
+     "Designated by Brian 2026-10-23 (Epyc Builds slate). "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("saturday-podcast", "domain",
+     "Brian — Saturday podcast (private learning feed)",
+     None,
+     "Brian's Saturday podcast: his PRIVATE learning feed "
+     "— episode packages (script, narration, slides, "
+     "question sets), interactive session records, and "
+     "the answers filed home from them.",
+     "Podcast material lands here. It is Brian-only "
+     "learning content, NOT audience content (R13-class "
+     "private) — audience publishing lives in the blogs "
+     "segment.",
+     "live",
+     "Designated by Brian 2026-10-23 ('Saturday "
+     "Podcast'); Atlas proj:saturday-podcast on record. "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("blogging-strategy", "domain",
+     "Brian — blogging strategy", None,
+     "The strategy layer of the blog program: how the "
+     "100-blog network is planned — niche selection, "
+     "network architecture, sequencing, and the "
+     "decisions behind them.",
+     "Strategy lands here. Network OPERATIONS live in "
+     "blog-network; each blog's own material lives in "
+     "that blog's body (R12b/R17).",
+     "live",
+     "Designated by Brian 2026-10-23 ('Blogging "
+     "Strategy'). Created in AnythingLLM 2026-10-23 via "
+     "the API."),
+    ("tech-audience", "domain",
+     "Brian — old-school tech audience", None,
+     "The old-school tech audience: who they are, what "
+     "they follow Brian for (AI knowledge, computer "
+     "builds, the fleet), what lands with them, and the "
+     "relationship record. The audience's space under "
+     "R11 — it closes the audit's standing gap.",
+     "Audience material lands here. Content FOR the "
+     "audience lives in the blogs segment bodies and "
+     "home-lab; this body is knowledge ABOUT the "
+     "audience.",
+     "live",
+     "Designated by Brian 2026-10-23 ('Tech Audience'); "
+     "AUDIENCES registry entry updated — space was the "
+     "R11 GAP. Created in AnythingLLM 2026-10-23 via "
+     "the API."),
+    ("dead-mlms", "domain",
+     "Dead MLMs — business negative registry", None,
+     "The business negative registry (R18): MLMs Brian "
+     "has ruled dead, each a tagged entry — what it "
+     "was, why it died, the evidence, the condition that "
+     "would reopen it. First citizen: Sipology "
+     "(#SIPOLOGY).",
+     "Dead-business material lands here under its tag — "
+     "never in an active business body, never as its own "
+     "workspace. 'Not active' is not 'dead': only "
+     "Brian's explicit ruling enters a business here.",
+     "live",
+     "Designated by Brian 2026-10-23: 'Dead MLMs "
+     "(sipology is a dead mlm)'. Created in AnythingLLM "
+     "2026-10-23 via the API."),
+    ("donald-trump", "domain",
+     "Tracked public figure — Donald Trump", None,
+     "Dossier: Donald Trump (President of the United "
+     "States) — sourced public statements, policy moves, "
+     "and developments Brian tracks for their bearing on "
+     "his businesses, markets, and plans.",
+     "Public-figure dossier material lands here (R19). "
+     "Not a relationship body — Brian's people live in "
+     "the relationship layer.",
+     "live",
+     "Named by Brian 2026-10-23 (tracked people batch). "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("amy-klobuchar", "domain",
+     "Tracked public figure — Amy Klobuchar", None,
+     "Dossier: Amy Klobuchar (U.S. Senator from "
+     "Minnesota) — sourced public statements, policy "
+     "moves, and developments Brian tracks.",
+     "Public-figure dossier material lands here (R19). "
+     "Not a relationship body — Brian's people live in "
+     "the relationship layer.",
+     "live",
+     "Named by Brian 2026-10-23 (tracked people batch). "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("tim-walz", "domain",
+     "Tracked public figure — Tim Walz", None,
+     "Dossier: Tim Walz (Governor of Minnesota) — "
+     "sourced public statements, policy moves, and "
+     "developments Brian tracks.",
+     "Public-figure dossier material lands here (R19). "
+     "Not a relationship body — Brian's people live in "
+     "the relationship layer.",
+     "live",
+     "Named by Brian 2026-10-23 (tracked people batch). "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("elon-musk", "domain",
+     "Tracked public figure — Elon Musk", None,
+     "Dossier: Elon Musk (Tesla / SpaceX / xAI, owner of "
+     "X) — sourced public statements, platform and AI "
+     "moves, and developments Brian tracks.",
+     "Public-figure dossier material lands here (R19). "
+     "Not a relationship body — Brian's people live in "
+     "the relationship layer.",
+     "live",
+     "Named by Brian 2026-10-23 (tracked people batch). "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("mark-zuckerberg", "domain",
+     "Tracked public figure — Mark Zuckerberg", None,
+     "Dossier: Mark Zuckerberg (Meta CEO — Facebook, "
+     "Instagram, Threads) — sourced public statements, "
+     "platform moves, and developments Brian tracks; "
+     "the platforms his marketing runs on.",
+     "Public-figure dossier material lands here (R19). "
+     "Not a relationship body — Brian's people live in "
+     "the relationship layer.",
+     "live",
+     "Named by Brian 2026-10-23 (tracked people batch). "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("jd-vance", "domain",
+     "Tracked public figure — JD Vance", None,
+     "Dossier: JD Vance (Vice President of the United "
+     "States) — sourced public statements, policy moves, "
+     "and developments Brian tracks.",
+     "Public-figure dossier material lands here (R19). "
+     "Not a relationship body — Brian's people live in "
+     "the relationship layer.",
+     "live",
+     "Named by Brian 2026-10-23 (tracked people batch). "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("anthropic", "domain",
+     "Tracked company — Anthropic", None,
+     "Dossier: Anthropic (AI company, the Claude model "
+     "family) — sourced public announcements, model "
+     "releases, pricing and policy moves Brian tracks.",
+     "Tracked-company dossier material lands here (R20). "
+     "Vendor dealings live with the desk/project that "
+     "deals — this is the watch record.",
+     "live",
+     "Named by Brian 2026-10-23 (tracked companies "
+     "batch). Created in AnythingLLM 2026-10-23 via "
+     "the API."),
+    ("openai", "domain",
+     "Tracked company — OpenAI", None,
+     "Dossier: OpenAI (AI company, the GPT/ChatGPT "
+     "family) — sourced public announcements, model "
+     "releases, pricing and policy moves Brian tracks.",
+     "Tracked-company dossier material lands here (R20). "
+     "Vendor dealings live with the desk/project that "
+     "deals — this is the watch record.",
+     "live",
+     "Named by Brian 2026-10-23 (tracked companies "
+     "batch; his spelling: 'Open AI'). Created in "
+     "AnythingLLM 2026-10-23 via the API."),
+    ("nvidia", "domain",
+     "Tracked company — Nvidia", None,
+     "Dossier: Nvidia (GPUs and AI accelerators) — "
+     "sourced public announcements, product launches, "
+     "pricing and supply moves Brian tracks for the "
+     "fleet's GPU decisions.",
+     "Tracked-company dossier material lands here (R20). "
+     "Specific build/sourcing work lives in the builds "
+     "and deals bodies — this is the company watch "
+     "record.",
+     "live",
+     "Named by Brian 2026-10-23 (tracked companies "
+     "batch). Created in AnythingLLM 2026-10-23 via "
+     "the API."),
+    ("amd", "domain",
+     "Tracked company — AMD", None,
+     "Dossier: AMD (EPYC/Ryzen CPUs, Radeon GPUs) — "
+     "sourced public announcements, product launches, "
+     "pricing and supply moves Brian tracks; his fleet "
+     "is AMD-centric.",
+     "Tracked-company dossier material lands here (R20). "
+     "Build-class knowledge stays in the builds bodies "
+     "(epyc-builds family) — this is the company "
+     "dossier.",
+     "live",
+     "Named by Brian 2026-10-23 (tracked companies "
+     "batch). Created in AnythingLLM 2026-10-23 via "
+     "the API."),
+    ("intel", "domain",
+     "Tracked company — Intel", None,
+     "Dossier: Intel (Xeon CPUs) — sourced public "
+     "announcements, product launches, pricing and "
+     "supply moves Brian tracks.",
+     "Tracked-company dossier material lands here (R20). "
+     "Build-class knowledge stays in the builds bodies "
+     "— this is the company dossier.",
+     "live",
+     "Named by Brian 2026-10-23 (tracked companies "
+     "batch). Created in AnythingLLM 2026-10-23 via "
+     "the API."),
+    ("sam-altman", "domain",
+     "Tracked public figure — Sam Altman", None,
+     "Dossier: Sam Altman (CEO of OpenAI) — sourced "
+     "public statements and moves Brian tracks; the "
+     "principal of a tracked company.",
+     "Public-figure dossier material lands here (R19).",
+     "live",
+     "Build-out 2026-10-23 under Brian's standing order: "
+     "principal of tracked company OpenAI. Created via "
+     "the API."),
+    ("dario-amodei", "domain",
+     "Tracked public figure — Dario Amodei", None,
+     "Dossier: Dario Amodei (CEO of Anthropic) — sourced "
+     "public statements and moves Brian tracks; the "
+     "principal of a tracked company.",
+     "Public-figure dossier material lands here (R19).",
+     "live",
+     "Build-out 2026-10-23 under Brian's standing order: "
+     "principal of tracked company Anthropic. Created "
+     "via the API."),
+    ("jensen-huang", "domain",
+     "Tracked public figure — Jensen Huang", None,
+     "Dossier: Jensen Huang (CEO of Nvidia) — sourced "
+     "public statements and moves Brian tracks; the "
+     "principal of a tracked company.",
+     "Public-figure dossier material lands here (R19).",
+     "live",
+     "Build-out 2026-10-23 under Brian's standing order: "
+     "principal of tracked company Nvidia. Created via "
+     "the API."),
+    ("lisa-su", "domain",
+     "Tracked public figure — Lisa Su", None,
+     "Dossier: Lisa Su (CEO of AMD) — sourced public "
+     "statements and moves Brian tracks; the principal "
+     "of a tracked company, and of the fleet's CPU "
+     "maker.",
+     "Public-figure dossier material lands here (R19).",
+     "live",
+     "Build-out 2026-10-23 under Brian's standing order: "
+     "principal of tracked company AMD. Created via "
+     "the API."),
+    ("pallab-ghosal", "domain",
+     "Tracked public figure — Pallab Ghosal", None,
+     "Dossier: Pallab Ghosal (Locus AI) — on Brian's AI "
+     "Profits arena map; Brian registered for the Locus "
+     "AI last-call webinar (Oct 31, 2026). Sourced "
+     "public statements, offers, and moves he tracks.",
+     "Public-figure dossier material lands here (R19). "
+     "The company body is locus-ai — the person and "
+     "the company stay separate (R15).",
+     "live",
+     "Build-out 2026-10-23 under Brian's standing order: "
+     "evidence = AI arena map + Locus AI goal/webinar "
+     "registration. Created via the API."),
+    ("joel-therien", "domain",
+     "Tracked public figure — Joel Therien", None,
+     "Dossier: Joel Therien (founder of GVO) — on "
+     "Brian's AI Profits arena map (GVO / AI Matrix "
+     "Spillover). Sourced public statements, offers, "
+     "and moves he tracks.",
+     "Public-figure dossier material lands here (R19). "
+     "The company body is gvo — person and company "
+     "stay separate (R15).",
+     "live",
+     "Build-out 2026-10-23 under Brian's standing order: "
+     "evidence = AI arena map. Created via the API."),
+    ("meta", "domain",
+     "Tracked company — Meta", None,
+     "Dossier: Meta Platforms (Facebook, Instagram, "
+     "Threads, WhatsApp, Meta ads) — the platforms "
+     "Brian's marketing runs on; sourced announcements, "
+     "platform and policy moves he tracks.",
+     "Tracked-company dossier material lands here "
+     "(R20). The principal's dossier is mark-zuckerberg "
+     "— company and person stay separate (R15).",
+     "live",
+     "Build-out 2026-10-23 under Brian's standing order: "
+     "evidence = his marketing runs on Meta platforms; "
+     "principal already dossier'd. Created via the API."),
+    ("google", "domain",
+     "Tracked company — Google", None,
+     "Dossier: Google (Search, YouTube, Gmail, Calendar, "
+     "Gemini, Pixel) — woven through Brian's daily "
+     "stack; sourced announcements and moves he tracks.",
+     "Tracked-company dossier material lands here "
+     "(R20).",
+     "live",
+     "Build-out 2026-10-23 under Brian's standing order: "
+     "evidence = daily-stack dependence (incl. Gemini "
+     "in the wearables kit). Created via the API."),
+    ("microsoft", "domain",
+     "Tracked company — Microsoft", None,
+     "Dossier: Microsoft (Windows, Outlook, Azure, "
+     "Copilot) — sourced announcements and moves Brian "
+     "tracks; his mail and one laptop line run on it.",
+     "Tracked-company dossier material lands here "
+     "(R20).",
+     "live",
+     "Build-out 2026-10-23 under Brian's standing order: "
+     "evidence = Outlook mail + Windows in the fleet. "
+     "Created via the API."),
+    ("deepseek", "domain",
+     "Tracked company — DeepSeek", None,
+     "Dossier: DeepSeek (the AI company behind the V4 "
+     "model family) — sourced announcements, model "
+     "releases, API and pricing moves Brian tracks; his "
+     "fleet targets its models and gamma ran on its "
+     "API.",
+     "Tracked-company dossier material lands here "
+     "(R20). The fleet PROGRAM's body is "
+     "deepseek-reap-150b-inference — company and "
+     "program stay separate (R15).",
+     "live",
+     "Build-out 2026-10-23 under Brian's standing order: "
+     "evidence = the 150B fleet program + fleet API "
+     "use. Created via the API."),
+    ("gohighlevel", "domain",
+     "Tracked company — GoHighLevel", None,
+     "Dossier: GoHighLevel (the CRM platform rival to "
+     "Brian's systeme.io) — competitive tracking: "
+     "sourced announcements, features, pricing, and "
+     "agency-ecosystem moves.",
+     "Tracked-company dossier material lands here "
+     "(R20) — competitive intel; his own platform "
+     "business lives in systeme-io.",
+     "live",
+     "Build-out 2026-10-23 under Brian's standing order: "
+     "evidence = platform rivalry on record (he sells "
+     "systeme.io against it). Created via the API."),
+    ("locus-ai", "domain",
+     "Tracked company — Locus AI", None,
+     "Dossier: Locus AI (page-one traffic offer) — the "
+     "company behind the last-call webinar Brian "
+     "registered for (Oct 31, 2026); sourced offers, "
+     "claims, and moves he tracks.",
+     "Tracked-company dossier material lands here "
+     "(R20). The principal's dossier is pallab-ghosal.",
+     "live",
+     "Build-out 2026-10-23 under Brian's standing order: "
+     "evidence = registered webinar + standing goal. "
+     "Created via the API."),
+    ("gvo", "domain",
+     "Tracked company — GVO", None,
+     "Dossier: GVO (hosting/platform company behind AI "
+     "Matrix Spillover) — on Brian's AI arena map; "
+     "sourced offers and moves he tracks.",
+     "Tracked-company dossier material lands here "
+     "(R20). The founder's dossier is joel-therien.",
+     "live",
+     "Build-out 2026-10-23 under Brian's standing order: "
+     "evidence = AI arena map. Created via the API."),
+    ("windows", "domain",
+     "Platform — Windows", None,
+     "Platform body: Microsoft Windows — configuration, "
+     "updates, hardening, and ecosystem moves for the "
+     "Windows machines in Brian's fleet (the stay-home "
+     "Acer runs Windows 11).",
+     "OS/platform material lands here (R21). The vendor "
+     "dossier is microsoft; machine-specific docs stay "
+     "in home-lab.",
+     "live",
+     "Named by Brian 2026-10-23 (platforms batch). "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("android", "domain",
+     "Platform — Android", None,
+     "Platform body: Android — configuration, updates, "
+     "and ecosystem moves for Brian's Android devices "
+     "(Pixel 10 Pro phone; the wearables stack pairs "
+     "through it).",
+     "OS/platform material lands here (R21). The vendor "
+     "dossier is google; device-specific docs stay in "
+     "home-lab / wearables.",
+     "live",
+     "Named by Brian 2026-10-23 (platforms batch). "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("linux", "domain",
+     "Platform — Linux", None,
+     "Platform body: Linux (Ubuntu across the fleet) — "
+     "configuration, hardening, services, updates, and "
+     "the open-source ecosystem moves Brian tracks; "
+     "the fleet's primary operating system.",
+     "OS/platform material lands here (R21). "
+     "Machine-specific docs stay in home-lab; "
+     "hardware-class knowledge in the builds bodies.",
+     "live",
+     "Named by Brian 2026-10-23 (platforms batch). "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("gmktec", "domain",
+     "Favorite machine maker — GMKtec", None,
+     "Maker body: GMKtec mini-PCs — product lines and "
+     "models (the K11 and successors), pricing and "
+     "supply moves, firmware/support notes, and Brian's "
+     "fleet experience; he runs two GMKtec K11s.",
+     "Favorite-maker material lands here (R22). "
+     "Purchase hunts stay in DealsDesk; hardware-class "
+     "knowledge in the builds bodies.",
+     "live",
+     "Named by Brian 2026-10-23 (favorite machines "
+     "batch; his spelling: 'GMK Tec'). Created in "
+     "AnythingLLM 2026-10-23 via the API."),
+    ("aoostar", "domain",
+     "Favorite machine maker — Aoostar", None,
+     "Maker body: Aoostar mini-PCs — product lines and "
+     "models (his two 680M units; the MACO line from "
+     "the mini-PC comparisons), pricing and supply "
+     "moves, support notes, and fleet experience.",
+     "Favorite-maker material lands here (R22). "
+     "Purchase hunts stay in DealsDesk; hardware-class "
+     "knowledge in the builds bodies.",
+     "live",
+     "Named by Brian 2026-10-23 (favorite machines "
+     "batch). Created in AnythingLLM 2026-10-23 via "
+     "the API."),
+    ("minisforum", "domain",
+     "Favorite machine maker — Minisforum", None,
+     "Maker body: Minisforum mini-PCs — product lines "
+     "and models, pricing and supply moves, and support "
+     "notes Brian tracks. Named a favorite maker by "
+     "Brian; no owned unit on record yet.",
+     "Favorite-maker material lands here (R22). "
+     "Purchase hunts stay in DealsDesk; hardware-class "
+     "knowledge in the builds bodies.",
+     "live",
+     "Named by Brian 2026-10-23 (favorite machines "
+     "batch). Created in AnythingLLM 2026-10-23 via "
+     "the API."),
+    ("things-brian-doesnt-like", "domain",
+     "Brian (personal — the dislike registry)", None,
+     "The personal negative registry: things Brian "
+     "doesn't like, each a tagged entry with the why in "
+     "his words. Charter entries: #APPLE (extremely "
+     "strong hatred — Brian's words), #IPHONES (same), "
+     "#CHOCOLATE, #ONIONS, #DEMOCRATS (extremely strong "
+     "hatred), #SATANISTS (same), #MEN-IN-WOMENS-SPORTS "
+     "(the advocates of it), #ABORTION (those who like "
+     "it).",
+     "Anything Brian rules he doesn't like lands here "
+     "as a tagged entry (R23). Nothing here gets a body "
+     "of its own unless Brian flips on it.",
+     "live",
+     "Ruled by Brian 2026-10-23 ('a workspace of things "
+     "Brian doesn't like'). Created in AnythingLLM "
+     "2026-10-23 via the API."),
+    ("people-brian-likes", "domain",
+     "Brian (personal — the like registry)", None,
+     "The positive registry: people Brian likes, each "
+     "an entry with the stance and its evidence. "
+     "Charter entries (2026-10-23): Donald Trump, Lisa "
+     "Demuth, Mike Lindell.",
+     "Stance entries land here (R24). A liked public "
+     "figure's MATERIAL lives in their own dossier "
+     "(people segment) — this body holds the stance, "
+     "not the file.",
+     "live",
+     "Ruled by Brian 2026-10-23 ('people I like'). "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("lisa-demuth", "domain",
+     "Tracked public figure — Lisa Demuth", None,
+     "Dossier: Lisa Demuth (Speaker of the Minnesota "
+     "House of Representatives, Republican, Cold Spring, "
+     "MN) — sourced public statements, policy moves, "
+     "and developments Brian tracks. One of the people "
+     "Brian likes (R24).",
+     "Public-figure dossier material lands here (R19). "
+     "The stance entry lives in people-brian-likes.",
+     "live",
+     "Named by Brian 2026-10-23 ('people I like'). "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("mike-lindell", "domain",
+     "Tracked public figure — Mike Lindell", None,
+     "Dossier: Mike Lindell (founder of My Pillow) — "
+     "sourced public statements, business and political "
+     "moves, and developments Brian tracks. One of the "
+     "people Brian likes (R24).",
+     "Public-figure dossier material lands here (R19). "
+     "The stance entry lives in people-brian-likes.",
+     "live",
+     "Named by Brian 2026-10-23 as 'Mike (the my "
+     "pillow guy)'. Created in AnythingLLM 2026-10-23 "
+     "via the API."),
+    ("ai-bubble-crash", "domain",
+     "Brian (thesis)", None,
+     "Thesis body: Brian believes there is an AI bubble "
+     "that is going to pop (stated 2026-10-23). Holds "
+     "the indicators, evidence, and timelines he "
+     "tracks, and the positioning implications for his "
+     "fleet, businesses, and buys if it does.",
+     "Material bearing on Brian's AI-bubble thesis "
+     "lands here — valuations, capex, failures, and "
+     "contrary signals he chooses to track — kept as "
+     "his thesis record.",
+     "live",
+     "Designated by Brian 2026-10-23 ('AI Bubble Crash "
+     "— I think there is an AI bubble that is going "
+     "to pop'). Created in AnythingLLM 2026-10-23 via "
+     "the API."),
+    ("flat-earth", "domain",
+     "Brian (personal belief)", None,
+     "Belief body: Brian states he thinks the earth is "
+     "flat (2026-10-23). Holds the material and "
+     "arguments he tracks on the question.",
+     "Material Brian files on the flat-earth question "
+     "lands here, recorded as his stated position.",
+     "live",
+     "Designated by Brian 2026-10-23 ('Flat Earth - I "
+     "think the earth is flat'). Created in "
+     "AnythingLLM 2026-10-23 via the API."),
+    ("name-finding-and-enrichment", "domain",
+     "SuccessBrian OS / people data layer", None,
+     "The playbook body: the strategies the ecosystem "
+     "uses to find people's names and enhance them — "
+     "name resolution from partial and licensed data, "
+     "source triangulation, verification paths, "
+     "enrichment sources with their measured yields, "
+     "dedupe and fingerprinting, and the counting "
+     "rules that keep the numbers honest.",
+     "Methods, source evaluations, and measured "
+     "yields land here (R25). People's DATA lives in "
+     "people-pipeline / ContactFlowCRM — this body "
+     "holds the strategies, not the people.",
+     "live",
+     "Designated by Brian 2026-10-23 ('we need at "
+     "least one workspace that contains the strategies "
+     "we utilize to find people's names and enhance "
+     "them'). Created in AnythingLLM 2026-10-23 via "
+     "the API."),
+    ("africa", "domain",
+     "Geography — Africa (continent)", None,
+     "Geography body: Africa — regional rollup for "
+     "Brian's marketing: the countries he works (see "
+     "nigeria), audience/language/platform/payment "
+     "patterns at regional level, and pointers down to "
+     "country bodies.",
+     "Place knowledge for marketing lands here (R26). "
+     "Country-level detail goes to the country body; "
+     "campaigns stay with the desks and skins.",
+     "live",
+     "Named by Brian 2026-10-23 (geography batch). "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("asia", "domain",
+     "Geography — Asia (continent)", None,
+     "Geography body: Asia — regional rollup for "
+     "Brian's marketing: the countries he works (see "
+     "philippines), audience/language/platform/payment "
+     "patterns at regional level, and pointers down to "
+     "country bodies.",
+     "Place knowledge for marketing lands here (R26). "
+     "Country-level detail goes to the country body; "
+     "campaigns stay with the desks and skins.",
+     "live",
+     "Named by Brian 2026-10-23 (geography batch). "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("europe", "domain",
+     "Geography — Europe (continent)", None,
+     "Geography body: Europe — regional rollup for "
+     "Brian's marketing: audience/language/platform/"
+     "payment patterns at regional level, country "
+     "pointers, and the region's marketing rules.",
+     "Place knowledge for marketing lands here (R26). "
+     "Country-level detail goes to the country body; "
+     "campaigns stay with the desks and skins.",
+     "live",
+     "Named by Brian 2026-10-23 (geography batch). "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("north-america", "domain",
+     "Geography — North America (continent)", None,
+     "Geography body: North America — regional rollup "
+     "for Brian's marketing: his home region; the "
+     "countries he works (see united-states), audience/"
+     "platform/payment patterns, country pointers.",
+     "Place knowledge for marketing lands here (R26). "
+     "Country-level detail goes to the country body; "
+     "campaigns stay with the desks and skins.",
+     "live",
+     "Named by Brian 2026-10-23 (geography batch). "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("south-america", "domain",
+     "Geography — South America (continent)", None,
+     "Geography body: South America — regional rollup "
+     "for Brian's marketing: audience/language "
+     "(Spanish/Portuguese)/platform/payment patterns "
+     "at regional level and country pointers.",
+     "Place knowledge for marketing lands here (R26). "
+     "Country-level detail goes to the country body; "
+     "campaigns stay with the desks and skins.",
+     "live",
+     "Named by Brian 2026-10-23 (geography batch). "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("oceania", "domain",
+     "Geography — Oceania (continent)", None,
+     "Geography body: Oceania — regional rollup for "
+     "Brian's marketing: audience/language/platform/"
+     "payment patterns at regional level and country "
+     "pointers (Australia, New Zealand, the Pacific).",
+     "Place knowledge for marketing lands here (R26). "
+     "Country-level detail goes to the country body; "
+     "campaigns stay with the desks and skins.",
+     "live",
+     "Named by Brian 2026-10-23 (geography batch). "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("united-states", "domain",
+     "Geography — United States (country)", None,
+     "Geography body: the United States — Brian's home "
+     "market. Audience, platform, payment, and "
+     "regulatory intel for marketing here; the "
+     "AegeanVedaFlow premium line is USA-only, and his "
+     "businesses and fleet are US-based.",
+     "Place knowledge for marketing lands here (R26). "
+     "Campaigns stay with the desks and skins; "
+     "business details in the business bodies.",
+     "live",
+     "Build-out 2026-10-23 under R26 evidence standard: "
+     "his home market. Created via the API."),
+    ("philippines", "domain",
+     "Geography — Philippines (country)", None,
+     "Geography body: the Philippines — a market Brian "
+     "works across the distance: Gina lives there and "
+     "builds Zilara with him. Audience, platform, "
+     "payment, and MLM-culture intel for marketing "
+     "there.",
+     "Place knowledge for marketing lands here (R26). "
+     "Relationship material stays in the relationship "
+     "layer — this body is the place, not the people.",
+     "live",
+     "Build-out 2026-10-23 under R26 evidence standard: "
+     "Gina + Zilara build partnership. Created via "
+     "the API."),
+    ("nigeria", "domain",
+     "Geography — Nigeria (country)", None,
+     "Geography body: Nigeria — a market Brian's "
+     "network reaches into: Nigerian crypto and "
+     "network-marketing promoters are in his network "
+     "(Lagos). Audience, platform, payment, and "
+     "MLM-culture intel for marketing there.",
+     "Place knowledge for marketing lands here (R26). "
+     "People material stays in the relationship layer "
+     "— this body is the place, not the people.",
+     "live",
+     "Build-out 2026-10-23 under R26 evidence standard: "
+     "his Nigerian promoter network. Created via "
+     "the API."),
+    ("business-goals", "domain",
+     "Brian / SuccessBrian OS (the driver record)", None,
+     "The driver record: Brian's business goals, each "
+     "with its why, its measure, and the systems "
+     "SuccessBrian OS builds because of it. In Brian's "
+     "words: goals drive successbrian-os to build the "
+     "systems that help him manage the daily chaos and "
+     "achieve the success he wants.",
+     "Goal material lands here (R29): targets, measures, "
+     "whys, reviews, and the system demands each goal "
+     "places on the OS. Operational tracking lives in "
+     "Atlas and the goals tooling — this body is the "
+     "record the OS reads.",
+     "live",
+     "Designated by Brian 2026-10-23 ('Business Goals - "
+     "likely needs to be an anythingllm workspace'). "
+     "Created in AnythingLLM 2026-10-23 via the API, "
+     "seeded with the charter doc of his standing goals."),
+    ("scattered-second-brain", "domain",
+     "SuccessBrian OS (Brian's idea refinery)", None,
+     "The Scattered Second Brain: Brian's idea-refinery. "
+     "Holds the method, the triage criteria, and the "
+     "digests for the system that captures his stray "
+     "ideas raw, sorts them in his downtime against his "
+     "business goals and the workspace map, and brings "
+     "him the really good ones to finish planning. In "
+     "his words: it 'takes the really raw stuff and "
+     "refines it into something more workable.'",
+     "Method, criteria, and digest material lands here "
+     "(R31). The captures themselves live in "
+     "atlas.scattered_captures; promoted ideas live in "
+     "their planning bodies (R30). NOT Altair's second "
+     "brain — that is the agent's curriculum in PG.",
+     "live",
+     "Named and ruled by Brian 2026-10-23 (the "
+     "'scattered second brain'). Created in AnythingLLM "
+     "2026-10-23 via the API, seeded with the method doc."),
+    ("medium", "domain", "Blog network / SBOS publishing", None,
+     "Brian's Medium blog: the SuccessBrian OS publishing "
+     "channel — its published articles, the weekly slot's "
+     "pipeline, and the blog's own audience/performance "
+     "notes.",
+     "Material about the Medium blog itself lands here. "
+     "Network-level blog operations stay in blog-network; "
+     "article IDEAS are managed in CampaignsDesk "
+     "(campaignsdesk.article_ideas) — this body is the "
+     "blog's own record.",
+     "live",
+     "Brian, 2026-10-22 (R12): each blog gets its own space; "
+     "his Medium blog named the SBOS slot at 22:56 CDT. "
+     "Created in AnythingLLM 2026-10-22 via the API."),
+    ("aegeanvedaflow", "domain", "AegeanVedaFlow skin (CampaignsDesk)",
+     "skin",
+     "All AegeanVedaFlow material — the premium over-$100k "
+     "marketing skin: its bundle, campaigns, and the "
+     "ContactFlowCRM phase-2 channel.",
+     "ALL material about the AegeanVedaFlow SKIN, from any desk "
+     "or source. Business details still live in each business's "
+     "own workspace (R2/R3) — the skin workspace holds the "
+     "skin's offers and campaigns.",
+     "live",
+     "Marketing skin (Atlas initiative: AegeanVedaFlow) + R7 "
+     "(Brian, 2026-10-22): each marketing skin gets its own "
+     "workspace. Created in AnythingLLM 2026-10-22 via the API once the key gap was closed."),
+    ("cryptostreemz", "domain", "CryptoStreemz skin",
+     "skin",
+     "All CryptoStreemz material — the crypto-facing marketing "
+     "skin.",
+     "ALL material about the CryptoStreemz SKIN, from any desk "
+     "or source. Business details still live in each business's "
+     "own workspace (R2/R3).",
+     "live",
+     "Marketing skin named by Brian (2026-10-22) under R7. "
+     "Earlier record: the Mack Mills Competitor Intel campaign "
+     "ran under CryptoStreemz (gamma, 0 produced). Not yet "
+     "created in AnythingLLM (API-key gap)."),
+    ("gotbackup", "domain", "GotBackup business line (CampaignsDesk)",
+     "MLM",
+     "All GotBackup data — the complete body for the GotBackup "
+     "line, the constant across both bands.",
+     "ALL material about GotBackup, from any desk or source. "
+     "Kept separate from every other MLM workspace (R2/R6).",
+     "live",
+     "Active MLM (Brian, 2026-10-21) + R6 (Brian, 2026-10-22): "
+     "each actively-built MLM gets its own workspace. Not yet "
+     "created in AnythingLLM (API-key gap)."),
+    ("vate-life", "domain", "Vate Life business line",
+     "MLM",
+     "All Vate Life data — the complete body for the Vate Life "
+     "line.",
+     "ALL material about Vate Life, from any desk or source. "
+     "Kept separate from every other MLM workspace (R2/R6). "
+     "Its role as a TrafficStreemz stream does not change the "
+     "determination — the workspace follows the business.",
+     "live",
+     "Active MLM (Brian, 2026-10-21) + R6 (Brian, 2026-10-22). "
+     "Created in AnythingLLM 2026-10-22 via the API once the key gap was closed."),
+    ("oliabo", "domain", "Oliabo business line (CampaignsDesk)",
+     "MLM",
+     "All Oliabo data — the complete body for the Oliabo line.",
+     "ALL material about Oliabo, from any desk or source "
+     "(CampaignsDesk line, gamma Oliabo scout, Fresno campaign "
+     "monitoring). Workspace is determined by what the data is "
+     "ABOUT, not by which tool produced it.",
+     "live",
+     "Brian, 2026-10-22: 'oliabo is a workspace we need to store "
+     "all data oliabo.' Created in AnythingLLM 2026-10-22 via the API once the key gap was closed."),
+    ("zilara", "domain", "Zilara business line (CampaignsDesk)",
+     "MLM",
+     "Zilara business details, kept separate from every other MLM.",
+     "All Zilara material. Never merged with Oliabo or any other "
+     "MLM workspace — separation is per business, not per category.",
+     "live",
+     "Brian, 2026-10-22: 'keep zilara details separate even though "
+     "both are MLMs.' Created in AnythingLLM 2026-10-22 via the API once the key gap was closed."),
+    ("blog-network", "domain", "Blog network", None,
+     "Blog network content and operations.",
+     "Blog network material.", "live",
+     "Purpose drafted from workspace name — Brian to confirm."),
+    ("career", "domain", "Brian (career)", None,
+     "Brian's career and job-search material.",
+     "Career material.", "live",
+     "Purpose drafted from workspace name — Brian to confirm."),
+    ("systeme-io", "domain",
+     "Brian — systeme.io platform business", None,
+     "All systeme.io material: Brian's platform business "
+     "— the affiliate-scale line (email services as the "
+     "core pitch, vertical tools as sales vehicles), "
+     "platform know-how, his reselling practice, and the "
+     "catalog of his systeme.io plugins.",
+     "Platform-business material lands here. Each "
+     "individual plugin is a vibe-coded project and gets "
+     "its OWN workspace when named (R12/R17) — this body "
+     "is the platform practice, not a plugin dump. "
+     "Business details for the MLMs stay in their own "
+     "bodies (R2) even when systeme.io is the tool used.",
+     "live",
+     "Designated by Brian 2026-10-23 00:04 CDT from the "
+     "gap sweep: Atlas proj:systeme-affiliate-scale + "
+     "int:systemeio on record; Brian sells systeme.io. "
+     "Created in AnythingLLM 2026-10-23 via the API."),
+    ("contactflowcrm", "domain", "ContactFlowCRM project",
+     None,
+     "ContactFlowCRM product material (Atlas proj:contactflowcrm).",
+     "Product docs, specs, and research for ContactFlowCRM.",
+     "live", ""),
+    ("crypto-trading-yield", "domain", "TradesDesk", None,
+     "Crypto / trading / yield research for the trading system.",
+     "Trading-desk research in the crypto/yield families.",
+     "live", ""),
+    ("dealsdesk", "domain",
+     "Brian only — private desk (SBOS plugin)", None,
+     "DealsDesk: one of the three desks — like "
+     "CampaignsDesk and TradesDesk, a plugin to "
+     "SuccessBrian OS in its own private repo. DealsDesk "
+     "material — finds, builds, sourcing research.",
+     "Anything DealsDesk produces or consumes.",
+     "live",
+     "Nature ruled by Brian 2026-10-22 23:47 CDT: the desks "
+     "are private repos, plugins to successbrian-os."),
+    ("gina-immigration", "domain", "Gina immigration matter", None,
+     "Gina's immigration matter — personal, single-topic body.",
+     "Immigration-matter documents only.", "live",
+     "Purpose drafted from workspace name — Brian to confirm."),
+    ("home-lab", "domain", "Homelab / fleet", None,
+     "Homelab and fleet documentation — the largest live body.",
+     "Fleet, hardware, and infrastructure documentation.",
+     "live", ""),
+    ("mlm-income", "domain", "Cross-MLM income strategy", "MLM",
+     "Cross-cutting MLM income material that belongs to no single "
+     "business.",
+     "Cross-business income strategy ONLY. Business DETAILS never "
+     "land here — per the 2026-10-22 separation rule they belong "
+     "to the business's own workspace.",
+     "live",
+     "Predates the per-business separation rule; retained as the "
+     "category-level body with the rule written into its ingest "
+     "rule. Brian to confirm."),
+    ("money-investing", "domain", "Investing", None,
+     "Investing material outside the trading-system build.",
+     "Investing research and notes.", "live",
+     "Purpose drafted from workspace name — Brian to confirm."),
+    ("mountain-north-rural-network", "domain", "UNSTATED", None,
+     "UNSTATED — purpose not in the record.",
+     "UNSTATED — do not route new material here until Brian "
+     "names its owner and purpose.",
+     "live",
+     "Registry honesty: 7 documents live, no grounded purpose. "
+     "Also carries an Atlas node_key drift (allm:mountain-north)."),
+    ("people-pipeline", "domain", "People pipeline (people_unified)",
+     None,
+     "People / lead pipeline material.",
+     "Pipeline design, lead-finding, and enrichment material.",
+     "live", ""),
+    ("quarantine", "quarantine", "Ecosystem (trust boundary)", None,
+     "Holding body for untrusted or suspect content.",
+     "Unvetted imports and suspect documents ONLY. Nothing leaves "
+     "quarantine into a trusted workspace without review.",
+     "live", ""),
+    ("successbrian-os", "domain", "SuccessBrian OS / Atlas", None,
+     "SBOS and Atlas model material — keystone and decision "
+     "digests are rendered for this workspace.",
+     "Atlas digests, SBOS documents, ecosystem model material.",
+     "live",
+     "Only 2 documents live: digests are staged in the ingest "
+     "tree and uploads wait on the ANYTHINGLLM_API_KEY gap."),
+    ("trafficstreemz", "domain", "TrafficStreemz initiative", None,
+     "TrafficStreemz material (Atlas initiative: TrafficStreemz).",
+     "TrafficStreemz docs, plans, and launch material.", "live", ""),
+    ("unsorted", "intake", "Ecosystem (intake)", None,
+     "Intake tray. NOT a home: material sits here only until it "
+     "is determined to a workspace.",
+     "Anything not yet determined. Audit flags whatever sits "
+     "here; the tray should trend to empty.",
+     "live", "135 documents live at build time — real backlog."),
+]
+
+DDL = """
+CREATE TABLE IF NOT EXISTS atlas.allm_workspace_registry (
+    slug        text PRIMARY KEY,
+    kind        text NOT NULL CHECK (kind IN
+                    ('domain','intake','quarantine')),
+    owner       text NOT NULL,
+    category    text,
+    purpose     text NOT NULL,
+    ingest_rule text NOT NULL,
+    status      text NOT NULL CHECK (status IN ('live','determined')),
+    note        text
+);
+CREATE TABLE IF NOT EXISTS atlas.planning_workspaces (
+    slug        text PRIMARY KEY,
+    subject     text NOT NULL,
+    status      text NOT NULL DEFAULT 'active'
+                CHECK (status IN
+                    ('active','graduated','abandoned')),
+    note        text,
+    created_at  timestamptz NOT NULL DEFAULT now()
+);
+"""
+
+
+def pg():
+    # Mirrors atlas.py's connection identity: the atlas schema is
+    # owned by the postgres role and atlas.py writes as postgres.
+    return psycopg2.connect(dbname=DBNAME, host="localhost",
+                            user="postgres", password="postgres")
+
+
+def live_workspaces():
+    """Ground truth from AnythingLLM's own DB, read-only."""
+    db = sqlite3.connect("file:%s?mode=ro" % ALLM_DB, uri=True)
+    try:
+        rows = db.execute(
+            "SELECT w.slug, count(wd.id) FROM workspaces w "
+            "LEFT JOIN workspace_documents wd "
+            "ON wd.workspaceId = w.id GROUP BY w.slug"
+        ).fetchall()
+    finally:
+        db.close()
+    return dict(rows)
+
+
+def seed(conn):
+    with conn.cursor() as cur:
+        cur.execute(DDL)
+        for row in REGISTRY:
+            cur.execute(
+                """
+                INSERT INTO atlas.allm_workspace_registry
+                    (slug, kind, owner, category, purpose,
+                     ingest_rule, status, note)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (slug) DO UPDATE SET
+                    kind = EXCLUDED.kind, owner = EXCLUDED.owner,
+                    category = EXCLUDED.category,
+                    purpose = EXCLUDED.purpose,
+                    ingest_rule = EXCLUDED.ingest_rule,
+                    status = EXCLUDED.status, note = EXCLUDED.note
+                """,
+                row,
+            )
+        slugs = [r[0] for r in REGISTRY]
+        cur.execute(
+            "DELETE FROM atlas.allm_workspace_registry "
+            "WHERE slug <> ALL(%s)",
+            (slugs,),
+        )
+        # Sync the Atlas allm:* nodes: a registered workspace's node
+        # carries its purpose and a truthful status.
+        for row in REGISTRY:
+            status = "active" if row[6] == "live" else "planned"
+            cur.execute(
+                "UPDATE atlas.nodes SET summary = %s, status = %s, "
+                "updated_at = now() WHERE node_type = 'allm_workspace' "
+                "AND (node_key = %s OR node_key = %s)",
+                (row[4], status, "allm:" + row[0],
+                 node_key_for(row[0])),
+            )
+    conn.commit()
+    return len(REGISTRY)
+
+
+def registry_rows(conn):
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT slug, kind, owner, category, purpose, "
+            "ingest_rule, status FROM atlas.allm_workspace_registry "
+            "ORDER BY slug"
+        )
+        return cur.fetchall()
+
+
+def _norm(s):
+    return "".join(c for c in s.lower() if c.isalnum())
+
+
+def determine(conn, subject, category=None):
+    """Apply Brian's rules to a subject. Returns a verdict dict."""
+    rows = registry_rows(conn)
+    subj = _norm(subject)
+    # R8 first: a rejected build routes to the negative registry,
+    # never to a builds body — checked before any owner match.
+    for key, entry in NOT_BUILDING.items():
+        if key in subj:
+            return {"verdict": "not_building",
+                    "workspace": "builds-we-are-not-building",
+                    "tag": entry["tag"],
+                    "why": entry["why"]}
+    # R18: a dead business routes to the dead-mlms registry
+    # under its tag — never to an active business body.
+    for key, entry in DEAD_MLMS.items():
+        if key in subj:
+            return {"verdict": "dead_business",
+                    "workspace": "dead-mlms",
+                    "tag": entry["tag"],
+                    "why": entry["why"]}
+    # R23: a disliked thing routes to the dislike registry
+    # under its tag — it never gets a body of its own.
+    for key, entry in DISLIKES.items():
+        if key in subj:
+            return {"verdict": "disliked",
+                    "workspace": "things-brian-doesnt-like",
+                    "tag": entry["tag"],
+                    "why": entry["why"]}
+    # R30: an ACTIVE plan owns its subject's idea-dump
+    # material while Brian is planning it — checked after
+    # the negative registries, before settled owners.
+    for pslug, psubj, _st in planning_rows(conn):
+        pn = _norm(psubj)
+        if pn and (pn == subj
+                   or (len(pn) >= 4 and pn in subj)
+                   or (len(subj) >= 4 and subj in pn)):
+            return {"verdict": "planning", "workspace": pslug,
+                    "status": "active",
+                    "why": "An active plan owns this subject "
+                           "while it is being planned (R30): "
+                           "idea-dump material goes to the "
+                           "planning body."}
+    # R1/R3: the subject's own workspace. An EXACT slug match
+    # outranks every owner-text match, globally — otherwise a
+    # subject named inside another workspace's owner string
+    # (e.g. 'campaignsdesk' inside AegeanVedaFlow's owner)
+    # hijacks the route. Two passes, exact first.
+    for r in rows:
+        if _norm(r[0]) == subj:
+            return {"verdict": "existing", "workspace": r[0],
+                    "status": r[6],
+                    "why": "Owner match: the workspace owned by/for "
+                           "this subject."}
+    for r in rows:
+        if subj in _norm(r[2]) or _norm(r[2]).startswith(subj):
+            return {"verdict": "existing", "workspace": r[0],
+                    "status": r[6],
+                    "why": "Owner match: the workspace owned by/for "
+                           "this subject."}
+    # R2: category siblings exist but NEVER absorb (separation rule).
+    if category:
+        siblings = [r[0] for r in rows
+                    if (r[3] or "").lower() == category.lower()]
+        if siblings:
+            return {"verdict": "create_new",
+                    "proposed_slug": subject.lower().replace(" ", "-"),
+                    "rejected_absorbers": siblings,
+                    "why": "Separation is per business, not per "
+                           "category (Brian, 2026-10-22): %s share "
+                           "the %s category and do NOT absorb a "
+                           "distinct business."
+                           % (", ".join(siblings), category)}
+    # R5: no owner determined yet -> intake.
+    return {"verdict": "intake", "workspace": "unsorted",
+            "why": "No owning workspace determined. Material waits "
+                   "in unsorted until an owner is named (R5)."}
+
+
+def audit(conn):
+    lines = []
+    reg = {r[0]: r for r in registry_rows(conn)}
+    live = live_workspaces()
+    for slug in sorted(live):
+        if slug not in reg:
+            lines.append(
+                "DRIFT live workspace '%s' (%d docs) has no registry "
+                "row" % (slug, live[slug]))
+    for slug, r in sorted(reg.items()):
+        if r[6] == "determined" and slug not in live:
+            lines.append(
+                "PENDING '%s' is determined (Brian ruled it exists) "
+                "but not yet created in AnythingLLM — creation waits "
+                "on the ANYTHINGLLM_API_KEY gap" % slug)
+        if r[6] == "live" and slug not in live:
+            lines.append(
+                "DRIFT registry says '%s' is live but AnythingLLM "
+                "has no such workspace" % slug)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT node_key FROM atlas.nodes "
+            "WHERE node_type = 'allm_workspace' ORDER BY node_key")
+        node_keys = [r[0] for r in cur.fetchall()]
+    node_slugs = {k.split(":", 1)[1] for k in node_keys}
+    for slug in sorted(reg):
+        if slug not in node_slugs:
+            lines.append(
+                "DRIFT registry workspace '%s' has no Atlas "
+                "allm_workspace node" % slug)
+    for ns in sorted(node_slugs):
+        if ns not in reg:
+            lines.append(
+                "DRIFT Atlas node allm:%s matches no registry slug "
+                "(name drift — e.g. abbreviated node_key)" % ns)
+    if os.path.isdir(INGEST_DIR):
+        for d in sorted(os.listdir(INGEST_DIR)):
+            full = os.path.join(INGEST_DIR, d)
+            if os.path.isdir(full) and d not in live and d not in reg:
+                lines.append(
+                    "DRIFT ingest folder '%s' has no live workspace "
+                    "and no registry row (staged for a workspace "
+                    "that does not exist)" % d)
+    for slug in ACTIVE_MLMS:
+        if slug not in reg:
+            lines.append(
+                "DRIFT active MLM '%s' has no workspace — R6: each "
+                "actively-built MLM gets its own (Brian, 2026-10-22)"
+                % slug)
+    for slug in SKINS:
+        if slug not in reg:
+            lines.append(
+                "DRIFT marketing skin '%s' has no workspace — R7: "
+                "each marketing skin gets its own (Brian, "
+                "2026-10-22)" % slug)
+    for audience, slug in COACHING:
+        if slug not in reg:
+            lines.append(
+                "DRIFT coaching audience '%s' has no workspace "
+                "— R9: AI strategies are kept per coached "
+                "audience (Brian, 2026-10-22)" % audience)
+    for slug in RESEARCH_BODIES:
+        if slug not in reg:
+            lines.append(
+                "DRIFT competitive-research body '%s' has no "
+                "workspace — R10: research is its own body "
+                "(Brian, 2026-10-22)" % slug)
+    for a in AUDIENCES:
+        if a["space"] is None:
+            lines.append(
+                "GAP audience '%s' has no dedicated space yet "
+                "— R11: every audience being built gets one "
+                "(Brian, 2026-10-22)" % a["audience"])
+        elif a["space"] not in reg:
+            lines.append(
+                "DRIFT audience '%s' names space '%s' with no "
+                "registry row — R11" % (a["audience"],
+                                         a["space"]))
+        if a["research"] is None and a["space"] is not None:
+            lines.append(
+                "OPEN audience '%s' has no competitive-"
+                "research body — R11: many audiences get one "
+                "for the other stuff; ruled per audience"
+                % a["audience"])
+        elif a["research"] is not None \
+                and a["research"] not in reg:
+            lines.append(
+                "DRIFT audience '%s' names research body '%s' "
+                "with no registry row — R10/R11"
+                % (a["audience"], a["research"]))
+    for slug in PROJECTS:
+        if slug not in reg:
+            lines.append(
+                "DRIFT vibe-coded project '%s' has no "
+                "workspace — R12: every project gets its own "
+                "(Brian, 2026-10-22)" % slug)
+    for b in BLOGS:
+        if b["space"] not in reg:
+            lines.append(
+                "DRIFT blog '%s' names space '%s' with no "
+                "registry row — R12: each blog gets its own "
+                "space (Brian, 2026-10-22)"
+                % (b["blog"], b["space"]))
+    for slug in sorted(reg):
+        if segment_of(slug) is None:
+            lines.append(
+                "DRIFT workspace '%s' has no segment "
+                "placement — R14: the core places every body "
+                "(Brian, 2026-10-22)" % slug)
+    for name, seg in SEGMENTS.items():
+        for slug in seg["bodies"]:
+            if slug not in reg:
+                lines.append(
+                    "DRIFT segment '%s' names body '%s' with "
+                    "no registry row — R14" % (name, slug))
+    n_unsorted = live.get("unsorted", 0)
+    if n_unsorted:
+        lines.append(
+            "INTAKE unsorted holds %d documents — the tray should "
+            "trend to empty" % n_unsorted)
+    if not lines:
+        lines.append("CLEAN — registry, Atlas nodes, ingest tree, "
+                     "and live workspaces agree")
+    return lines
+
+
+def node_key_for(slug):
+    """The Atlas node key for a registry slug — including the
+    one standing drift (mountain-north)."""
+    if slug.startswith("mountain"):
+        return "allm:mountain-north"
+    return "allm:" + slug
+
+
+def plan_edges():
+    """R27: the full wiring plan, computed purely from the
+    coded record (SEGMENTS + RELATIONSHIPS). Returns a list
+    of (from_node, to_node, edge_type, note)."""
+    edges = []
+    for name, seg in SEGMENTS.items():
+        hub = "segment:" + name
+        edges.append(
+            ("allm:successbrian-os", hub, "contains",
+             "R27: SuccessBrian OS contains the %s segment "
+             "— the core's placement of bodies (R14)." % name))
+        for slug in seg["bodies"]:
+            edges.append(
+                (hub, node_key_for(slug), "contains",
+                 "R27: %s sits in the %s segment (R14 "
+                 "placement)." % (slug, name)))
+    for frm, to, etype, note in RELATIONSHIPS:
+        edges.append((node_key_for(frm), node_key_for(to),
+                      etype, note))
+    return edges
+
+
+def _ensure_hubs(conn):
+    with conn.cursor() as cur:
+        for name, seg in SEGMENTS.items():
+            key = "segment:" + name
+            cur.execute(
+                "INSERT INTO atlas.nodes (node_key, node_type, "
+                "name, status, summary, updated_at) "
+                "SELECT %s, 'allm_segment', %s, 'active', %s, "
+                "now() WHERE NOT EXISTS (SELECT 1 FROM "
+                "atlas.nodes WHERE node_key = %s)",
+                (key, "Segment: " + name, seg["character"], key))
+            cur.execute(
+                "UPDATE atlas.nodes SET summary = %s, "
+                "status = 'active', updated_at = now() "
+                "WHERE node_key = %s",
+                (seg["character"], key))
+    conn.commit()
+    return len(SEGMENTS)
+
+
+def _apply_edges(conn, edges):
+    inserted = 0
+    with conn.cursor() as cur:
+        for frm, to, etype, note in edges:
+            cur.execute(
+                "INSERT INTO atlas.edges (from_node, to_node, "
+                "edge_type, notes) SELECT %s, %s, %s, %s "
+                "WHERE NOT EXISTS (SELECT 1 FROM atlas.edges "
+                "WHERE from_node = %s AND to_node = %s AND "
+                "edge_type = %s)",
+                (frm, to, etype, note, frm, to, etype))
+            inserted += cur.rowcount
+    conn.commit()
+    return inserted
+
+
+def _floaters(conn):
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT n.node_key FROM atlas.nodes n WHERE "
+            "n.node_type IN ('allm_workspace', 'allm_segment') "
+            "AND NOT EXISTS (SELECT 1 FROM atlas.edges e "
+            "WHERE e.from_node = n.node_key OR "
+            "e.to_node = n.node_key) ORDER BY n.node_key")
+        return [r[0] for r in cur.fetchall()]
+
+
+MAP_PATH = os.path.expanduser(
+    "~/successbrian-os/tools/atlas/workspace-map.md")
+ENV_PATH = os.path.expanduser("~/successbrian-os/.env")
+
+
+def render_map(conn):
+    reg = {r[0]: r for r in registry_rows(conn)}
+    lines = ["# Workspace Map — the integrated index", "",
+             "Generated by allm_workspaces.py integrate (R27) "
+             "from the coded registry. Where anything lives, "
+             "and what it connects to.", ""]
+    for name, seg in SEGMENTS.items():
+        lines.append("## Segment: %s" % name)
+        lines.append(seg["character"])
+        lines.append("")
+        for slug in seg["bodies"]:
+            r = reg.get(slug)
+            lines.append("- **%s** — %s"
+                         % (slug, r[4] if r else "(no row)"))
+        lines.append("")
+    lines.append("## Cross-links")
+    for frm, to, etype, note in RELATIONSHIPS:
+        lines.append("- %s —[%s]-> %s: %s"
+                     % (frm, etype, to, note))
+    lines.append("")
+    lines.append("## Routing")
+    lines.append(
+        "Material routes by determine(): rejected builds "
+        "to builds-we-are-not-building, dead businesses to "
+        "dead-mlms, disliked subjects to "
+        "things-brian-doesnt-like — each under its tag; "
+        "owned subjects to their own body; category "
+        "siblings never absorb; the ownerless to unsorted "
+        "intake; the untrusted to quarantine.")
+    return "\n".join(lines) + "\n"
+
+
+def _embed_map(conn):
+    """Upload workspace-map.md into successbrian-os and embed
+    it, once. Returns a status line; never raises."""
+    import json
+    import urllib.request
+    import uuid
+    try:
+        text = render_map(conn)
+        with open(MAP_PATH, "w") as f:
+            f.write(text)
+        db = sqlite3.connect("file:%s?mode=ro" % ALLM_DB,
+                             uri=True)
+        try:
+            row = db.execute(
+                "SELECT count(*) FROM workspace_documents wd "
+                "JOIN workspaces w ON w.id = wd.workspaceId "
+                "WHERE w.slug = 'successbrian-os' AND "
+                "wd.filename LIKE '%workspace-map%'").fetchone()
+            if row and row[0]:
+                return ("map: already embedded in "
+                        "successbrian-os (%d doc)" % row[0])
+        finally:
+            db.close()
+        key = None
+        with open(ENV_PATH) as f:
+            for ln in f:
+                if ln.startswith("ANYTHINGLLM_API_KEY="):
+                    key = ln.split("=", 1)[1].strip()
+        if not key:
+            return "map: written to %s; no API key found" \
+                   % MAP_PATH
+        base = "http://127.0.0.1:3000"
+        boundary = "----allm" + uuid.uuid4().hex
+        body = (
+            "--%s\r\nContent-Disposition: form-data; "
+            "name=\"file\"; filename=\"workspace-map.md\"\r\n"
+            "Content-Type: text/markdown\r\n\r\n%s\r\n--%s--\r\n"
+            % (boundary, text, boundary)).encode()
+        req = urllib.request.Request(
+            base + "/api/v1/document/upload", data=body,
+            headers={"Authorization": "Bearer " + key,
+                     "Content-Type": "multipart/form-data; "
+                     "boundary=" + boundary})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = json.loads(resp.read().decode())
+        loc = payload["documents"][0]["location"]
+        data = json.dumps(
+            {"adds": [loc], "deletes": []}).encode()
+        req = urllib.request.Request(
+            base + "/api/v1/workspace/successbrian-os/"
+            "update-embeddings", data=data,
+            headers={"Authorization": "Bearer " + key,
+                     "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            resp.read()
+        return "map: uploaded + embedded in successbrian-os"
+    except Exception as exc:  # the map is gravy; the graph is not
+        return "map: FAILED (%s) — graph wiring unaffected" % exc
+
+
+def cmd_integrate(conn):
+    seed(conn)
+    hubs = _ensure_hubs(conn)
+    edges = plan_edges()
+    inserted = _apply_edges(conn, edges)
+    print("hubs ensured: %d segment hubs" % hubs)
+    print("edges planned: %d — inserted %d, already present %d"
+          % (len(edges), inserted, len(edges) - inserted))
+    fl = _floaters(conn)
+    print("floaters: %d%s" % (len(fl),
+                              (" — " + ", ".join(fl)) if fl
+                              else ""))
+    drift = [ln for ln in audit(conn) if ln.startswith("DRIFT")]
+    print("reconciliation drift lines: %d" % len(drift))
+    for ln in drift:
+        print("  " + ln)
+    print(_embed_map(conn))
+    return 0 if not fl else 1
+
+
+def planning_rows(conn):
+    """Active planning bodies (R30) — (slug, subject, status)."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(DDL)
+            cur.execute(
+                "SELECT slug, subject, status FROM "
+                "atlas.planning_workspaces "
+                "WHERE status = 'active' ORDER BY slug")
+            return cur.fetchall()
+    except Exception:
+        conn.rollback()
+        return []
+
+
+def plan_slug(subject):
+    words = "".join(
+        c if c.isalnum() else " " for c in subject.lower()).split()
+    return "plan-" + "-".join(words)
+
+
+PLANNING_TEMPLATE = """# Plan: SUBJECT
+
+The idea dump for this plan (R30). Raw first, organized
+later — capture now, judge in the open.
+
+## The plan in one line
+(What is being planned, and what "planned" looks like.)
+
+## Raw idea dump
+(Everything Brian is working with: fragments, links,
+half-thoughts. Nothing here is a decision yet.)
+
+## Questions to answer
+(What has to be known before this can be decided.)
+
+## Options on the table
+(Each option, with its cost and its catch.)
+
+## Decisions (with their whys)
+(A ruling without its why is noise — the whys are the
+curriculum.)
+
+## What this needs from the OS
+(Systems, bodies, money, time — the demands this plan
+places on SuccessBrian OS if it goes ahead.)
+
+## Graduation test
+(This plan graduates when it becomes a real thing: its
+material promotes to the owning body and this body is
+marked graduated. If it dies, it is marked abandoned
+with its why — never silently deleted.)
+"""
+
+
+def _allm_key():
+    path = os.path.expanduser("~/successbrian-os/.env")
+    with open(path) as f:
+        for ln in f:
+            if ln.startswith("ANYTHINGLLM_API_KEY="):
+                return ln.split("=", 1)[1].strip()
+    return None
+
+
+def _allm_post(path, payload, key, timeout=60):
+    import json
+    import urllib.request
+    req = urllib.request.Request(
+        "http://127.0.0.1:3000" + path,
+        data=json.dumps(payload).encode(),
+        headers={"Authorization": "Bearer " + key,
+                 "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode())
+
+
+def _upload_embed(slug, fname, text, key):
+    import json
+    import urllib.request
+    import uuid
+    boundary = "----plan" + uuid.uuid4().hex
+    body = (
+        "--%s\r\nContent-Disposition: form-data; name=\"file\"; "
+        "filename=\"%s\"\r\nContent-Type: text/markdown\r\n\r\n"
+        "%s\r\n--%s--\r\n" % (boundary, fname, text, boundary)
+    ).encode()
+    req = urllib.request.Request(
+        "http://127.0.0.1:3000/api/v1/document/upload",
+        data=body,
+        headers={"Authorization": "Bearer " + key,
+                 "Content-Type": "multipart/form-data; "
+                 "boundary=" + boundary})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        payload = json.loads(resp.read().decode())
+    loc = payload["documents"][0]["location"]
+    _allm_post("/api/v1/workspace/%s/update-embeddings" % slug,
+               {"adds": [loc], "deletes": []}, key)
+
+
+def cmd_plan(conn, argv):
+    """plan start <subject> | plan list | plan graduate <slug>
+    | plan abandon <slug> [why...]"""
+    if len(argv) < 3:
+        print("usage: plan start <subject> | plan list | "
+              "plan graduate <slug> | plan abandon <slug>")
+        return 2
+    action = argv[2]
+    seed(conn)
+    if action == "list":
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT slug, subject, status FROM "
+                "atlas.planning_workspaces ORDER BY slug")
+            rows = cur.fetchall()
+        if not rows:
+            print("no planning bodies yet")
+        for slug, subj, st in rows:
+            print("%-32s %-10s %s" % (slug, st, subj))
+        return 0
+    if action == "start":
+        if len(argv) < 4:
+            print("usage: plan start <subject>")
+            return 2
+        subject = " ".join(argv[3:])
+        slug = plan_slug(subject)
+        key = _allm_key()
+        if not key:
+            print("no ANYTHINGLLM_API_KEY in .env — cannot "
+                  "create the workspace")
+            return 1
+        payload = _allm_post("/api/v1/workspace/new",
+                             {"name": slug}, key)
+        if not payload.get("workspace"):
+            print("AnythingLLM did not create %s: %s"
+                  % (slug, payload.get("message", payload)))
+            return 1
+        purpose = ("Planning body (R30): the idea dump for "
+                   "Brian's plan — %s. Raw ideas, questions, "
+                   "options, and decisions-in-the-making "
+                   "while he plans it." % subject)
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO atlas.planning_workspaces "
+                "(slug, subject, status, note) VALUES "
+                "(%s, %s, 'active', %s) ON CONFLICT (slug) "
+                "DO UPDATE SET status = 'active', "
+                "subject = EXCLUDED.subject",
+                (slug, subject,
+                 "Started by Brian's R30 rule, 2026-10-23."))
+            cur.execute(
+                "INSERT INTO atlas.nodes (node_key, node_type, "
+                "name, status, summary, updated_at) SELECT "
+                "%s, 'allm_workspace', %s, 'active', %s, now() "
+                "WHERE NOT EXISTS (SELECT 1 FROM atlas.nodes "
+                "WHERE node_key = %s)",
+                (node_key_for(slug), slug, purpose,
+                 node_key_for(slug)))
+            cur.execute(
+                "INSERT INTO atlas.edges (from_node, to_node, "
+                "edge_type, notes) SELECT 'segment:core', %s, "
+                "'contains', 'R30: planning bodies sit in "
+                "core.' WHERE NOT EXISTS (SELECT 1 FROM "
+                "atlas.edges WHERE from_node = 'segment:core' "
+                "AND to_node = %s AND edge_type = 'contains')",
+                (node_key_for(slug), node_key_for(slug)))
+        conn.commit()
+        _upload_embed(slug, "planning-template.md",
+                      PLANNING_TEMPLATE.replace("SUBJECT",
+                                                subject), key)
+        print("planning body live: %s (subject: %s)"
+              % (slug, subject))
+        return 0
+    if action in ("graduate", "abandon"):
+        if len(argv) < 4:
+            print("usage: plan %s <slug>" % action)
+            return 2
+        slug = argv[3]
+        status = "graduated" if action == "graduate" \
+            else "abandoned"
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE atlas.planning_workspaces SET "
+                "status = %s WHERE slug = %s",
+                (status, slug))
+            hit = cur.rowcount
+        conn.commit()
+        print("%s -> %s" % (slug, status) if hit
+              else "no such planning body: %s" % slug)
+        return 0 if hit else 1
+    print("unknown plan action: %s" % action)
+    return 2
+
+
+def cmd_placement(conn):
+    """R14 readout: the need, in the form DealsDesk consumes
+    — per segment, its resource character, its bodies, and
+    where they live / should be built out."""
+    live = live_workspaces()
+    reg = {r[0] for r in registry_rows(conn)}
+    for name in ("mlm", "marketing", "products", "crypto",
+                 "blogs", "people", "companies", "platforms",
+                 "machines", "geography", "core"):
+        seg = SEGMENTS[name]
+        nodes = sorted({PLACEMENT.get(s, "?")
+                        for s in seg["bodies"]})
+        print("SEGMENT %s — nodes today: %s"
+              % (name, ", ".join(nodes)))
+        print("  character: %s" % seg["character"])
+        for slug in seg["bodies"]:
+            mark = "" if slug in reg else "  [NO REGISTRY ROW]"
+            print("  - %-36s %s docs%s"
+                  % (slug, live.get(slug, 0), mark))
+        print()
+    print("Need statement (for DealsDesk): each segment is "
+          "built out on its own nodes to its character "
+          "above; bodies relocate as whole workspaces (R14).")
+
+
+def cmd_list(conn):
+    live = live_workspaces()
+    print("%-28s %-10s %-11s %s" % ("slug", "kind", "status", "docs"))
+    for r in registry_rows(conn):
+        docs = live.get(r[0])
+        print("%-28s %-10s %-11s %s"
+              % (r[0], r[1], r[6],
+                 docs if docs is not None else "—"))
+
+
+def selftest(conn):
+    failures = []
+
+    def check(cond, label):
+        print(("PASS  " if cond else "FAIL  ") + label)
+        if not cond:
+            failures.append(label)
+
+    seed(conn)
+    n1 = len(registry_rows(conn))
+    seed(conn)
+    n2 = len(registry_rows(conn))
+    check(n1 == n2 == len(REGISTRY),
+          "seed idempotent: %d registry rows across re-seed" % n2)
+
+    d = determine(conn, "oliabo")
+    check(d["verdict"] == "existing" and d["workspace"] == "oliabo"
+          and d["status"] == "live",
+          "determine oliabo -> its own workspace (live)")
+    d = determine(conn, "zilara")
+    check(d["verdict"] == "existing" and d["workspace"] == "zilara",
+          "determine zilara -> its own workspace, separate from "
+          "oliabo")
+    d = determine(conn, "oliabo")
+    check(d["workspace"] != "mlm-income",
+          "oliabo material never routes to the MLM category body")
+
+    d = determine(conn, "new-example-mlm", category="MLM")
+    check(d["verdict"] == "create_new"
+          and "oliabo" in d["rejected_absorbers"]
+          and "zilara" in d["rejected_absorbers"],
+          "a new MLM business is NOT absorbed by oliabo/zilara "
+          "(per-business separation)")
+
+    for slug in ACTIVE_MLMS:
+        d = determine(conn, slug)
+        check(d["verdict"] == "existing" and d["workspace"] == slug,
+              "R6: active MLM %s determines to its own workspace"
+              % slug)
+    reg_slugs = {r[0] for r in registry_rows(conn)}
+    check(all(s in reg_slugs for s in ACTIVE_MLMS),
+          "R6 coverage: every active MLM has a registry row")
+
+    for slug in SKINS:
+        d = determine(conn, slug)
+        check(d["verdict"] == "existing" and d["workspace"] == slug,
+              "R7: marketing skin %s determines to its own workspace"
+              % slug)
+    check(all(s in reg_slugs for s in SKINS),
+          "R7 coverage: every marketing skin has a registry row")
+
+    d = determine(conn, "epyc-7001-builds")
+    check(d["verdict"] == "not_building"
+          and d["workspace"] == "builds-we-are-not-building"
+          and d.get("tag") == "#EPYC7001",
+          "R8: epyc 7001 material routes to the negative registry "
+          "under its tag #EPYC7001")
+    d = determine(conn, "epyc 7001")
+    check(d["verdict"] == "not_building",
+          "R8: the rejection fires however the subject is spelled")
+    check(not any("7001" in r[0] for r in registry_rows(conn)),
+          "R8: no workspace exists for a rejected build — it is a "
+          "tag, never a workspace")
+
+    for audience, slug in COACHING:
+        d = determine(conn, slug)
+        check(d["verdict"] == "existing" and d["workspace"] == slug,
+              "R9: coaching audience %s determines to its own "
+              "workspace" % audience)
+    check(all(slug in reg_slugs for _, slug in COACHING),
+          "R9 coverage: every coaching audience has a registry "
+          "row")
+    d = determine(conn, "ai-strategies-network-marketers")
+    check(d["workspace"] != "ai-strategies-sbos-users",
+          "R9: marketer coaching never routes to the SBOS-user "
+          "body (audiences stay separate)")
+
+    for slug in RESEARCH_BODIES:
+        d = determine(conn, slug)
+        check(d["verdict"] == "existing" and d["workspace"] == slug,
+              "R10: research body %s determines to itself" % slug)
+    check(all(s in reg_slugs for s in RESEARCH_BODIES),
+          "R10 coverage: every ruled research body has a "
+          "registry row")
+    d = determine(conn, "ai strategies competitive research")
+    check(d["workspace"] == "ai-strategies-competitive-research",
+          "R10: other coaches' promotions route to the "
+          "research body, not to Brian's own coaching bodies")
+
+    check(all(a["space"] in reg_slugs for a in AUDIENCES
+              if a["space"] is not None),
+          "R11 coverage: every audience with a determined "
+          "space has its registry row")
+    check(any(a["research"] for a in AUDIENCES),
+          "R11: at least one audience carries its competitive-"
+          "research sibling (network-marketers)")
+    audit_text = "\n".join(audit(conn))
+    check(not any("old-school tech" in ln and "GAP" in ln
+                  for ln in audit_text.split("\n")),
+          "R11: the tech audience HAS its space — the "
+          "standing gap closed 2026-10-23 (tech-audience)")
+
+    d = determine(conn, "sipology")
+    check(d["verdict"] == "dead_business"
+          and d["workspace"] == "dead-mlms"
+          and d["tag"] == "#SIPOLOGY",
+          "R18: sipology routes to the dead-mlms registry "
+          "under its tag")
+    d = determine(conn, "iphones")
+    check(d["verdict"] == "disliked"
+          and d["workspace"] == "things-brian-doesnt-like"
+          and d["tag"] == "#IPHONES",
+          "R23: iphones route to the dislike registry "
+          "under their tag — never a body of their own")
+    d = determine(conn, "democrats")
+    check(d["verdict"] == "disliked"
+          and d["tag"] == "#DEMOCRATS",
+          "R23: democrats route to the dislike registry "
+          "under their tag (Brian, 2026-10-23)")
+    check(segment_of("things-brian-doesnt-like") == "core",
+          "the dislike registry sits in core with the "
+          "personal bodies (R23)")
+    check(segment_of("people-brian-likes") == "core"
+          and all(segment_of(s) == "people" for s in
+                  ("lisa-demuth", "mike-lindell")),
+          "R24: the like registry sits in core; the liked "
+          "figures hold dossiers in people (Brian, "
+          "2026-10-23)")
+    check(all(k in {r[0] for r in REGISTRY}
+              for k in LIKED_PEOPLE),
+          "R24: every person in the stance registry has "
+          "their body in the register")
+    check(all(segment_of(s) == "core" for s in
+              ("ai-bubble-crash", "flat-earth",
+               "name-finding-and-enrichment")),
+          "R25: the designated thesis/belief/method "
+          "bodies sit in core (Brian, 2026-10-23)")
+    check(segment_of("business-goals") == "core"
+          and any(frm == "business-goals"
+                  and to == "successbrian-os"
+                  and et == "enables"
+                  for frm, to, et, _n in RELATIONSHIPS),
+          "R29: business-goals sits in core and enables "
+          "successbrian-os — goals drive the OS (Brian, "
+          "2026-10-23)")
+    check(segment_of("scattered-second-brain") == "core",
+          "R31: the scattered second brain sits in core "
+          "with the OS machinery (Brian, 2026-10-23)")
+    check(plan_slug("Garage Sort Out!") == "plan-garage-sort-out",
+          "R30: plan subjects derive plan-<slug> bodies")
+    check("SUBJECT" not in PLANNING_TEMPLATE.replace(
+              "SUBJECT", "x") and "idea dump" in PLANNING_TEMPLATE,
+          "R30: the planning template renders with a subject")
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO atlas.planning_workspaces "
+            "(slug, subject, status) VALUES "
+            "('plan-selftest-zebra', 'selftest zebra', "
+            "'active') ON CONFLICT (slug) DO UPDATE SET "
+            "status = 'active'")
+    conn.commit()
+    d = determine(conn, "selftest zebra")
+    check(d["verdict"] == "planning"
+          and d["workspace"] == "plan-selftest-zebra",
+          "R30: an active plan owns its subject's material "
+          "while it is being planned")
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM atlas.planning_workspaces WHERE "
+            "slug = 'plan-selftest-zebra'")
+    conn.commit()
+    d = determine(conn, "selftest zebra")
+    check(d["verdict"] != "planning",
+          "R30: once the plan body is gone, routing "
+          "releases the subject")
+    check(all(segment_of(s) == "geography" for s in
+              ("africa", "asia", "europe", "north-america",
+               "south-america", "oceania", "united-states",
+               "philippines", "nigeria")),
+          "R26: continent and country bodies sit in the "
+          "geography segment (Brian, 2026-10-23)")
+    _plan = plan_edges()
+    _contained = {to for (frm, to, et, _n) in _plan
+                  if et == "contains"
+                  and frm.startswith("segment:")}
+    check(all(node_key_for(s) in _contained for s in reg_slugs),
+          "R27: the wiring plan contains every registered "
+          "body under its segment hub")
+    check(all(frm in reg_slugs and to in reg_slugs
+              and et in ALLOWED_EDGE_TYPES
+              for frm, to, et, _n in RELATIONSHIPS),
+          "R27: every coded cross-link joins two "
+          "registered bodies with an allowed edge type")
+    check(sum(1 for (frm, _t, et, _n) in _plan
+              if frm == "allm:successbrian-os"
+              and et == "contains") == len(SEGMENTS),
+          "R27: successbrian-os contains every segment hub")
+    check(all(segment_of(s) == "core" for s in
+              ("deepseek-reap-150b-inference", "colibri",
+               "strata", "epyc-builds", "epyc-7002-builds",
+               "epyc-7003-builds", "saturday-podcast")),
+          "the fleet/engine/build bodies sit in core "
+          "(Brian, 2026-10-23)")
+    check(segment_of("blogging-strategy") == "blogs"
+          and segment_of("tech-audience") == "blogs",
+          "blogging-strategy and tech-audience sit in the "
+          "blogs segment (Brian, 2026-10-23)")
+    check(segment_of("dead-mlms") == "mlm",
+          "dead-mlms sits in mlm — dead businesses are MLM "
+          "businesses (R18)")
+    check(all(segment_of(s) == "people" for s in
+              ("donald-trump", "amy-klobuchar", "tim-walz",
+               "elon-musk", "mark-zuckerberg", "jd-vance",
+               "sam-altman", "dario-amodei", "jensen-huang",
+               "lisa-su", "pallab-ghosal", "joel-therien")),
+          "R19: each named public figure's dossier sits in "
+          "the people segment (Brian, 2026-10-23)")
+    check(all(segment_of(s) == "companies" for s in
+              ("anthropic", "openai", "nvidia", "amd",
+               "intel", "meta", "google", "microsoft",
+               "deepseek", "gohighlevel", "locus-ai", "gvo")),
+          "R20: each named company's dossier sits in the "
+          "companies segment (Brian, 2026-10-23)")
+    check(all(segment_of(s) == "platforms" for s in
+              ("windows", "android", "linux")),
+          "R21: each platform Brian runs has its body in "
+          "the platforms segment (Brian, 2026-10-23)")
+    check(all(segment_of(s) == "machines" for s in
+              ("gmktec", "aoostar", "minisforum")),
+          "R22: each favorite machine maker has its body "
+          "in the machines segment (Brian, 2026-10-23)")
+
+    check(all(s in reg_slugs for s in PROJECTS),
+          "R12 coverage: every vibe-coded project on the list "
+          "has a registry row")
+    for slug in ("campaignsdesk", "tradesdesk"):
+        d = determine(conn, slug)
+        check(d["verdict"] == "existing"
+              and d["workspace"] == slug,
+              "R12: project %s determines to its own workspace"
+              % slug)
+    check(all(b["space"] in reg_slugs for b in BLOGS),
+          "R12 coverage: every named blog has its space in "
+          "the registry")
+    d = determine(conn, "medium")
+    check(d["verdict"] == "existing"
+          and d["workspace"] == "medium",
+          "R12: the Medium blog determines to its own space")
+
+    all_placed = [s for seg in SEGMENTS.values()
+                  for s in seg["bodies"]]
+    check(len(all_placed) == len(set(all_placed)),
+          "R14: segment body lists are disjoint — no body "
+          "mixes segments")
+    check(all(segment_of(s) is not None for s in reg_slugs),
+          "R14 coverage: every registry body has a segment "
+          "placement")
+    check(segment_of("zilara") == "mlm"
+          and segment_of("crypto-trading-yield") == "crypto",
+          "R14: MLM bodies and crypto bodies sit in "
+          "different segments (Brian's example)")
+    check(segment_of("contactflowcrm") == "products",
+          "R15: ContactFlowCRM is a product — its market "
+          "(network marketers) does not place it in mlm")
+    check(segment_of("systeme-io") == "products",
+          "systeme-io sits in products — Brian's platform "
+          "business (designated 2026-10-23)")
+    check(segment_of("trafficstreemz") == "marketing"
+          and segment_of("cryptostreemz") == "marketing",
+          "R15: skins are marketing, even when they market "
+          "MLM offers")
+    check(set(SEGMENTS["mlm"]["bodies"])
+          == {"zilara", "gotbackup", "vate-life", "oliabo",
+              "mlm-income", "people-pipeline", "dead-mlms"},
+          "R15: the mlm segment holds the MLM businesses "
+          "themselves — living and dead — and nothing else")
+    check(set(SEGMENTS["crypto"]["bodies"])
+          == {"crypto-trading-yield"},
+          "R15: the crypto segment holds crypto trading "
+          "itself and nothing else")
+    check(segment_of("money-investing") == "core",
+          "R15: money-investing is general money knowledge, "
+          "not crypto (Brian, 2026-10-22)")
+    check(all(segment_of(s) == "core" for s in
+              ("campaignsdesk", "dealsdesk", "tradesdesk")),
+          "R16: all three desks sit in core — private-repo "
+          "plugins to SuccessBrian OS (Brian, 2026-10-22)")
+    check(segment_of("roadchat") == "core",
+          "Road Chat sits in core — an SBOS plugin's body "
+          "lives with the OS (Brian, 2026-10-22)")
+    check(segment_of("chicago-tardis") == "core",
+          "Chicago TARDIS sits in core — Brian's annual "
+          "trip and the ecosystem's field test "
+          "(Brian, 2026-10-22)")
+    check(segment_of("console-room") == "core",
+          "CONsole Room sits in core — Brian's Bloomington "
+          "Doctor Who con (Brian, 2026-10-22)")
+    check(segment_of("wearables") == "core",
+          "Wearables sits in core — Brian's own health-tech "
+          "stack and its economics (Brian, 2026-10-22)")
+    check(segment_of("medium") == "blogs"
+          and segment_of("blog-network") == "blogs",
+          "R17: blog bodies sit in the blogs segment — the "
+          "100-blog publishing network is its own segment "
+          "(Brian, 2026-10-22)")
+    check(all(PLACEMENT.get(s) == "k11-alpha"
+              for s in all_placed),
+          "R14: every body's home node today is k11-alpha "
+          "(no split ruled yet)")
+
+    d = determine(conn, "unlabeled-scan-dump")
+    check(d["verdict"] == "intake" and d["workspace"] == "unsorted",
+          "ownerless material -> unsorted intake")
+
+    lines = audit(conn)
+    joined = "\n".join(lines)
+    check("not yet created" not in joined,
+          "audit: no determined-but-uncreated workspaces remain "
+          "(all ruled workspaces are live since 2026-10-22)")
+    check("mountain-north" in joined,
+          "audit catches the mountain-north name drift")
+    check("atlas-keystones" in joined,
+          "audit catches the ingest folder with no workspace")
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM atlas.nodes "
+            "WHERE node_type = 'allm_workspace' "
+            "AND summary IS NOT NULL AND summary <> ''")
+        filled = cur.fetchone()[0]
+    check(filled >= 15,
+          "Atlas allm_workspace nodes now carry purposes "
+          "(%d filled)" % filled)
+
+    if failures:
+        print("SELFTEST FAILED: %d check(s)" % len(failures))
+        return 1
+    print("SELFTEST OK")
+    return 0
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else "list"
+    conn = pg()
+    try:
+        if cmd == "seed":
+            print("seeded atlas.allm_workspace_registry: %d rows"
+                  % seed(conn))
+            return 0
+        if cmd == "list":
+            cmd_list(conn)
+            return 0
+        if cmd == "determine":
+            if len(argv) < 3:
+                print("usage: allm_workspaces.py determine <subject> "
+                      "[--category C]")
+                return 2
+            category = None
+            if "--category" in argv:
+                category = argv[argv.index("--category") + 1]
+            d = determine(conn, argv[2], category)
+            print("%s -> %s" % (argv[2], d["verdict"]))
+            for k in ("workspace", "tag", "proposed_slug", "status",
+                      "rejected_absorbers", "why"):
+                if k in d:
+                    print("    %s: %s" % (k, d[k]))
+            return 0
+        if cmd == "audit":
+            for line in audit(conn):
+                print(line)
+            return 0
+        if cmd == "placement":
+            cmd_placement(conn)
+            return 0
+        if cmd == "integrate":
+            return cmd_integrate(conn)
+        if cmd == "plan":
+            return cmd_plan(conn, argv)
+        if cmd == "selftest":
+            return selftest(conn)
+        print("usage: allm_workspaces.py "
+              "[list|determine <subject>|audit|placement|"
+              "seed|integrate|plan <action>|selftest]")
+        return 2
+    finally:
+        conn.close()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

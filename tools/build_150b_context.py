@@ -86,6 +86,42 @@ def recent_decisions(limit=15):
     return "\n".join(f"- {t}" for t in topics)
 
 
+def _atlas_q(sql):
+    r = subprocess.run(
+        [KSSH, f'psql -h localhost -U successbrian -d ecosystem_central -t -A -c "{sql}"'],
+        capture_output=True, text=True, timeout=60)
+    return [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+
+
+def keystones_section():
+    """Keystone/initiative state from Atlas (Brian, 2026-10-21: the
+    model is integrated into the working context every agent reads).
+    Views: atlas.keystones_v, atlas.initiatives_v."""
+    lines = []
+    gates = _atlas_q(
+        "SELECT name FROM atlas.nodes WHERE node_type='gate' "
+        "AND status='pending' ORDER BY node_key;")
+    lines.append("- Pending gates (%d): %s"
+                 % (len(gates), "; ".join(gates) if gates else "none"))
+    cands = _atlas_q(
+        "SELECT count(*) FROM atlas.nodes WHERE node_type='candidate' "
+        "AND status='proposed';")
+    lines.append("- Candidate keystones/initiatives awaiting a ruling: %s"
+                 % (cands[0] if cands else "?"))
+    unl = _atlas_q(
+        "SELECT count(*) FROM public.initiatives "
+        "WHERE graph_node_id IS NULL;")
+    lines.append("- Initiatives with no keystone link: %s of 36 "
+                 "(see atlas.initiatives_v)" % (unl[0] if unl else "?"))
+    staff = _atlas_q(
+        "SELECT name FROM atlas.nodes "
+        "WHERE node_key LIKE 'task:discovery:staff:%' "
+        "AND status IN ('open','queued') ORDER BY node_key;")
+    if staff:
+        lines.append("- Staff health flags: %s" % "; ".join(staff))
+    return "\n".join(lines)
+
+
 def main():
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     bundle = f"""\
@@ -102,6 +138,9 @@ You are Brian's deep worker. This is the world your tasks live in.
 
 ## Recent high-confidence decisions / learnings
 {recent_decisions()}
+
+## Keystones & initiatives (Atlas)
+{keystones_section()}
 
 ---
 When Altair hands you a task, interpret it against the goals and rules above.

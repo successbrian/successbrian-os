@@ -47,7 +47,7 @@ class Seat:
             constraints=list(d.get("constraints", []) or []),
         )
 
-    def system_prompt(self) -> str:
+    def system_prompt(self, agenda_item: bool = False) -> str:
         lines = [
             f"You are the {self.title} on a board of directors.",
             f"Your domain: {self.domain}.",
@@ -55,10 +55,25 @@ class Seat:
             "You are an EPHEMERAL title spot: you exist for this one meeting,",
             "make big-picture calls (direction, priorities, start/stop), then dissolve.",
             "You do NOT do the domain's work — you govern it with fresh eyes.",
-            "Return exactly 2-3 calls. Each call: ONE sentence, then a ONE-line rationale.",
-            "Format: numbered list, each item as: <call sentence> / Rationale: <one line>.",
-            "Be decisive. Vague filler ('increase marketing efforts') is a failure.",
         ]
+        if agenda_item:
+            # Agenda mode (Brian 2026-10-21): the board loops the agenda
+            # queue; this seat rules on ONE queued item at a time.
+            lines += [
+                "You are ruling on ONE agenda item — the item in the user message.",
+                "Return exactly ONE call on that item. The call: ONE sentence, then a ONE-line rationale.",
+                "Format: 1. <call sentence> / Rationale: <one line>",
+                "Rule on the item itself — approve it, reject it, send it back with "
+                "conditions, or escalate it — do not drift into general advice.",
+            ]
+        else:
+            lines += [
+                "Return your calls — one per decision in front of you. Each call: ONE sentence, then a ONE-line rationale.",
+                "Format: numbered list, each item as: <call sentence> / Rationale: <one line>.",
+            ]
+        lines.append(
+            "Be decisive. Vague filler ('increase marketing efforts') is a failure."
+        )
         if self.constraints:
             lines.append("Hard constraints (violating one invalidates your output):")
             lines.extend(f"- {c}" for c in self.constraints)

@@ -17,10 +17,13 @@ Rules enforced in code, not in prompts:
     named output key. Unparseable or incomplete output FAILS the step —
     the worker never guesses or patches.
   * QUIET WINDOW: no model calls 02:00-05:00 (board window doctrine).
+  * CONNECTION DISCIPLINE: no database connection is ever held open
+    across a model call. This fleet's PG connections die when held
+    idle across long calls ('SSL connection has been closed
+    unexpectedly' — learned live twice on 2026-10-24). Fetch, close,
+    call, then finish on a fresh connection.
 
-A finished judgment step stores {parsed, raw_tail} as its result. What
-the judgment MEANS is the claiming layer's business; this worker only
-guarantees small-in, contract-checked-out.
+A finished judgment step stores {parsed, raw_tail} as its result.
 """
 import argparse
 import json
@@ -72,6 +75,15 @@ def extract_json(text):
         return None
 
 
+def _finish(key, status, result):
+    """Finish a step on a FRESH connection (see connection discipline)."""
+    c = pm_core.conn()
+    cur = c.cursor()
+    pm_core.finish(cur, key, status, result)
+    c.commit()
+    c.close()
+
+
 def run_step(row):
     _sid, key, _title, _kind, _pri, _origin = row
     c = pm_core.conn()
@@ -79,41 +91,39 @@ def run_step(row):
     cur.execute("SELECT payload FROM successbrian_os.pm_steps WHERE step_key=%s",
                 (key,))
     payload = cur.fetchone()[0] or {}
+    c.close()
     instruction = payload.get("instruction", "")
     context = payload.get("context", "")
     keys = payload.get("output_keys") or []
     max_tokens = int(payload.get("max_tokens", 800))
     if not instruction or not keys:
-        pm_core.finish(cur, key, "failed",
-                       {"why": "judgment step needs payload.instruction and payload.output_keys"})
-        c.commit(); c.close()
+        _finish(key, "failed",
+                {"why": "judgment step needs payload.instruction and "
+                        "payload.output_keys"})
         return f"{key}: FAILED (bad payload)"
     if len(instruction) + len(context) > MAX_PACKET_CHARS:
-        pm_core.finish(cur, key, "failed",
-                       {"why": "packet too large — needs breakdown",
-                        "chars": len(instruction) + len(context)})
-        c.commit(); c.close()
+        _finish(key, "failed",
+                {"why": "packet too large — needs breakdown",
+                 "chars": len(instruction) + len(context)})
         return f"{key}: FAILED (packet too large — needs breakdown)"
     try:
         raw = call_morpheus(instruction, context, max_tokens)
     except Exception as e:
-        pm_core.finish(cur, key, "failed", {"why": f"morpheus call: {type(e).__name__}: {e}"})
-        c.commit(); c.close()
+        _finish(key, "failed",
+                {"why": f"morpheus call: {type(e).__name__}: {e}"})
         return f"{key}: FAILED (call error)"
     parsed = extract_json(raw)
     if parsed is None:
-        pm_core.finish(cur, key, "failed",
-                       {"why": "no JSON object in reply", "raw_tail": raw[-1000:]})
-        c.commit(); c.close()
+        _finish(key, "failed",
+                {"why": "no JSON object in reply", "raw_tail": raw[-1000:]})
         return f"{key}: FAILED (no JSON)"
     missing = [k for k in keys if k not in parsed]
     if missing:
-        pm_core.finish(cur, key, "failed",
-                       {"why": f"missing output keys: {missing}", "raw_tail": raw[-1000:]})
-        c.commit(); c.close()
+        _finish(key, "failed",
+                {"why": f"missing output keys: {missing}",
+                 "raw_tail": raw[-1000:]})
         return f"{key}: FAILED (missing keys {missing})"
-    pm_core.finish(cur, key, "done", {"parsed": parsed, "raw_tail": raw[-500:]})
-    c.commit(); c.close()
+    _finish(key, "done", {"parsed": parsed, "raw_tail": raw[-500:]})
     return f"{key}: DONE {json.dumps(parsed)[:160]}"
 
 
@@ -124,7 +134,8 @@ def run_once(limit=1):
     c = pm_core.conn()
     cur = c.cursor()
     rows = pm_core.claim(cur, ACTOR, limit=limit, kinds=["judgment"])
-    c.commit(); c.close()
+    c.commit()
+    c.close()
     if not rows:
         print("no judgment steps ready")
         return []
@@ -149,7 +160,8 @@ def selftest():
         payload={"instruction": "Summarize.",
                  "context": "x" * (MAX_PACKET_CHARS + 1),
                  "output_keys": ["summary"], "max_tokens": 100})
-    c.commit(); c.close()
+    c.commit()
+    c.close()
     lines = run_once(limit=2)
     joined = "\n".join(lines)
     assert f"{tag}: DONE" in joined and '"blue"' in joined, lines
@@ -160,7 +172,8 @@ def selftest():
     cur = c.cursor()
     cur.execute("DELETE FROM successbrian_os.pm_steps WHERE step_key LIKE %s",
                 (tag + "%",))
-    c.commit(); c.close()
+    c.commit()
+    c.close()
     print("PASS cleanup — morpheus worker selftest green")
 
 

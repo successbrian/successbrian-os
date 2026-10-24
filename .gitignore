@@ -25,3 +25,7 @@ tools/focus/user_focus.json
 
 tools/focus/candidates/*
 !tools/focus/candidates/example.json
+
+# Trading Desk is a PRIVATE repo (successbrian/tradesdesk) — never commit it to this public repo
+tools/ecosystem_intel/trading_systems.py
+tools/ecosystem_intel/trading_systems.py.bak*

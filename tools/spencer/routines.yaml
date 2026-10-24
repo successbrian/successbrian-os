@@ -72,21 +72,74 @@ routines:
 
   - id: board-of-directors-daily
     cron_id: board-of-directors-daily
-    schedule: daily 03:42 America/Chicago
+    schedule: Mon-Fri 02:30 America/Chicago
     purpose: Ephemeral C-suite board session via the board harness
     produces:
       tables: []
       files: []
     owner: null
 
+  - id: board-of-directors-saturday
+    cron_id: board-of-directors-saturday
+    schedule: Sat 02:30 America/Chicago
+    purpose: Ephemeral C-suite board session via the board harness (Saturday run)
+    produces:
+      tables: []
+      files: []
+    owner: goal:board-of-directors
+
   - id: bus-ride-briefing
     cron_id: bus-ride-briefing
-    schedule: Mon/Tue 05:25 America/Chicago
+    schedule: Mon/Tue 05:30 America/Chicago
     purpose: Morning briefing for Brian's bus ride
     produces:
       tables: []
       files: []
     owner: goal:bus-ride-morning-briefing
+
+  - id: wednesday-briefing
+    cron_id: wednesday-briefing
+    schedule: Wed 08:00 America/Chicago
+    purpose: Wednesday morning briefing for Brian
+    produces:
+      tables: []
+      files: []
+    owner: null
+
+  - id: thu-fri-briefing
+    cron_id: thu-fri-briefing
+    schedule: Thu/Fri 06:30 America/Chicago
+    purpose: Thursday/Friday morning briefing for Brian
+    produces:
+      tables: []
+      files: []
+    owner: null
+
+  - id: gb40-monthly-cycle
+    cron_id: gb40-monthly-cycle
+    schedule: monthly on day 1, 00:30 America/Chicago
+    purpose: "Open the new month's GotBackup 40 cycle USING THE CODE (tools/atlas/laydown.py): (1) laydown.py score laydown_specs/gotbackup-40.json <last-month> --count <sponsored count Altair supplies from the count source> - closes the old cycle, shortfall reported, never carried; (2) laydown.py cycle laydown_specs/gotbackup-40.json <new-month> - opens the fresh 40. Brian's law, 2026-10-21: the goal refreshes monthly."
+    owner: altair
+    produces:
+      tables: []
+      files: []
+  - id: atlas-discovery
+    cron_id: atlas-discovery
+    schedule: daily 01:00 America/Chicago
+    purpose: "Atlas Discovery (tools/atlas/discovery.py) scans the graph and registers and mints board agenda items - readiness assessments, stale/orphan top-level nodes, gates without criteria - each with source=atlas-discovery. Deterministic; runs before the 02:00 AI cutoff so the 02:30 board session sees a fresh queue."
+    produces:
+      tables: []
+      files: []
+    owner: null
+
+  - id: needs-brian-refinement
+    cron_id: needs-brian-refinement
+    schedule: daily 05:00 America/Chicago
+    purpose: "Daily refinement of the Needs-Brian list (Rule 16), owned by Altair and Meghan - they know Brian best; the board does not refine. They re-work every open question as a capability sort - what the ecosystem can do gets done or routed, what it can't do yet becomes an ecosystem_needs gap with options, only owner-call items survive - research and sharpen the rest with options, dedupe, drop stale - folding in the board's fresh held recommendations. Heavy research happens in the evening under rules 2-3; this is the final pass before the briefings. Brian's dashboard feedback on the list teaches the ecosystem how to solve each class itself next time."
+    produces:
+      tables: []
+      files: []
+    owner: altair-meghan
 
   - id: sunday-shift
     cron_id: sunday-shift
@@ -145,7 +198,7 @@ routines:
   - id: 150b-context-refresh
     cron_id: 150b-context-refresh
     schedule: daily 04:42 America/Chicago
-    purpose: Refresh the 150B context bundle
+    purpose: "Refresh the 150B context bundle - the decision-processing step (Rule 14): carries the 02:30 boards decisions into the ecosystems working context"
     produces:
       tables: []
       files: []

@@ -6,11 +6,15 @@ C-level seats — using Brian's harness + system.
 ## The idea in one paragraph
 
 Every morning, ephemeral directors wearing C-level title hats meet for one
-session: they read a brief of yesterday's state, make 2–3 big-picture calls
-each, then dissolve. A chair applies the **90% gate** (board proposes, chair
-disposes), binding decisions are **recorded**, the recording is **verified**
-by querying back, and minutes are written. The harness is generic; the seats,
-briefs, and sink are the bent config.
+session: they read a brief of yesterday's state, then **loop through the
+entire agenda queue** — every queued item gets exactly one call from its
+routed seat — then dissolve. (Brian switched the board off the old
+each-seat-picks-2–3-calls shape on 2026-10-21: anything that didn't make a
+seat's top 2–3 was silently unruled.) A chair applies the **90% gate**
+(board proposes, chair disposes), binding decisions are **recorded**, the
+recording is **verified** by querying back, and minutes are written — with
+the queue's carry-over count stated, never hidden. The harness is generic;
+the seats, briefs, agenda source, and sink are the bent config.
 
 ## Why this exists (the failure it answers)
 
@@ -33,6 +37,7 @@ board/
   harness/            # GENERIC — never hardcode one entrepreneur's domains here
     seats.py          # Seat dataclass + YAML loading (title/domain/mandate/wave/...)
     worker.py         # Stateless model worker (OpenAI-compatible endpoint, retry-once, fluff detection)
+    agenda.py         # The agenda queue (source + routing + processed ledger)
     brief.py          # BriefBuilder + pluggable state pullers (NOT INSTRUMENTED rule)
     gate.py           # The 90% gate (deterministic heuristic scoring)
     sinks.py          # DecisionSink interface; SecondBrainSink + JsonlSink
@@ -61,6 +66,15 @@ board/
   pricing only), Ecosystem Build, and the CFO as wave-2 closer consolidating
   the money picture.
 - Model: Morpheus (14B) at `127.0.0.1:11437` on k11-alpha, reached via kssh.
-- Sink: PostgreSQL `second_brain`; the 4:40 AM 150B context bundle refresh
-  picks the decisions up, feeding the 5:25 AM bus briefing.
-- Session: 3:30 AM cron → 4:30 hard wrap.
+- Agenda: **Atlas open gates + tasks** (atlas.nodes: pending gates, then
+  open/queued atlas_tasks, oldest first). An item leaves the queue only
+  when the board has ruled on it (ledger in the minutes dir); at the
+  deadline, unprocessed items carry over and lead the next session.
+- Sink: PostgreSQL `second_brain`; the 04:42 150B context bundle refresh
+  picks the decisions up, feeding the 5:30 AM bus briefing (Mon/Tue).
+- Session: 02:30 Mon–Fri (AGENT_CONTRACT rule 14 quiet window: last AI
+  work starts 02:00, complete by 02:30; the board sits alone) → agenda
+  deadline 04:30 (two-hour cap), ahead of the 04:42 context-bundle refresh.
+- After the board: 04:30-05:00 decision processing - the 04:42 bundle
+  refresh carries the session's decisions into the ecosystem's working
+  context; the full AI cadence resumes at 05:00.

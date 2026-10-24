@@ -218,15 +218,34 @@ def audit(a):
     print("  %s orphan nodes" % (rows[0].strip() if rows else "?"))
 
 
+def route_model():
+    """Brian's routing (2026-10-17): V4 Pro preferred when it has API value;
+    otherwise Sonic. An active plan:v4-freeze overrides everything."""
+    fr = psql("SELECT status FROM atlas.nodes WHERE node_key='plan:v4-freeze';")
+    if fr and fr[0].strip() == "active":
+        return "sonic", "frozen"
+    bal = psql("SELECT available, usd FROM successbrian_os.v4pro_balance_history ORDER BY checked_at DESC LIMIT 1;")
+    if bal:
+        parts = bal[0].split("|")
+        avail = parts[0].strip().lower() == "t"
+        try: usd = float(parts[1].strip())
+        except Exception: usd = 0
+        if avail and usd > 0:
+            return "v4pro", "balance $%.2f" % usd
+    return "sonic", "no V4 value"
+
 def task_add(a):
-    model = a.model or "sonic"
-    # V4 Pro freeze check: v4pro tasks queue until the freeze lifts
+    # Brian 2026-10-17: V4 Pro preferred when it has API value, else Sonic
+    auto_model, reason = route_model()
+    model = a.model or auto_model
     fr = psql("SELECT status FROM atlas.nodes WHERE node_key='plan:v4-freeze';")
     frozen = fr and fr[0].strip() == "active"
     status = "queued"
     note = ""
     if model == "v4pro" and frozen:
         note = " (V4 freeze active - queued until lift)"
+    elif not a.model:
+        note = " (auto-routed: %s)" % reason
     det = {"about": a.about or "", "found_by": a.found_by or "manual", "model": model}
     import json as _j
     psql("INSERT INTO atlas.nodes (node_key, node_type, name, status, details) VALUES ('%s', 'atlas_task', '%s', '%s', '%s'::jsonb) ON CONFLICT (node_key) DO UPDATE SET name=EXCLUDED.name, status=EXCLUDED.status, details=EXCLUDED.details, updated_at=NOW();"

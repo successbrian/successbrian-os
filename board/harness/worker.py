@@ -14,7 +14,13 @@ WHY:
     sessions "completing" with seats missing because the API was slow.
 
 CALLED BY:
-    board.harness.session (BoardSession runs wave-1 then wave-2 seats).
+    board.harness.session (BoardSession: agenda items via run_agenda_item,
+    wave-2 closer via run_seat).
+
+AGENDA MODE (Brian 2026-10-21):
+    The session no longer asks each seat for 2-3 self-chosen calls. It
+    loops the agenda queue (harness.agenda) and calls run_agenda_item once
+    per item: one item in, exactly one call out.
 
 NOTES:
     Transport: `direct` POSTs to base_url over HTTP (use when the harness runs
@@ -52,6 +58,8 @@ class SeatResult:
     latency_s: float
     attempts: int
     note: str = ""
+    last_raw: str = ""      # last model output seen, kept even on failure
+    timed_out: bool = False  # True when the item budget (3x rule) stopped us
 
 
 @dataclass
@@ -108,47 +116,128 @@ class ModelWorker:
     def run_seat(
         self, seat: Seat, brief_text: str, extra_context: str = ""
     ) -> SeatResult:
-        """Run one seat. BLOCKS until the seat completes: transport errors and
-        thin/unparseable outputs are retried with exponential backoff, no
-        attempt cap. Per Brian 2026-10-08: if we're waiting on the model API,
-        we WAIT — a seat never fails just because the API was slow, and the
-        next seat never starts until this one is done."""
-        import time
-
+        """Run one seat for a synthesis/closer pass (e.g. the wave-2 CFO
+        consolidation, or test_dryrun). BLOCKS until the seat completes:
+        transport errors and thin/unparseable outputs are retried with
+        exponential backoff, no attempt cap. Per Brian 2026-10-08: if we're
+        waiting on the model API, we WAIT — a seat never fails just because
+        the API was slow, and the next seat never starts until this one is
+        done."""
         user = f"BRIEF:\n{brief_text}"
         if extra_context:
             user += f"\n\nPRIOR WAVE OUTPUT (other chiefs have spoken; build on it):\n{extra_context}"
-        user += "\n\nYour 2-3 calls:"
+        user += "\n\nYour calls:"
+        return self._run_blocking(seat, seat.system_prompt(), user, min_calls=1)
+
+    def run_agenda_item(
+        self, seat: Seat, item, brief_text: str, deadline_s: float | None = None
+    ) -> SeatResult:
+        """Rule on ONE agenda item (Brian 2026-10-21 agenda-loop switch).
+
+        The prompt carries the brief for context plus the item itself; the
+        seat must return exactly one call on that item. Only the FIRST
+        parsed call is kept — one item, one ruling — so a seat cannot pad
+        an item into a list. Same blocking-retry discipline as run_seat.
+        `item` is a harness.agenda.AgendaItem (duck-typed: key/kind/title/
+        text/theme)."""
+        user = (
+            f"BRIEF:\n{brief_text}\n\n"
+            f"AGENDA ITEM [{item.kind}: {item.key}]\n"
+            f"Title: {item.title}\n"
+            + (f"Theme: {item.theme}\n" if getattr(item, "theme", "") else "")
+            + f"Item: {item.text}\n\n"
+            "Your ONE call on this item:"
+        )
+        result = self._run_blocking(
+            seat, seat.system_prompt(agenda_item=True), user, min_calls=1,
+            deadline_s=deadline_s,
+        )
+        if result.ok and len(result.calls) > 1:
+            result.calls = result.calls[:1]
+        return result
+
+    def _run_blocking(
+        self, seat: Seat, system: str, user: str, min_calls: int = 1,
+        deadline_s: float | None = None,
+    ) -> SeatResult:
+        """Blocking retry loop. With deadline_s=None this is the 2026-10-08
+        discipline: wait forever, a seat never fails because the API was
+        slow. With deadline_s set (agenda items, Brian 2026-10-23) the
+        item has a budget — 3x the session's running average decision
+        time: exceeding it STOPS the item (timed_out result, last output
+        preserved) so the session can park it for analysis and move on,
+        instead of one unparseable item eating the whole meeting like
+        task:gb40:closing-kit did in the 2026-10-23 beta. The budget is
+        soft by at most one in-flight call (timeout_s) plus one backoff
+        slice."""
+        import time
 
         attempt, backoff = 0, self.retry_base_s
         start = time.time()
+        last_raw = ""
         while True:
             attempt += 1
             try:
-                raw = self._post(self._payload(seat.system_prompt(), user))
+                raw = self._post(self._payload(system, user))
+                last_raw = raw or last_raw
             except Exception as e:  # noqa: BLE001 - transport failure -> wait, retry
                 elapsed = time.time() - start
+                if deadline_s is not None and elapsed > deadline_s:
+                    return SeatResult(
+                        seat.title, [], last_raw, False, elapsed, attempt,
+                        note=(f"TIMEOUT: item budget {deadline_s:.0f}s "
+                              f"exceeded during transport retries ({e}); "
+                              "parked for analysis, re-presents next session"),
+                        last_raw=last_raw, timed_out=True)
                 print(f"[{seat.title}] attempt {attempt}: transport error "
                       f"({e}); waiting {backoff:.0f}s then retrying "
                       f"(elapsed {elapsed:.0f}s)", flush=True)
-                time.sleep(backoff)
+                wait = backoff
+                if deadline_s is not None:
+                    wait = min(wait, max(0.0, deadline_s - elapsed))
+                time.sleep(wait)
                 backoff = min(backoff * 2, self.retry_cap_s)
                 continue
             calls = parse_calls(raw)
-            if len(calls) >= 2:
+            if len(calls) >= min_calls:
                 return SeatResult(
                     seat.title, calls, raw, True, time.time() - start, attempt
                 )
             elapsed = time.time() - start
+            if deadline_s is not None and elapsed > deadline_s:
+                return SeatResult(
+                    seat.title, [], last_raw, False, elapsed, attempt,
+                    note=(f"TIMEOUT: item budget {deadline_s:.0f}s exceeded "
+                          f"after {attempt} attempt(s) with 0 usable calls "
+                          "parsed; last model output preserved in the "
+                          "stuck record for analysis; item re-presents "
+                          "next session"),
+                    last_raw=last_raw, timed_out=True)
             print(f"[{seat.title}] attempt {attempt}: only {len(calls)} usable "
                   f"call(s) parsed; waiting {backoff:.0f}s then retrying "
                   f"(elapsed {elapsed:.0f}s)", flush=True)
-            time.sleep(backoff)
+            wait = backoff
+            if deadline_s is not None:
+                wait = min(wait, max(0.0, deadline_s - elapsed))
+            time.sleep(wait)
             backoff = min(backoff * 2, self.retry_cap_s)
 
 
+BARE_CALL_RE = re.compile(
+    r"^(.{12,}?)\s*/\s*Rationale:\s*(.+)$", re.IGNORECASE | re.MULTILINE
+)
+
+
 def parse_calls(raw: str) -> list[tuple[str, str]]:
-    """Parse numbered 'call / Rationale:' lines. Returns [(call, rationale)]."""
+    """Parse 'call / Rationale:' lines. Returns [(call, rationale)].
+
+    Tier 1: the numbered/bulleted format the seat prompt asks for.
+    Tier 2 (Brian 2026-10-23, the closing-kit lesson): if NO numbered
+    call parses, accept the same shape WITHOUT the leading number —
+    'Approve the thing / Rationale: why'. In the 2026-10-23 beta the
+    CFO produced exactly that, a good ruling, and the strict parser
+    discarded it ~25 times while the session stalled to death. A
+    ruling must never die over a missing '1.'."""
     calls: list[tuple[str, str]] = []
     for m in CALL_RE.finditer(raw or ""):
         call = (m.group(1) or "").strip()
@@ -156,6 +245,13 @@ def parse_calls(raw: str) -> list[tuple[str, str]]:
         if len(call) < 12:  # not a real call, skip fragments
             continue
         calls.append((call, rationale or "(no rationale given)"))
+    if not calls:
+        for m in BARE_CALL_RE.finditer(raw or ""):
+            call = (m.group(1) or "").strip()
+            rationale = (m.group(2) or "").strip()
+            if len(call) < 12 or call.lower().startswith(("rationale", "format")):
+                continue
+            calls.append((call, rationale or "(no rationale given)"))
     # Deduplicate while preserving order.
     seen, out = set(), []
     for c in calls:

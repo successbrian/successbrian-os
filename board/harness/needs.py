@@ -144,8 +144,9 @@ class NeedsCollector:
         return (
             f"You are the {seat.title}. Your mandate: {seat.mandate}\n"
             f"{prev_block}\n\n"
-            f"Tomorrow morning you sit on the board of directors and make "
-            f"2-3 binding calls in your domain. Two jobs tonight:\n"
+            f"Tomorrow morning you sit on the board of directors and rule "
+            f"on the agenda queue — one binding call per agenda item routed "
+            f"to your seat. Two jobs tonight:\n"
             f"(1) REVIEW: for each previous request above, did the answer or "
             f"built report meet your goal? If yes, write 'SATISFIED: <short "
             f"ref>'. If it missed the mark, hone it with a new REPORT:/DETAIL: "

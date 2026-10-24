@@ -1,0 +1,14 @@
+{"id": "decomposition-law", "status": "ruled", "owner": "brian", "patterns": ["many easy ones", "make this 14B easy", "decomposition"], "source": "Brian 2026-10-23 22:53: a hard question is pulled into many easy ones that stay together as a group"}
+{"id": "clerk-builds-packets", "status": "ruled", "owner": "brian", "patterns": ["clerk builds"], "source": "Brian 2026-10-23 22:40: long term the clerk builds them"}
+{"id": "packet-why-and-dilemma", "status": "ruled", "owner": "brian", "patterns": ["why it matters", "what the dilemma is"], "source": "Brian 2026-10-23 22:41: say why it matters, what the dilemma is"}
+{"id": "deciders-piece-stories", "status": "ruled", "owner": "brian", "patterns": ["piece the answers", "piece the judges"], "source": "Brian 2026-10-23 22:43: Altair and Meghan use Sonic; they piece the stories together"}
+{"id": "heartbeat-group-packet", "status": "ruled", "owner": "brian", "patterns": ["group packet"], "source": "Brian 2026-10-23 22:46: each heartbeat Altair and Meghan grab one new group packet"}
+{"id": "unanimity-100", "status": "ruled", "owner": "brian", "patterns": ["100% agree", "both 100%"], "source": "Brian 2026-10-23 22:46: back and forth until they both 100% agree"}
+{"id": "research-requests-either", "status": "ruled", "owner": "brian", "patterns": ["research requests"], "source": "Brian 2026-10-23 22:47: if either decides more research is needed they put in research requests"}
+{"id": "research-hold-all", "status": "ruled", "owner": "brian", "patterns": ["on hold until"], "source": "Brian 2026-10-23 22:48: that packet group is on hold until all the research completed"}
+{"id": "ag01-adapter-choice", "status": "ruled", "owner": "brian", "patterns": ["AG01", "Aoostar AG"], "source": "Brian 2026-10-23: chose the Aoostar AG-series adapter (AG01); no DEG1"}
+{"id": "spec-wording-under500", "status": "ruled", "owner": "brian", "patterns": ["under-$500", "under $500"], "source": "Brian 2026-10-23 22:55-22:56: do not say cheap minis; the spec is under $500 minis"}
+{"id": "gpu-card-choice", "status": "open", "owner": "brian", "patterns": ["P40"], "source": "Brian 2026-10-23 23:05: I said which eGPU adapter. I didn't say which GPU. GPU never chosen; P40 was Muse's recommendation"}
+{"id": "seat-benching", "status": "proposal", "owner": "Muse", "patterns": ["benched for the night", "bench a seat"], "source": "Muse proposal from the 2026-10-23 chaos discussion; NOT ruled by Brian; flagged by the first provenance audit of the flow doc"}
+{"id": "post-research-split-endgame", "status": "open", "owner": "brian", "patterns": ["still split", "escalation limit"], "source": "Asked 2026-10-23; not yet ruled"}
+{"id": "always-questions-history-rules", "status": "open", "owner": "brian", "patterns": ["decided before", "standing rules touch"], "source": "Asked 2026-10-23 in the packet group; not yet ruled"}

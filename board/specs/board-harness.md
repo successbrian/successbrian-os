@@ -13,6 +13,7 @@ forks the harness.
 |---|---|
 | Seat schema + YAML loading | The actual seat roster and mandates |
 | Stateless model worker, retry-once, fluff detection | Model endpoint + credentials |
+| Agenda queue machinery (routing, ledger) + JsonlAgenda | Agenda source (Brian: AtlasAgenda — Atlas open gates + tasks) |
 | 90% gate scoring | Threshold (default 0.90) |
 | DecisionSink interface + JsonlSink | SecondBrainSink (Brian's PG) or custom sink |
 | BriefBuilder + NOT INSTRUMENTED rule | The actual state pullers |
@@ -40,23 +41,41 @@ forks the harness.
    `brief_keys` plus shared context (night-shift report, recent decisions,
    overnight research answers). Missing state → explicit `NOT INSTRUMENTED`,
    never fiction.
-2. **Wave 1**: each seat gets one stateless call (system = role prompt from
-   title/domain/mandate/constraints; user = brief). Sequential with a hard
-   barrier — a seat FULLY completes before the next starts. Transport errors
-   and thin outputs are retried with exponential backoff (30s → 300s cap),
-   unbounded: if we're waiting on the model API, we WAIT (2026-10-08). A new
-   session never starts while the previous one is still running (lockfile).
-3. **Wave 2**: seats with `depends_on` receive formatted wave-1 outputs as
-   extra context (e.g. CFO consolidates money after the revenue chiefs).
-4. **Gate**: chair scores every call (base 0.95; penalties for external
-   actions, irreversible moves, unverified data claims, vagueness). ≥
-   threshold → **binding**; below → **recommendation** (held for the human).
-5. **Record**: binding decisions go to the sink with the session tag.
+2. **Agenda loop** (Brian 2026-10-21 — replaces the old wave-1 shape where
+   each seat picked its own 2–3 calls): the session pulls the **agenda
+   queue** (Brian's source: Atlas open gates + tasks — pending gates
+   first, then open/queued tasks oldest-first; items already ruled on, per
+   the board's ledger, are excluded). Each item is routed to ONE seat
+   (theme map → keyword scoring → fallback seat; the routing reason is
+   recorded) and that seat makes **exactly one call on that item**
+   (system = role prompt; user = brief + the item). Sequential with a hard
+   barrier — an item FULLY completes before the next starts. Transport
+   errors and thin outputs are retried with exponential backoff (30s →
+   300s cap), unbounded: if we're waiting on the model API, we WAIT
+   (2026-10-08) — the deadline (config `agenda.deadline_s`, default 3600)
+   is checked BETWEEN items, never mid-item. The cap is a HARD END: at two hours the session wraps (gate/record/verify/minutes) even with items remaining - an unfinished queue is normal operation, not a failure; the board chips at it the next morning. An item already in flight when the cap hits completes first (2026-10-08 wait doctrine); no new item starts. A new session never starts
+   while the previous one is still running (lockfile). At the deadline,
+   unprocessed items **carry over**: they stay queued, lead the next
+   session, and are counted in the minutes. An item leaves the queue only
+   via the ledger — written when the board has actually ruled on it. An
+   empty queue is reported as an empty queue; the board never falls back
+   to inventing free-form calls.
+3. **Wave 2**: seats with `depends_on` receive the formatted agenda-loop
+   calls as extra context and consolidate (e.g. CFO closes the money
+   picture over ALL the loop's calls). Skipped — loudly, in the minutes —
+   if the agenda deadline was consumed by the loop.
+4. **Gate**: chair scores every call as it is made (base 0.95; penalties
+   for external actions, irreversible moves, unverified data claims,
+   vagueness). ≥ threshold → **binding**; below → **recommendation**
+   (held for the human).
+5. **Record**: binding decisions go to the sink with the session tag;
+   every ruled agenda item is written to the agenda ledger.
 6. **Verify**: query the sink back, count. `verified < recorded` = pipeline
    failure. Zero usable calls across all seats = failed session. Both are
    written into the minutes — never silent.
-7. **Minutes**: markdown file with decisions, recommendations, per-seat
-   outputs, latencies, and health notes.
+7. **Minutes**: markdown file with the queue counts (start / ruled /
+   carried over), per-item agenda rulings with routing reasons, decisions,
+   recommendations, per-seat outputs, latencies, and health notes.
 
 ## Failure-mode guards (from the Sep 2026 post-mortem)
 

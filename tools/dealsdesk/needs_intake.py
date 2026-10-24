@@ -11,6 +11,9 @@ CALLED BY: cron (every 15 min) or operator. Idempotent: promoted rows are
 NOTES:   urgency: task priority 1-10 -> need urgency 1-5 (ceil(p/2)).
          need_type is always 'hardware' from this path (task-raised needs are
          hardware; other types enter via DealsDesk's own flows).
+         2026-10-22: the request's max_cost and qty now carry through to
+         the need's target_buy_price and qty_needed (Brian: track a target
+         buy price per need). Previously max_cost was dropped here.
          Canonical: successbrian-os/tools/dealsdesk/needs_intake.py
          Deployed: /home/dealsdesk/scripts/needs_intake.py (k11-alpha)
 """
@@ -44,18 +47,22 @@ def esc(s):
 
 def main():
     rows = psql(
-        "SELECT id, task_id, item, specs, qty, priority FROM "
+        "SELECT id, task_id, item, specs, qty, priority, "
+        "COALESCE(max_cost::text, '') FROM "
         "successbrian_os.sbos_need_requests WHERE status='new' ORDER BY id")
     if rows is None:
         return 1
-    for req_id, task_id, item, specs, qty, priority in rows:
+    for req_id, task_id, item, specs, qty, priority, max_cost in rows:
         urgency = max(1, min(5, (int(priority) + 1) // 2))
         desc = f"{specs or ''} (qty {qty}; from sbos task {task_id})".strip()
+        target_sql = str(float(max_cost)) if max_cost else "NULL"
         need_rows = psql(
             "INSERT INTO dealsdesk.ecosystem_needs "
-            "(need_type, subject, description, magnitude, urgency, source, status) "
+            "(need_type, subject, description, magnitude, urgency, source, "
+            "status, target_buy_price, qty_needed) "
             f"VALUES ('hardware', '{esc(item)}', '{esc(desc)}', '{int(qty)}', "
-            f"{urgency}, 'sbos_task:{task_id}', 'open') RETURNING id")
+            f"{urgency}, 'sbos_task:{task_id}', 'open', {target_sql}, "
+            f"{int(qty)}) RETURNING id")
         if not need_rows:
             LOG.error("failed to create need for request %s", req_id)
             continue

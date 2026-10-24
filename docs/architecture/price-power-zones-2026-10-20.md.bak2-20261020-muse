@@ -1,0 +1,73 @@
+# Price → Power: cluster zones of the local-AI market
+
+SuccessBrian fleet planning, 2026-10-20. Companion data to the
+Price-to-Power map. Rule of the house: tok/sec is meaningless
+without the model class. Primary yardstick = Sonic-class MoE
+(35B, ~3B active); second number = dense 70B Q4
+(Shakespeare-class). Basis tags: ● measured ◐ published
+○ estimated. Prices checked Oct 2026 — a RAM-crisis market;
+re-verify before buying.
+
+## Systems
+
+| System | Price | MoE tok/s | 70B Q4 | Basis | Note |
+|---|---|---|---|---|---|
+| DDR4 fleet node (i7 + 64GB, used) | $199 | ~2 | streams | ○ | REAP 0.66 tok/s measured on k11-alpha; power = count |
+| Tesla P40 tower (used, whole) | $450 | ~18 | won't fit | ○ | VRAM $6–13/GB ◐ |
+| Ryzen 8700GE mini (Colibri test class) | ~$800 | 9.9 | won't fit | ◐ | Colibri catalog, Vulkan |
+| GMKtec K11 (64GB) | $1,000 | ~14 | ~2 | price ● | Walmart $999.59, 2026-10-20; speeds ○ |
+| AOOSTAR MACO 470 (32GB) | $1,099 | ~22 | won't fit | price ● | direct, 2026-10-20; speed ○ |
+| RTX 3090 tower (used, whole) | $1,600 | ~55 | won't fit (1 card) | ◐ | 32B dense = 37 tok/s measured (CFG); MoE ○ |
+| GMKtec EVO-X2 64GB | $2,200 | ~60 | ~5 | ◐ | speeds ○ (same iGPU/bandwidth as 128GB) |
+| 2× RTX 3090 towers | $3,200 | ~55 | 15–22 | ◐ | dual-card 70B published; price ○ |
+| Framework Desktop 128GB | $3,449 | 53–75 | ~5 | ● | measured band, class tests |
+| GMKtec EVO-X2 128GB | $3,499 | 53–75 | ~5 | ● | measured band; price ◐ direct |
+| AMD Ryzen AI Halo 128GB | $3,999 | 53–75 | ~5 | ● | same silicon; 10GbE, 1.2 kg, 1× M.2 |
+| NVIDIA DGX Spark 128GB | $4,699 | 38.5 (120B MoE) | ~3–4 | ● | prefill ~5× Strix (RAG/agents) |
+| Mac Studio 128GB | ~$4,999 | ~40 | ~9 | ○ | 546 GB/s; price band $4,799–5,400 ◐ |
+| GMKtec EVO-X5 Pro 192GB | $6,799 | ~65–80 | ~6 | ○ | hosts 235B Q4 resident; dual 10GbE; 3× M.2 |
+| 2× EVO-X2 cluster (RPC) | $7,000 | capacity | 235B ~3–5 | ○ | latency-bound layer split |
+
+## Zones and their sourcing rules
+
+- **Z1 The Stream Floor ($100–450)** — sub-3 tok/s per node on
+  big models; clustering/streaming is the only way in. Buy by
+  the node, win by the count. (The DDR4 fleet + REAP program.)
+- **Z2 The Interactive Shelf ($900–2,200)** — 10–65 tok/s on
+  MoE daily models; 70B mostly need not apply. Daily drivers.
+- **Z3 The GPU Tower Belt ($450–3,200)** — fastest $/tok/s
+  INSIDE the VRAM wall (24–48GB); the wall is the law.
+  (Tower doctrine: V100/P40/3090-class, ~150W caps.)
+- **Z4 The Unified Heavy Zone ($3,400–7,100)** — everything
+  fits (128–192GB); MoE flies, dense 70B crawls (~5). A
+  capacity play, not a speed play.
+- **Z5 The Cluster Shelf ($6,600–14,000)** — pairs pool
+  256–384GB; 235B+ resident; RPC pays a latency tax; a 10GbE
+  fabric leg suits expert-streaming (Colibri-style).
+- **Z6 The Rental Sky (no capex)** — rented API frontier
+  (DeepSeek V4 Pro class): $/token, someone else's hardware.
+  The rental balance ran dry 2026-09-27; the fleet exists
+  because of it.
+
+## Function × price (who fills the job)
+
+- **Road hub (travels):** K11/MACO (light) · EVO-X2 64 ·
+  AMD Halo (1.2 kg).
+- **Home anchor / laptops' hub:** k11-bravo (owned) ·
+  EVO-X2 128 · Halo · EVO-X5 Pro.
+- **Interactive daily (Sonic):** 8700GE mini · K11 · MACO ·
+  EVO-X2 · 3090 tower · Halo class.
+- **Big-model resident (70–235B):** Strix 128GB · X5 Pro
+  192GB · 2× Halo-class cluster.
+- **Fleet stream node (REAP):** DDR4 nodes · P40 towers ·
+  X5 pair on the fabric.
+- **GPU burst (32B speed / prefill):** P40 tower · 3090 tower ·
+  L40S-class.
+- **Other classes (database, web, scrapers, code runners):**
+  the DDR4 node class fills the cheap bands (machine-class
+  registry: tools/dealsdesk/machine_classes.py).
+
+*Planning instrument, not a benchmark paper. Sources: Colibri
+catalog; ServeTheHome / Level1Techs / community llama.cpp
+tests via Oct 2026 roundups; ComputingForGeeks GPU tests;
+AMD + Micro Center; retailer checks 2026-10-20.*

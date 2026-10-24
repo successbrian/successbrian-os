@@ -179,11 +179,63 @@ def intake(cur):
     return notes
 
 
+CLERK_SILENCE_LIMIT_MIN = 120  # Brian: 2 hours pass; the 3rd silent hour = investigate
+
+
+def clerk_watch(cur):
+    """Lyra's watch on the clerk pattern's hourly check-in line.
+
+    Brian, 2026-10-24: 'lyra needs to know... 2 hours go by and if the
+    3rd hour we didn't hear from clerk we investigate.' One missed
+    line is a hiccup; silence past two hours means the pattern is
+    broken — file the investigation WITH the first evidence attached
+    (cron present? log tail? watermark age?), deduped until a fresh
+    check-in proves recovery.
+    """
+    cur.execute("SELECT to_regclass('successbrian_os.clerk_checkins')")
+    if cur.fetchone()[0] is None:
+        return []
+    cur.execute(
+        "SELECT EXTRACT(EPOCH FROM (now() - max(created_at)))/60 "
+        "FROM successbrian_os.clerk_checkins")
+    row = cur.fetchone()
+    silence_min = row[0] if row and row[0] is not None else None
+    if silence_min is None:
+        silence_min = 99999  # table exists but no line has ever landed
+    if silence_min <= CLERK_SILENCE_LIMIT_MIN:
+        prior = bump_state(cur, "clerk", True)
+        return [f"clerk: ok (last check-in {silence_min:.0f} min ago)"]
+    bump_state(cur, "clerk", False)
+    evidence = {"silence_minutes": round(silence_min)}
+    try:
+        out = subprocess.run(["crontab", "-l"], capture_output=True,
+                             text=True, timeout=10).stdout
+        evidence["cron_has_clerk"] = "clerk.py sweep" in out
+    except Exception:
+        evidence["cron_has_clerk"] = None
+    log_path = os.path.expanduser("~/logs/scatter-clerk.log")
+    if os.path.exists(log_path):
+        evidence["log_age_min"] = round((time.time() - os.path.getmtime(log_path)) / 60)
+        with open(log_path) as f:
+            evidence["log_tail"] = f.readlines()[-3:]
+    if ensure_step(cur, "clerk-silence-investigation",
+                   f"Clerk pattern silent {silence_min/60:.1f}h — investigate "
+                   f"(Brian's rule: 2 hours pass, the 3rd silent hour = investigate)",
+                   kind="repair", priority=80, payload=evidence):
+        pm_core.decide(cur, "repair-ladder",
+                       f"Clerk check-in silent {silence_min/60:.1f}h — investigation "
+                       f"filed with evidence (Lyra layer)",
+                       origin="system")
+        return [f"clerk: SILENT {silence_min/60:.1f}h -> investigation filed"]
+    return [f"clerk: SILENT {silence_min/60:.1f}h (investigation already open)"]
+
+
 def run_pass(do_restart=True):
     c = pm_core.conn()
     cur = c.cursor()
     ensure_schema(cur)
     lines = [check_worker(cur, w, do_restart=do_restart) for w in WORKERS]
+    lines += clerk_watch(cur)
     lines += intake(cur)
     c.commit()
     c.close()

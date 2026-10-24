@@ -22,8 +22,9 @@ ever decides anything in this repo.
   and its owner — never has to re-decide the same thing twice.
 
 Built and operated by **Brian Lathe** (Minneapolis area, MN) —
-[github.com/successbrian](https://github.com/successbrian). Open to
-full-time roles in applied AI and AI operations.
+[github.com/successbrian](https://github.com/successbrian) ·
+blog: [successbrianhub.substack.com](https://successbrianhub.substack.com).
+Open to full-time roles in applied AI and AI operations.
 
 ## The systems
 

@@ -113,6 +113,22 @@ def build(cur, conn):
         return f"Pressing item: {r['title']} (pri {r['priority']})"
     lines.append("- " + section(pressing, conn))
 
+    def open_ends():
+        cur.execute(
+            """SELECT
+                 (SELECT count(*) FROM successbrian_os.pm_steps
+                   WHERE status='queued') AS q,
+                 (SELECT count(*) FROM successbrian_os.pm_steps
+                   WHERE status='running') AS r,
+                 (SELECT COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at)))
+                        / 86400, 0) FROM successbrian_os.pm_steps
+                   WHERE status='queued') AS age_d""")
+        row = cur.fetchone()
+        return (f"Open ends: {row['q']} queued, {row['r']} running — "
+                f"oldest queued {float(row['age_d']):.1f}d "
+                f"(closure auditor hunts these every 15m)")
+    lines.append("- " + section(open_ends, conn))
+
     def decisions():
         cur.execute(
             """SELECT origin, count(*) AS n FROM successbrian_os.pm_decisions

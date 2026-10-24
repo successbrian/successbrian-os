@@ -9,6 +9,22 @@ Built for founders whose brains go in 100 directions at once: every module is
 deterministic code, not vibes. **Scores propose. You decide.** No chat model
 ever decides anything in this repo.
 
+## See it running
+
+- **Live operations dashboard:** https://successbrianvps.com/pm/ —
+  work queues, recorded decisions, and system health, published by
+  the system itself every few minutes.
+- **300+ commits** of production code: a coded work loop (sense,
+  rank, decide, act, verify, record) that runs 24/7 on a home fleet
+  of 10+ machines, with local LLM inference on owned hardware.
+- **A 2,500+ node knowledge graph** (Atlas) and a permanent decision
+  stream: every ruling recorded with its reason, so the system —
+  and its owner — never has to re-decide the same thing twice.
+
+Built and operated by **Brian Lathe** (Minneapolis area, MN) —
+[github.com/successbrian](https://github.com/successbrian). Open to
+full-time roles in applied AI and AI operations.
+
 ## The systems
 
 **Decide what to pursue**

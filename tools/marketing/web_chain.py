@@ -22,6 +22,10 @@ Hard rules (violations, not preferences):
     is a broken chain.
   * A funnel may not outrun its domain: 'built' needs the domain's DNS
     set, 'live' needs the domain verified 'Secured' at FlexiFunnels.
+  * Capture spec (decision id 107): every capture form collects email
+    AND WhatsApp; leads route to ContactFlowCRM (the layer of record)
+    and systeme.io — plus 'people_people', a destination Brian named
+    verbatim ("people.people") that is not yet resolved on record.
 
 State home: PostgreSQL (successbrian_os.marketing_* in
 ecosystem_central), beside the PM tables. Canonical prose: AnythingLLM
@@ -32,7 +36,8 @@ CLI:
   add-domain --domain D [--host go] [--dns-target T] [--status S]
   add-wix-site --name N [--url U] [--purpose P] [--status S]
   add-funnel --name N [--domain D] [--funnel-url U] [--capture C]
-             [--wix-site NAME] [--status S]
+             [--wix-site NAME] [--status S] [--campaign SLUG]
+             [--capture-fields F1,F2] [--destinations D1,D2]
   flow [--domain D | --funnel F]
   validate
   describe
@@ -118,6 +123,25 @@ FLOW_SPEC = {
         "INSIDE the experience — they never replace the funnel as the "
         "capture point of first contact: capture stays in "
         "FlexiFunnels, per the chain rules."),
+    "capture": (
+        "Capture spec (Brian, 2026-10-24; PM decision id 107): "
+        "EVERY FlexiFunnels capture form collects two fields - email "
+        "AND WhatsApp number. The email feeds the email list; the "
+        "WhatsApp number is the join key to the WhatsApp work ruled "
+        "2026-10-23 for ContactFlowCRM, CampaignsDesk and SuccessBrian "
+        "OS (connections and sales run on WhatsApp). Plumbing: the "
+        "FlexiFunnels lead webhook fires to an n8n workflow - n8n is "
+        "the ecosystem's automation home (R32) - and n8n files the "
+        "lead into every destination on the funnel's routing: "
+        "ContactFlowCRM (the relationship layer of record - a "
+        "captured lead becomes a person in the people graph), "
+        "systeme.io (the email list and its automations), and "
+        "people_people - a third destination Brian named verbatim "
+        "('people.people') whose resolution is NOT yet on record; "
+        "the key is carried in the routing as named, undefined, "
+        "until Brian says what it is. This module models the "
+        "registry and the routing only - no webhook endpoints or "
+        "n8n workflows are built here."),
 }
 
 DOMAIN_STATUS_RANK = {"named": 0, "dns_set": 1, "verified_secured": 2,
@@ -165,6 +189,12 @@ CREATE TABLE IF NOT EXISTS successbrian_os.marketing_funnels (
 );
 ALTER TABLE successbrian_os.marketing_funnels
     ADD COLUMN IF NOT EXISTS campaign text;
+ALTER TABLE successbrian_os.marketing_funnels
+    ADD COLUMN IF NOT EXISTS capture_fields text[]
+        NOT NULL DEFAULT '{email,whatsapp}';
+ALTER TABLE successbrian_os.marketing_funnels
+    ADD COLUMN IF NOT EXISTS lead_destinations text[]
+        NOT NULL DEFAULT '{contactflowcrm,systeme_io}';
 CREATE TABLE IF NOT EXISTS successbrian_os.marketing_features (
     id          serial PRIMARY KEY,
     wix_site_id integer REFERENCES successbrian_os.marketing_wix_sites(id),
@@ -220,6 +250,25 @@ ANALYTICS_SURFACES = [
 
 UTM_SOURCE = "flexifunnels"
 UTM_MEDIUM = "funnel"
+
+# Capture spec (Brian, 2026-10-24; PM decision id 107): every
+# FlexiFunnels capture form collects email AND WhatsApp number.
+CAPTURE_FIELDS_REQUIRED = ("email", "whatsapp")
+
+
+def _csv(text):
+    """'a, b ,c' -> ['a', 'b', 'c']; None/empty -> None."""
+    if not text:
+        return None
+    return [x.strip().lower() for x in text.split(",") if x.strip()] \
+        or None
+
+# Where captured leads are routed. 'people_people' is Brian's verbatim
+# name ("people.people") for a third destination - what it resolves to
+# is NOT yet on record; the key is carried as named, undefined.
+LEAD_DESTINATIONS_KNOWN = ("contactflowcrm", "systeme_io",
+                           "people_people")
+LEAD_DESTINATIONS_DEFAULT = ("contactflowcrm", "systeme_io")
 
 
 def slugify(text):
@@ -314,6 +363,8 @@ def describe_flow():
     lines.append(FLOW_SPEC["analytics"])
     lines.append("")
     lines.append(FLOW_SPEC["features"])
+    lines.append("")
+    lines.append(FLOW_SPEC["capture"])
     return "\n".join(lines)
 
 
@@ -392,7 +443,11 @@ def add_wix_site(cur, name, url=None, purpose=None, status="planned"):
 
 def add_funnel(cur, name, domain=None, funnel_url=None, capture=None,
                wix_site=None, status="planned", provider="FlexiFunnels",
-               campaign=None):
+               campaign=None, capture_fields=None, destinations=None):
+    if capture_fields is None:
+        capture_fields = list(CAPTURE_FIELDS_REQUIRED)
+    if destinations is None:
+        destinations = list(LEAD_DESTINATIONS_DEFAULT)
     domain_id = None
     if domain:
         cur.execute("SELECT id FROM successbrian_os.marketing_domains "
@@ -412,10 +467,11 @@ def add_funnel(cur, name, domain=None, funnel_url=None, capture=None,
     cur.execute(
         """INSERT INTO successbrian_os.marketing_funnels
              (name, provider, domain_id, funnel_url, capture, campaign,
-              wix_site_id, status)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+              wix_site_id, status, capture_fields, lead_destinations)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+           RETURNING id""",
         (name, provider, domain_id, funnel_url, capture, campaign,
-         wix_site_id, status))
+         wix_site_id, status, capture_fields, destinations))
     return cur.fetchone()["id"]
 
 
@@ -491,6 +547,7 @@ def fetch_chains(cur):
     cur.execute(
         """SELECT f.id AS funnel_id, f.name AS funnel_name,
                   f.provider, f.funnel_url, f.capture, f.campaign,
+                  f.capture_fields, f.lead_destinations,
                   f.status AS funnel_status,
                   d.id AS domain_id, d.domain, d.registrar, d.dns_host,
                   d.dns_target, d.status AS domain_status,
@@ -579,6 +636,34 @@ def validate_chain(chain):
             violations.append(msg)
         elif chain.get("wix_id"):
             warnings.append(msg + " (not live yet)")
+    # Capture spec (decision id 107): a live funnel must collect
+    # BOTH email and WhatsApp, and its leads must reach
+    # ContactFlowCRM - the relationship layer of record. Any
+    # destination outside the known set is a typo, on ANY funnel,
+    # live or not.
+    fields = [x.lower() for x in (chain.get("capture_fields") or [])]
+    dests = [x.lower() for x in (chain.get("lead_destinations") or [])]
+    for dest in dests:
+        if dest not in LEAD_DESTINATIONS_KNOWN:
+            violations.append(
+                "funnel '%s' routes leads to unknown destination "
+                "'%s' - known destinations: %s (a name outside the "
+                "set is a typo; fix the routing)" % (
+                    name, dest, ", ".join(LEAD_DESTINATIONS_KNOWN)))
+    if fstatus == "live":
+        missing_fields = [fld for fld in CAPTURE_FIELDS_REQUIRED
+                          if fld not in fields]
+        if missing_fields:
+            violations.append(
+                "funnel '%s' is live but its capture form does not "
+                "collect %s - every capture form collects email AND "
+                "WhatsApp number (decision id 107)"
+                % (name, " + ".join(missing_fields)))
+        if "contactflowcrm" not in dests:
+            violations.append(
+                "funnel '%s' is live but its leads do not route to "
+                "ContactFlowCRM - captured leads become people in "
+                "the relationship graph (decision id 107)" % name)
     return violations, warnings
 
 
@@ -629,14 +714,19 @@ def format_chain(chain):
     else:
         wix_line = "(no Wix target — BROKEN)"
     redirect = build_redirect_url(chain.get("wixsite_url"), chain)
+    fields = ", ".join(chain.get("capture_fields") or []) or "-"
+    dests = ", ".join(chain.get("lead_destinations") or []) or "-"
     return ("CHAIN '%s' [%s]\n"
             "  domain  : %s\n"
             "  funnel  : %s (%s) capture: %s\n"
+            "  collects: %s\n"
+            "  leads ->: %s\n"
             "  wix     : %s\n"
             "  redirect: %s" % (
                 chain.get("funnel_name"), chain.get("funnel_status"),
                 dom_line, chain.get("funnel_url") or "(no URL yet)",
                 chain.get("provider"), chain.get("capture") or "-",
+                fields, dests,
                 wix_line, redirect or "(none — no destination URL yet)"))
 
 
@@ -670,6 +760,46 @@ def selftest():
               "flow composes domain -> funnel -> wix")
         v, _ = validate_chain(mine[0])
         check(v == [], "clean chain validates with no violations")
+
+        # Capture spec (decision id 107): a fresh funnel's defaults
+        # carry both fields and both default destinations.
+        check(list(mine[0].get("capture_fields") or [])
+              == ["email", "whatsapp"],
+              "fresh funnel defaults collect email + whatsapp")
+        check(list(mine[0].get("lead_destinations") or [])
+              == ["contactflowcrm", "systeme_io"],
+              "fresh funnel defaults route to contactflowcrm + "
+              "systeme_io")
+
+        # Stripping 'whatsapp' from a LIVE funnel fires rule (a).
+        cur.execute("UPDATE successbrian_os.marketing_funnels "
+                    "SET capture_fields = '{email}' "
+                    "WHERE name = 'Selftest Funnel'")
+        chains = fetch_chains(cur)
+        mine = [ch for ch in chains["funnels"]
+                if ch["funnel_name"] == "Selftest Funnel"][0]
+        v, _ = validate_chain(mine)
+        check(any("WhatsApp" in x for x in v),
+              "violation caught: live funnel not collecting whatsapp")
+        cur.execute("UPDATE successbrian_os.marketing_funnels "
+                    "SET capture_fields = '{email,whatsapp}' "
+                    "WHERE name = 'Selftest Funnel'")
+
+        # A bogus destination fires rule (c) - the typo guard.
+        cur.execute("UPDATE successbrian_os.marketing_funnels "
+                    "SET lead_destinations = "
+                    "'{contactflowcrm,contctflowcrm}' "
+                    "WHERE name = 'Selftest Funnel'")
+        chains = fetch_chains(cur)
+        mine = [ch for ch in chains["funnels"]
+                if ch["funnel_name"] == "Selftest Funnel"][0]
+        v, _ = validate_chain(mine)
+        check(any("unknown destination" in x for x in v),
+              "violation caught: lead destination outside known set")
+        cur.execute("UPDATE successbrian_os.marketing_funnels "
+                    "SET lead_destinations = "
+                    "'{contactflowcrm,systeme_io}' "
+                    "WHERE name = 'Selftest Funnel'")
 
         # Deliberate violation (c): DNS pointed at Wix.
         cur.execute("UPDATE successbrian_os.marketing_domains "
@@ -810,6 +940,12 @@ def main(argv=None):
     f.add_argument("--capture")
     f.add_argument("--wix-site")
     f.add_argument("--campaign")
+    f.add_argument("--capture-fields",
+                   help="comma-separated capture form fields "
+                        "(default: email,whatsapp)")
+    f.add_argument("--destinations",
+                   help="comma-separated lead destinations (default: "
+                        "contactflowcrm,systeme_io)")
     f.add_argument("--status", default="planned",
                    choices=sorted(FUNNEL_MIN_DOMAIN_RANK))
     sg = sub.add_parser("set-ga")
@@ -866,7 +1002,9 @@ def main(argv=None):
         rid = add_funnel(cur, args.name, domain=args.domain,
                          funnel_url=args.funnel_url,
                          capture=args.capture, wix_site=args.wix_site,
-                         status=args.status, campaign=args.campaign)
+                         status=args.status, campaign=args.campaign,
+                         capture_fields=_csv(args.capture_fields),
+                         destinations=_csv(args.destinations))
         c.commit()
         print("funnel id=%d %s [%s]" % (rid, args.name, args.status))
     elif args.cmd == "set-ga":

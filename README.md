@@ -27,6 +27,23 @@ blog: [successbrianhub.substack.com](https://successbrianhub.substack.com) ·
 site: [aiprofits2025.wixsite.com/successbrian-os](https://aiprofits2025.wixsite.com/successbrian-os).
 Open to full-time roles in applied AI and AI operations.
 
+## Who is this for
+
+- **One person, multiple businesses** — a solo operator running
+  several ventures who needs one system to carry the back office of
+  all of them: the follow-ups, the content, the records, the
+  remembering.
+- **Network marketers** — running a relationship business on it:
+  who to talk to, what was said, what happens next, across a whole
+  downline-shaped graph instead of a spreadsheet.
+- **Blogging & social media operators** — running a content
+  operation on it: ideas captured, campaigns planned, posts and
+  follow-through tracked until they are done.
+- **AI system builders** — building an agentic system of their own
+  and looking for a working reference: a deterministic spine, small
+  local models only at defined judgment points, every decision on
+  the record, and an owner who stays the boss of the machine.
+
 ## The systems
 
 **Decide what to pursue**

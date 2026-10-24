@@ -32,15 +32,30 @@ CREATE TABLE IF NOT EXISTS successbrian_os.clerk_checkins (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     source TEXT NOT NULL,
     message TEXT NOT NULL,
-    tasks_created INT,
-    queue_depth INT,
+    tasks_created INT NOT NULL DEFAULT 0,
+    queue_depth INT NOT NULL DEFAULT 0,
+    captures_in INT NOT NULL DEFAULT 0,
+    board_filed INT NOT NULL DEFAULT 0,
+    sent_altair INT NOT NULL DEFAULT 0,
+    bounced INT NOT NULL DEFAULT 0,
     metrics JSONB NOT NULL DEFAULT '{}'::jsonb
 )
 """
-CHECKIN_ALTER = (
+# Brian, 2026-10-24: 'more table, less text. query-able.' The flow
+# numbers live in COLUMNS Lyra and January can aggregate with SQL —
+# never baked into the prose line, never trapped in a blob.
+CHECKIN_ALTERS = [
     "ALTER TABLE successbrian_os.clerk_checkins "
-    "ADD COLUMN IF NOT EXISTS metrics JSONB NOT NULL DEFAULT '{}'::jsonb"
-)
+    "ADD COLUMN IF NOT EXISTS metrics JSONB NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE successbrian_os.clerk_checkins "
+    "ADD COLUMN IF NOT EXISTS captures_in INT NOT NULL DEFAULT 0",
+    "ALTER TABLE successbrian_os.clerk_checkins "
+    "ADD COLUMN IF NOT EXISTS board_filed INT NOT NULL DEFAULT 0",
+    "ALTER TABLE successbrian_os.clerk_checkins "
+    "ADD COLUMN IF NOT EXISTS sent_altair INT NOT NULL DEFAULT 0",
+    "ALTER TABLE successbrian_os.clerk_checkins "
+    "ADD COLUMN IF NOT EXISTS bounced INT NOT NULL DEFAULT 0",
+]
 
 
 def write_checkin(tasks_created, metrics):
@@ -62,7 +77,8 @@ def write_checkin(tasks_created, metrics):
     con = scatter_clerk.pm_core.conn()
     cur = con.cursor()
     cur.execute(CHECKIN_DDL)
-    cur.execute(CHECKIN_ALTER)
+    for alter in CHECKIN_ALTERS:
+        cur.execute(alter)
     cur.execute(
         "SELECT COUNT(*) FROM atlas.nodes WHERE node_type='atlas_task' "
         "AND status = 'queued' AND node_key LIKE 'task:ssb-packet-%%'"
@@ -70,21 +86,26 @@ def write_checkin(tasks_created, metrics):
     queue_depth = cur.fetchone()[0]
     metrics = dict(metrics or {})
     metrics["queue_depth"] = queue_depth
-    message = (
-        f"hi lyra, clerk checking in. created {tasks_created} task(s) "
-        f"this hour — {metrics.get('captures_in', 0)} capture(s) in, "
-        f"{metrics.get('board_filed', 0)} filed to the board, "
-        f"queue at {queue_depth}. see ya next hour"
-    )
+    # More table, less text: the line is just the pulse now; every
+    # number is a column.
+    message = "hi lyra, clerk checking in. see ya next hour"
     cur.execute(
         "INSERT INTO successbrian_os.clerk_checkins "
-        "(source, message, tasks_created, queue_depth, metrics) "
-        "VALUES (%s, %s, %s, %s, %s)",
-        ("clerk", message, tasks_created, queue_depth, _json.dumps(metrics)),
+        "(source, message, tasks_created, queue_depth, captures_in, "
+        "board_filed, sent_altair, bounced, metrics) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        ("clerk", message, tasks_created, queue_depth,
+         int(metrics.get("captures_in", 0)), int(metrics.get("board_filed", 0)),
+         int(metrics.get("sent_altair", 0)), int(metrics.get("bounced", 0)),
+         _json.dumps(metrics)),
     )
     con.commit()
     con.close()
-    print(f"hourly report written: {message}")
+    print(f"hourly report written: tasks={tasks_created} "
+          f"captures_in={metrics.get('captures_in', 0)} "
+          f"board_filed={metrics.get('board_filed', 0)} "
+          f"sent_altair={metrics.get('sent_altair', 0)} "
+          f"bounced={metrics.get('bounced', 0)} queue={queue_depth}")
 
 
 def job_sweep():

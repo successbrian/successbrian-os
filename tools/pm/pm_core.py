@@ -119,19 +119,24 @@ def add_step(cur, key, title, kind="task", source=None, origin="ecosystem",
     return step_id, created
 
 
-def claim(cur, actor, limit=1, location=None):
-    """Hand out ready steps: queued, all deps done, priority desc, oldest first."""
+def claim(cur, actor, limit=1, location=None, kinds=None):
+    """Hand out ready steps: queued, all deps done, highest effective
+    priority first. Effective priority = priority + age boost (+5 per day
+    queued, capped at +25) — the starvation guard, so low-priority work
+    cannot rot forever behind newer high-priority work."""
     cur.execute(
         """SELECT s.id, s.step_key, s.title, s.kind, s.priority, s.origin
              FROM successbrian_os.pm_steps s
             WHERE s.status = 'queued'
+              AND (%s::text[] IS NULL OR s.kind = ANY(%s::text[]))
               AND NOT EXISTS (
                     SELECT 1 FROM successbrian_os.pm_step_deps d
                       JOIN successbrian_os.pm_steps dep ON dep.id = d.depends_on_id
                      WHERE d.step_id = s.id AND dep.status <> 'done')
-            ORDER BY s.priority DESC, s.created_at ASC
+            ORDER BY (s.priority + LEAST(25, (EXTRACT(EPOCH FROM (now() - s.created_at))
+                        / 86400)::int * 5)) DESC, s.created_at ASC
             LIMIT %s
-            FOR UPDATE OF s SKIP LOCKED""", (limit,))
+            FOR UPDATE OF s SKIP LOCKED""", (kinds, kinds, limit))
     raw = cur.fetchall()
     def v(r, i, k):
         return r[k] if isinstance(r, dict) else r[i]
@@ -228,6 +233,7 @@ def main(argv=None):
     cl.add_argument("--actor", required=True)
     cl.add_argument("--limit", type=int, default=1)
     cl.add_argument("--location")
+    cl.add_argument("--kind", action="append", default=[])
     d = sub.add_parser("done")
     d.add_argument("--key", required=True)
     d.add_argument("--result")
@@ -268,7 +274,8 @@ def main(argv=None):
         c.commit()
         print(f"step id={sid} key={args.key} {'created' if created else 'already present'}")
     elif args.cmd == "claim":
-        rows = claim(cur, args.actor, args.limit, args.location)
+        rows = claim(cur, args.actor, args.limit, args.location,
+                     kinds=args.kind or None)
         c.commit()
         for r in rows:
             print(f"claimed id={r[0]} key={r[1]} pri={r[4]} "

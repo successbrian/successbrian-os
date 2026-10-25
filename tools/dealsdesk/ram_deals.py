@@ -26,7 +26,11 @@ DDR3:    Server DDR3 (Gen8/Mantis fleet) added 2026-10-25 at Brian's order
          (67/1), "ddr3 lrdimm 32gb" (69/7). DROPPED: "ddr3 rdimm 128gb kit"
          (21 junk of 72 — variant traps; covered by the others). Jawa DDR3
          is 19 small consumer listings, zero server RAM — not a DDR3
-         source; consumer/SO-DIMM/ECC-UDIMM DDR3 is not tracked. DDR3
+         source, and the scanner does not fetch it. CONSUMER SCRAPS RULE
+         (Brian, 2026-10-25): no consumer scraps in the price database or
+         coded into DealsDesk — consumer/SO-DIMM/ECC-UDIMM DDR3 is never
+         classified, never logged; the big-scan recon measured those
+         segments only to exclude them. DDR3
          alert gates: RDIMM total >=64GB AND >=16GB per stick (sticks
          <=8GB are rejected as parts per Brian's sourcing floor — small-
          stick lots are sightings, never alerts); LRDIMM total >=32GB.
@@ -95,7 +99,7 @@ MARKET_WINDOW_DAYS = 30
 MARKET_MIN_OBS = 8
 DEDUPE_DAYS = 14
 
-JAWA_QUERIES = [("DDR5", 8), ("DDR4", 8), ("RDIMM", 4), ("DDR3", 8)]
+JAWA_QUERIES = [("DDR5", 8), ("DDR4", 8), ("RDIMM", 4)]
 PICCLICK_QUERIES = [
     "ddr5 64gb 2x32gb kit",
     "ddr5 32gb 2x16gb kit",

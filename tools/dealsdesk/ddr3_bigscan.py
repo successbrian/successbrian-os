@@ -14,17 +14,17 @@ import picclick_rack_search as p
 
 UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"}
 
+# Server DDR3 only. The original 2026-10-25 recon battery also measured the
+# consumer segments (desktop kits, SO-DIMM, ECC unbuffered) to size them for
+# exclusion; those queries were REMOVED the same day under Brian's rule:
+# no consumer scraps in the database or coded into DealsDesk.
 QUERIES = [
     "ddr3 ecc reg rdimm",
     "ddr3 rdimm 128gb kit",
     "ddr3 rdimm 256gb lot",
     "pc3-12800r 16gb",
     "ddr3 lrdimm 32gb",
-    "ddr3 ecc unbuffered",
-    "ddr3 16gb kit desktop",
-    "ddr3 sodimm 8gb",
     "ddr3 server memory lot",
-    "ddr3 32gb kit 4x8gb",
 ]
 
 REJECT = ["for parts", "not working", "untested", "defective", "as-is", "as is",

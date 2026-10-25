@@ -497,6 +497,41 @@ def _record_filing(cap_id, home, doc_filename, kind, checked,
     c.close()
 
 
+PRICE_TREND_DDL = """
+CREATE OR REPLACE VIEW successbrian_os.price_trend AS
+SELECT item, observed_on, amount, source_label,
+       CASE WHEN prev_capture IS DISTINCT FROM capture_id
+            THEN amount - prev_amount END AS change_from_prev,
+       capture_id
+FROM (
+    SELECT item, checked_on AS observed_on, amount,
+           source_label, capture_id,
+           lag(amount) OVER w AS prev_amount,
+           lag(capture_id) OVER w AS prev_capture
+    FROM successbrian_os.price_intel
+    WHERE amount IS NOT NULL
+    WINDOW w AS (PARTITION BY item, coalesce(source_label, '')
+                 ORDER BY checked_on, capture_id)
+) s
+ORDER BY item, observed_on, capture_id
+"""
+# change_from_prev compares ACROSS observations only: two price
+# points from the SAME capture (e.g. the endpoints of a range)
+# are one observation, never a movement.
+# TIMESTAMPS ARE THE TREND (Brian, 2026-10-25: "we keep timestamps
+# on price data so we can see pricing trends over time" — the same
+# rule as his 2026-10-23 market-price DB rule for DealsDesk).
+# Every price row carries its OBSERVATION date (checked_on): the
+# date the price was actually seen, never silently the filing
+# date — when a filing doesn't state one, the effective date is
+# the filing date and that is what gets recorded, so no row ever
+# lacks an observation time. Rows are observations: a recheck
+# files a NEW capture with NEW rows, and nothing ever rewrites an
+# old observation. The only delete in this module clears a single
+# capture's own rows so re-filing the SAME observation stays
+# idempotent. price_trend reads the series per item + source.
+
+
 def _write_price_rows(cap, checked, valid_until):
     """Insert the capture's price rows; returns the row count.
     At least one row is always written (amount NULL when the
@@ -509,6 +544,7 @@ def _write_price_rows(cap, checked, valid_until):
     c = pm_core.conn()
     cur = c.cursor()
     cur.execute(PRICE_DDL)
+    cur.execute(PRICE_TREND_DDL)
     cur.execute("DELETE FROM successbrian_os.price_intel "
                 "WHERE capture_id = %s", (cap["id"],))
     for amount, label in points:
@@ -569,7 +605,10 @@ def file_wf3(cap, dry_run=False, sort_info=None):
     valid_until = _dt(base.year, base.month, base.day) \
         + _td(days=days)
     if kind == "price":
-        return file_price_intel(cap, kind, checked, valid_until,
+        # The recorded observation date is the EFFECTIVE one
+        # (stated checked date, else the filing date = base) —
+        # a trend point is never left dateless.
+        return file_price_intel(cap, kind, base, valid_until,
                                 dry_run=dry_run)
     subject = _wf3_subject(cap["title"])
     c = pm_core.conn()

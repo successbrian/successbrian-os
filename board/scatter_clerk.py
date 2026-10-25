@@ -38,7 +38,12 @@ capture wf3-kept with its workspace_slug, and creates NO board
 packet. If the filing cannot complete (workspace determined but
 not yet created, embed failure), the kick-aside law applies: the
 item goes to Workflow #2 as an atlas task for Altair, with the
-reason — never forced, never silently dropped.
+reason — never forced, never silently dropped. Every kept filing
+carries the clerk's one assessment — how long the info stays
+valuable (a valid-until date in successbrian_os.wf3_filings);
+each sweep, filings past their date resurface once as recheck
+tasks for Altair (Brian, 2026-10-25: "a price should be
+rechecked").
 """
 import json
 import os
@@ -60,47 +65,121 @@ STATE = os.path.expanduser("~/successbrian-os/board/state/scatter_clerk.json")
 # role's one-sentence definition ("the clerk looks at a mess and
 # puts it in one stack or another") applied to all three stacks.
 # Producer stamps and title tags are EVIDENCE the clerk weighs,
-# never the verdict: no producer sorts its own filing. The
-# classification is deterministic and explained per capture, and
-# the reasons ride along (packet details / the WF3 document), so
-# any mis-sort is visible and correctable. Judgment is the safe
-# default: only a clear intel result is kept; anything borderline
-# goes to the board.
+# never the verdict: no producer sorts its own filing.
+#
+# THE ONLY ASSESSMENT IS SHELF LIFE (Brian, 2026-10-25: "the only
+# thing it needs to assess is how long that info is valuable. a
+# price should be rechecked"). The clerk does NOT grade intel —
+# no score of worth, no tally of merit. It makes exactly one
+# assessment about a kept item: HOW LONG THE INFO STAYS VALUABLE.
+# That goes on the filing as a valid-until date, and when the
+# date passes the item resurfaces as a recheck task for Altair
+# (Workflow #2). The routing rule itself is stated in words, not
+# arithmetic: an item is KEPT when it arrives as a finished
+# result — it declares itself one (a filing tag or the producer's
+# lookup stamp) AND it carries the work (a fleshed-out result
+# body or its source). Everything else goes to the board:
+# judgment is the safe default.
 INTEL_MARKER = "INTEL dump"
-WF3_THRESHOLD = 4
+
+# Shelf-life windows in days, by intel kind. The PRINCIPLE is
+# Brian's (assess only how long the info is valuable; prices get
+# rechecked). The NUMBERS are operating defaults, tunable in one
+# place — they are not Brian-ruled figures.
+SHELF_LIFE_DAYS = {
+    "price": 7,
+    "page": 90,
+    "video": 180,
+    "reference": 90,
+}
+
+FILINGS_DDL = """
+CREATE TABLE IF NOT EXISTS successbrian_os.wf3_filings (
+    capture_id INT PRIMARY KEY,
+    workspace_slug TEXT NOT NULL,
+    doc_filename TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    checked_on DATE,
+    filed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    valid_until TIMESTAMPTZ NOT NULL,
+    recheck_requested_at TIMESTAMPTZ,
+    superseded_by INT
+)
+"""
 
 
 def classify(cap):
-    """The clerk's sort. Returns (route, score, reasons) where
-    route is 'wf3' (keep: Workflow #3) or 'board' (Workflow #1
-    packet — the exit for everything the clerk doesn't keep;
+    """The clerk's sort, stated in words. Returns (route, reasons)
+    where route is 'wf3' (keep: Workflow #3) or 'board' (Workflow
+    #1 packet — the exit for everything the clerk doesn't keep;
     Workflow #2 receives kick-asides and WF1-check issues, as
     chartered)."""
     title = cap.get("title") or ""
     context = cap.get("context") or ""
     raw = cap.get("raw") or ""
-    score = 0
     reasons = []
+    declares = False
     if re.match(r"(?i)^INTEL\b", title) or re.match(
             r"(?i)^(VIDEO|PAGE|PRICE|WEB|RESEARCH)\s*:", title):
-        score += 3
-        reasons.append("title carries a filing tag (+3)")
+        declares = True
+        reasons.append("arrives tagged as a filed result")
     if INTEL_MARKER in context:
-        score += 2
-        reasons.append("producer filed it as a lookup result (+2)")
-    if "http://" in context or "https://" in context:
-        score += 2
-        reasons.append("context carries a source URL (+2)")
+        declares = True
+        reasons.append("producer filed it as a lookup result")
+    carries = False
     if len(raw) >= 400:
-        score += 2
-        reasons.append("body is a fleshed-out result, %d chars (+2)"
-                       % len(raw))
-    if re.search(r"(?i)\b(checked|analyzed|retrieved)\b", context) \
-            or "source:" in context.lower():
-        score += 1
-        reasons.append("context speaks in checked/source terms (+1)")
-    route = "wf3" if score >= WF3_THRESHOLD else "board"
-    return route, score, reasons
+        carries = True
+        reasons.append("carries a fleshed-out result body "
+                       "(%d chars)" % len(raw))
+    if "http://" in context or "https://" in context:
+        carries = True
+        reasons.append("carries its source (URL in context)")
+    if declares and carries:
+        return "wf3", reasons
+    if not declares:
+        reasons.append("does not declare itself a result — "
+                       "judgment is the default")
+    if not carries:
+        reasons.append("carries no worked result or source — "
+                       "judgment is the default")
+    return "board", reasons
+
+
+def _checked_on(cap):
+    """The date the intel was checked, parsed from its context
+    ('checked 2026-10-20'); None when the filing doesn't say."""
+    m = re.search(r"checked[^0-9]{0,12}(\d{4}-\d{2}-\d{2})",
+                  cap.get("context") or "", re.I)
+    if m:
+        try:
+            from datetime import date as _date
+            y, mo, d = (int(x) for x in m.group(1).split("-"))
+            return _date(y, mo, d)
+        except Exception:
+            return None
+    return None
+
+
+def assess_shelf_life(cap):
+    """THE clerk's one assessment: how long this intel stays
+    valuable. Returns (kind, days, basis_text). Validity runs
+    from the checked date when the filing states one, else from
+    the filing date."""
+    title = cap.get("title") or ""
+    if re.match(r"(?i)^(INTEL\s*[—-]\s*)?PRICE\b", title) \
+            or re.search(r"(?i)\bprice\b", title) \
+            or "$" in title:
+        kind = "price"
+    elif re.match(r"(?i)^(INTEL\s*[—-]\s*)?VIDEO\b", title):
+        kind = "video"
+    elif re.match(r"(?i)^(INTEL\s*[—-]\s*)?(PAGE|WEB)\b", title):
+        kind = "page"
+    else:
+        kind = "reference"
+    days = SHELF_LIFE_DAYS[kind]
+    basis = (f"{kind} intel is valuable for {days} days "
+             f"(operating default)")
+    return kind, days, basis
 
 EASY_QUESTIONS = [
     "Is this connected to a standing goal or launch — which one?",
@@ -223,7 +302,7 @@ def file_packet(members, dry_run=False):
         "found_by": "scatter-clerk",
         "clerk_sort": [
             {"capture": m["id"], "route": "wf1-board",
-             "score": m["_sort"][1], "reasons": m["_sort"][2]}
+             "reasons": m["_sort"][1]}
             for m in members if "_sort" in m],
     }
     if dry_run:
@@ -319,9 +398,10 @@ def _wf3_kick(cap, reason, dry_run=False):
 def file_wf3(cap, dry_run=False, sort_info=None):
     """File one intel capture into its knowledge home (WF3).
 
-    Returns {"id", "outcome": kept|kicked, "workspace", "detail"}.
-    sort_info (route, score, reasons) from classify() is recorded
-    in the filed document; None means a directed manual filing.
+    Returns {"id", "outcome": kept|kicked, "workspace", "detail",
+    and for kept filings "kind"/"valid_until"}. sort_info (route,
+    reasons) from classify() is recorded in the filed document;
+    None means a directed manual filing.
     """
     subject = _wf3_subject(cap["title"])
     c = pm_core.conn()
@@ -344,21 +424,34 @@ def file_wf3(cap, dry_run=False, sort_info=None):
         return {"id": cap["id"], "outcome": "kicked",
                 "workspace": slug, "detail": reason}
     if sort_info:
-        sort_line = (f"Clerk sort: Workflow #3 (score {sort_info[1]})"
-                     f" — " + "; ".join(sort_info[2]))
+        sort_line = ("Clerk sort: Workflow #3 — "
+                     + "; ".join(sort_info[1]))
     else:
         sort_line = "Clerk sort: manual filing (clerk file job)"
+    kind, days, basis = assess_shelf_life(cap)
+    checked = _checked_on(cap)
+    from datetime import date as _date, datetime as _dt, \
+        timedelta as _td
+    base = checked or _date.today()
+    valid_until = _dt(base.year, base.month, base.day) + _td(days=days)
+    assess_line = (
+        f"Clerk assessment (the only one it makes): {basis}. "
+        f"Checked {checked.isoformat() if checked else 'date not stated'}; "
+        f"valuable until {valid_until.date().isoformat()} — "
+        f"recheck after that date.")
     text = (f"# {cap['title']}\n\n"
             f"Intel Bridge capture #{cap['id']}, filed by Workflow "
-            f"#3 (the keeping workflow).\n{sort_line}\n\n"
+            f"#3 (the keeping workflow).\n{sort_line}\n{assess_line}\n\n"
             f"## Context\n{cap['context'] or ''}\n\n"
             f"## Intel\n{cap['raw'] or ''}\n")
     filename = f"intel-capture-{cap['id']}.md"
     if dry_run:
         print(f"[dry-run] would file capture #{cap['id']} -> "
-              f"{slug}/{filename}")
+              f"{slug}/{filename} ({assess_line})")
         return {"id": cap["id"], "outcome": "kept",
-                "workspace": slug, "detail": "dry-run"}
+                "workspace": slug, "detail": "dry-run",
+                "kind": kind,
+                "valid_until": valid_until.date().isoformat()}
     try:
         loc = allm_embed.embed_latest(slug, filename, text)
     except Exception as e:
@@ -367,16 +460,98 @@ def file_wf3(cap, dry_run=False, sort_info=None):
         return {"id": cap["id"], "outcome": "kicked",
                 "workspace": slug, "detail": reason}
     _wf3_mark(cap["id"], "wf3-kept", slug=slug)
+    c = pm_core.conn()
+    cur = c.cursor()
+    cur.execute(FILINGS_DDL)
+    cur.execute(
+        "INSERT INTO successbrian_os.wf3_filings "
+        "(capture_id, workspace_slug, doc_filename, kind, "
+        "checked_on, valid_until) VALUES (%s, %s, %s, %s, %s, %s) "
+        "ON CONFLICT (capture_id) DO UPDATE SET "
+        "workspace_slug = EXCLUDED.workspace_slug, "
+        "doc_filename = EXCLUDED.doc_filename, "
+        "kind = EXCLUDED.kind, checked_on = EXCLUDED.checked_on, "
+        "valid_until = EXCLUDED.valid_until, "
+        "recheck_requested_at = NULL",
+        (cap["id"], slug, filename, kind, checked, valid_until))
+    c.commit()
+    c.close()
     return {"id": cap["id"], "outcome": "kept",
-            "workspace": slug, "detail": loc}
+            "workspace": slug, "detail": loc,
+            "kind": kind,
+            "valid_until": valid_until.date().isoformat()}
+
+
+def send_due_rechecks(dry_run=False):
+    """The shelf-life loop: kept intel whose valid-until has
+    passed resurfaces ONCE as a recheck task for Altair
+    (Workflow #2). Returns the list of task keys created."""
+    c = pm_core.conn()
+    cur = c.cursor()
+    cur.execute(FILINGS_DDL)
+    c.commit()
+    cur.execute(
+        "SELECT f.capture_id, f.workspace_slug, f.kind, "
+        "f.valid_until, sc.title FROM successbrian_os.wf3_filings f "
+        "JOIN atlas.scattered_captures sc ON sc.id = f.capture_id "
+        "WHERE f.valid_until < now() "
+        "AND f.recheck_requested_at IS NULL "
+        "AND f.superseded_by IS NULL ORDER BY f.valid_until")
+    rows = cur.fetchall()
+    c.close()
+    keys = []
+    for cid, slug, kind, valid_until, title in rows:
+        key = f"task:wf3-recheck-{cid}"
+        details = {
+            "question": (
+                f"RECHECK EXPIRED INTEL — capture #{cid} "
+                f"('{title}'), kept by Workflow #3 in workspace "
+                f"'{slug}'. Its {kind} intel passed its "
+                f"valid-until date ({valid_until:%Y-%m-%d}); per "
+                f"Brian's shelf-life rule it must be rechecked at "
+                f"its source, not trusted. Altair: re-verify the "
+                f"facts, file the fresh result as a NEW capture "
+                f"noting 'recheck of capture #{cid}', and close "
+                f"this task."),
+            "theme": "wf3-recheck",
+            "found_by": "scatter-clerk-wf3",
+            "source_captures": [cid],
+        }
+        if dry_run:
+            print(f"[dry-run] would send recheck for capture "
+                  f"#{cid} -> {key}")
+            keys.append(key)
+            continue
+        r = subprocess.run(
+            ["python3", ATLAS_PY, "add-node", key, "atlas_task",
+             (f"Recheck expired {kind} intel: capture #{cid} — "
+              f"{title}")[:180],
+             "--status", "queued", "--details", json.dumps(details)],
+            capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RuntimeError(f"recheck add-node failed: "
+                               f"{r.stderr[:300]}")
+        c = pm_core.conn()
+        cur = c.cursor()
+        cur.execute(
+            "UPDATE successbrian_os.wf3_filings SET "
+            "recheck_requested_at = now() WHERE capture_id = %s",
+            (cid,))
+        c.commit()
+        c.close()
+        keys.append(key)
+        print(f"recheck sent for capture #{cid} "
+              f"(expired {valid_until:%Y-%m-%d}) -> {key}")
+    return keys
 
 
 def run(dry_run=False):
+    rechecks = send_due_rechecks(dry_run=dry_run)
     state = load_state()
     caps = fetch_new(state["last_capture_id"])
     if not caps:
         print("scatter clerk: no new raw captures")
-        return [], []
+        return [], [], rechecks
     for cap in caps:
         cap["_sort"] = classify(cap)
     wf3_caps = [c for c in caps if c["_sort"][0] == "wf3"]
@@ -387,8 +562,7 @@ def run(dry_run=False):
         wf3_results.append(res)
         print(f"wf3 {res['outcome']} capture #{res['id']} -> "
               f"{res['workspace'] or 'wf2'} ({res['detail']}) "
-              f"[sort score {cap['_sort'][1]}: "
-              f"{'; '.join(cap['_sort'][2])}]")
+              f"[clerk sort: {'; '.join(cap['_sort'][1])}]")
     groups = group(board_caps)
     keys = []
     for g in groups:
@@ -399,6 +573,13 @@ def run(dry_run=False):
         save_state(state)
         c = pm_core.conn()
         cur = c.cursor()
+        if rechecks:
+            pm_core.decide(
+                cur, "scatter-clerk",
+                f"Workflow #3 shelf-life: {len(rechecks)} expired "
+                f"intel filing(s) sent to Altair for recheck: "
+                f"{', '.join(rechecks)}",
+                origin="system")
         if keys:
             pm_core.decide(
                 cur, "scatter-clerk",
@@ -414,13 +595,13 @@ def run(dry_run=False):
                 cur, "scatter-clerk",
                 f"Workflow #3 filed {len(kept)} intel capture(s) to "
                 f"their knowledge homes "
-                f"({', '.join('#%d->%s' % (r['id'], r['workspace']) for r in kept) or 'none'}); "
+                f"({', '.join('#%d->%s (%s, valid until %s)' % (r['id'], r['workspace'], r.get('kind', '?'), r.get('valid_until', '?')) for r in kept) or 'none'}); "
                 f"{len(kicked)} kicked to Workflow #2 "
                 f"({', '.join('#%d' % r['id'] for r in kicked) or 'none'})",
                 origin="system")
         c.commit()
         c.close()
-    return keys, wf3_results
+    return keys, wf3_results, rechecks
 
 
 def main(argv=None):

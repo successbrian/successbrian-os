@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS successbrian_os.clerk_checkins (
     sent_altair INT NOT NULL DEFAULT 0,
     bounced INT NOT NULL DEFAULT 0,
     filed_kept INT NOT NULL DEFAULT 0,
+    rechecks_sent INT NOT NULL DEFAULT 0,
     metrics JSONB NOT NULL DEFAULT '{}'::jsonb
 )
 """
@@ -63,6 +64,8 @@ CHECKIN_ALTERS = [
     "ADD COLUMN IF NOT EXISTS bounced INT NOT NULL DEFAULT 0",
     "ALTER TABLE successbrian_os.clerk_checkins "
     "ADD COLUMN IF NOT EXISTS filed_kept INT NOT NULL DEFAULT 0",
+    "ALTER TABLE successbrian_os.clerk_checkins "
+    "ADD COLUMN IF NOT EXISTS rechecks_sent INT NOT NULL DEFAULT 0",
 ]
 
 
@@ -100,12 +103,14 @@ def write_checkin(tasks_created, metrics):
     cur.execute(
         "INSERT INTO successbrian_os.clerk_checkins "
         "(source, message, tasks_created, queue_depth, captures_in, "
-        "board_filed, sent_altair, bounced, filed_kept, metrics) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        "board_filed, sent_altair, bounced, filed_kept, "
+        "rechecks_sent, metrics) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         ("clerk", message, tasks_created, queue_depth,
          int(metrics.get("captures_in", 0)), int(metrics.get("board_filed", 0)),
          int(metrics.get("sent_altair", 0)), int(metrics.get("bounced", 0)),
          int(metrics.get("filed_kept", 0)),
+         int(metrics.get("rechecks_sent", 0)),
          _json.dumps(metrics)),
     )
     con.commit()
@@ -115,14 +120,16 @@ def write_checkin(tasks_created, metrics):
           f"board_filed={metrics.get('board_filed', 0)} "
           f"sent_altair={metrics.get('sent_altair', 0)} "
           f"bounced={metrics.get('bounced', 0)} "
-          f"filed_kept={metrics.get('filed_kept', 0)} queue={queue_depth}")
+          f"filed_kept={metrics.get('filed_kept', 0)} "
+          f"rechecks_sent={metrics.get('rechecks_sent', 0)} "
+          f"queue={queue_depth}")
 
 
 def job_sweep(_args=None):
     """The hourly look at the Intel Bridge: sort everything new."""
     state = scatter_clerk.load_state()
     before = state.get("last_capture_id", 0)
-    keys, wf3_results = scatter_clerk.run()
+    keys, wf3_results, rechecks = scatter_clerk.run()
     after = scatter_clerk.load_state().get("last_capture_id", before)
     captures_in = 0
     if keys or wf3_results:
@@ -141,8 +148,9 @@ def job_sweep(_args=None):
         "sent_altair": len(kicked),
         "bounced": 0,
         "filed_kept": len(kept),
+        "rechecks_sent": len(rechecks),
     }
-    write_checkin(len(keys) + len(kicked), metrics)
+    write_checkin(len(keys) + len(kicked) + len(rechecks), metrics)
 
 
 def job_file(args=None):

@@ -35,7 +35,10 @@ and is not a task to do: it needs to be KEPT. The clerk
 files it as a document into its determined AnythingLLM workspace
 (determine() + allm_embed, the R32 sanctioned home), marks the
 capture wf3-kept with its workspace_slug, and creates NO board
-packet. If the filing cannot complete (workspace determined but
+packet. EXCEPTION (Brian, 2026-10-25): prices are database state,
+not documents — a price capture's facts are extracted into
+successbrian_os.price_intel rows instead, and no AnythingLLM
+document is created for them. If the filing cannot complete (workspace determined but
 not yet created, embed failure), the kick-aside law applies: the
 item goes to Workflow #2 as an atlas task for Altair, with the
 reason — never forced, never silently dropped. Every kept filing
@@ -395,6 +398,158 @@ def _wf3_kick(cap, reason, dry_run=False):
     return key
 
 
+PRICE_DDL = """
+CREATE TABLE IF NOT EXISTS successbrian_os.price_intel (
+    id BIGSERIAL PRIMARY KEY,
+    capture_id INT NOT NULL,
+    item TEXT NOT NULL,
+    amount NUMERIC,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    source_label TEXT,
+    source_url TEXT,
+    statement TEXT,
+    checked_on DATE,
+    valid_until TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+"""
+# PRICES ARE DATABASE STATE (Brian, 2026-10-25: "prices themselves
+# kept in databases — not anythingllm"). A price capture's FACTS
+# are extracted into successbrian_os.price_intel rows — queryable,
+# comparable over time — and NO AnythingLLM document is created
+# for them. (The capture's full text already lives in PostgreSQL
+# in atlas.scattered_captures; the AnythingLLM copy was the
+# redundant one.) The curated domain registers (dealsdesk's
+# price_reference and the tracker tables) stay separate;
+# price_intel is the bridge's general price shelf, every row
+# linked back to its capture.
+
+
+def _price_points(cap):
+    """Headline price points from the capture's title:
+    '$999.59 at Walmart' pairs first; bare $ amounts otherwise.
+    A pairing is only recorded when the title states it — the
+    clerk never invents which price belongs to which source."""
+    title = cap.get("title") or ""
+    points = []
+    for amt, label in re.findall(
+            r"\$([\d,]+(?:\.\d{1,2})?)\s*(?:at|from)\s*([^,;·—–(-]+)",
+            title):
+        try:
+            points.append((float(amt.replace(",", "")),
+                           label.strip() or None))
+        except ValueError:
+            pass
+    if not points:
+        for amt in re.findall(r"\$([\d,]+(?:\.\d{1,2})?)", title):
+            try:
+                points.append((float(amt.replace(",", "")), None))
+            except ValueError:
+                pass
+    return points
+
+
+def _item_name(cap):
+    s = _wf3_subject(cap.get("title") or "")
+    s = re.sub(r"\s*\((?:checked|retrieved)[^)]*\)\s*$", "", s)
+    if "$" in s:
+        # The item is named in the dash-segment that carries the
+        # first price ("GMKtec K15 at $869.99 ...") — or, when
+        # that segment starts with the price itself, in the
+        # segment just before it ("GMKtec K11 mini PC — $999.59
+        # at Walmart").
+        segs = [p.strip() for p in re.split(r"\s*[—–]\s*", s)
+                if p.strip()]
+        for i, seg in enumerate(segs):
+            if "$" in seg:
+                head = re.split(r"\s+(?:at|for)\s*(?=\$)", seg)[0]
+                head = head.split("$")[0].strip(" -—–(")
+                if head:
+                    s = head
+                elif i > 0:
+                    s = segs[i - 1]
+                break
+    return s.strip() or (cap.get("title") or "")[:120]
+
+
+def _source_url(cap):
+    m = re.search(r"https?://[^\s)]+", cap.get("context") or "")
+    return m.group(0) if m else None
+
+
+def _record_filing(cap_id, home, doc_filename, kind, checked,
+                   valid_until):
+    c = pm_core.conn()
+    cur = c.cursor()
+    cur.execute(FILINGS_DDL)
+    cur.execute(
+        "INSERT INTO successbrian_os.wf3_filings "
+        "(capture_id, workspace_slug, doc_filename, kind, "
+        "checked_on, valid_until) VALUES (%s, %s, %s, %s, %s, %s) "
+        "ON CONFLICT (capture_id) DO UPDATE SET "
+        "workspace_slug = EXCLUDED.workspace_slug, "
+        "doc_filename = EXCLUDED.doc_filename, "
+        "kind = EXCLUDED.kind, checked_on = EXCLUDED.checked_on, "
+        "valid_until = EXCLUDED.valid_until, "
+        "recheck_requested_at = NULL",
+        (cap_id, home, doc_filename, kind, checked, valid_until))
+    c.commit()
+    c.close()
+
+
+def _write_price_rows(cap, checked, valid_until):
+    """Insert the capture's price rows; returns the row count.
+    At least one row is always written (amount NULL when the
+    filing states no parseable headline price) so the shelf
+    holds the statement and its dates even then."""
+    points = _price_points(cap) or [(None, None)]
+    item = _item_name(cap)
+    url = _source_url(cap)
+    statement = (cap.get("title") or "")[:300]
+    c = pm_core.conn()
+    cur = c.cursor()
+    cur.execute(PRICE_DDL)
+    cur.execute("DELETE FROM successbrian_os.price_intel "
+                "WHERE capture_id = %s", (cap["id"],))
+    for amount, label in points:
+        cur.execute(
+            "INSERT INTO successbrian_os.price_intel "
+            "(capture_id, item, amount, source_label, source_url, "
+            "statement, checked_on, valid_until) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (cap["id"], item, amount, label, url, statement,
+             checked, valid_until))
+    c.commit()
+    c.close()
+    return len(points)
+
+
+def file_price_intel(cap, kind, checked, valid_until,
+                     dry_run=False):
+    """The price branch of Workflow #3: facts to the database,
+    no AnythingLLM document."""
+    points = _price_points(cap)
+    if dry_run:
+        print(f"[dry-run] would write {len(points) or 1} price "
+              f"row(s) for capture #{cap['id']} -> "
+              f"successbrian_os.price_intel "
+              f"(valid until {valid_until.date().isoformat()})")
+        return {"id": cap["id"], "outcome": "kept",
+                "workspace": "db:price_intel", "detail": "dry-run",
+                "kind": kind,
+                "valid_until": valid_until.date().isoformat()}
+    n = _write_price_rows(cap, checked, valid_until)
+    _wf3_mark(cap["id"], "wf3-kept", slug="db:price_intel")
+    _record_filing(cap["id"], "db:price_intel", "price_intel",
+                   kind, checked, valid_until)
+    return {"id": cap["id"], "outcome": "kept",
+            "workspace": "db:price_intel",
+            "detail": f"{n} price row(s) in "
+                      f"successbrian_os.price_intel",
+            "kind": kind,
+            "valid_until": valid_until.date().isoformat()}
+
+
 def file_wf3(cap, dry_run=False, sort_info=None):
     """File one intel capture into its knowledge home (WF3).
 
@@ -402,7 +557,20 @@ def file_wf3(cap, dry_run=False, sort_info=None):
     and for kept filings "kind"/"valid_until"}. sort_info (route,
     reasons) from classify() is recorded in the filed document;
     None means a directed manual filing.
+
+    Prices take the database branch (file_price_intel) — their
+    facts are state, not a document.
     """
+    kind, days, basis = assess_shelf_life(cap)
+    checked = _checked_on(cap)
+    from datetime import date as _date, datetime as _dt, \
+        timedelta as _td
+    base = checked or _date.today()
+    valid_until = _dt(base.year, base.month, base.day) \
+        + _td(days=days)
+    if kind == "price":
+        return file_price_intel(cap, kind, checked, valid_until,
+                                dry_run=dry_run)
     subject = _wf3_subject(cap["title"])
     c = pm_core.conn()
     try:
@@ -428,12 +596,6 @@ def file_wf3(cap, dry_run=False, sort_info=None):
                      + "; ".join(sort_info[1]))
     else:
         sort_line = "Clerk sort: manual filing (clerk file job)"
-    kind, days, basis = assess_shelf_life(cap)
-    checked = _checked_on(cap)
-    from datetime import date as _date, datetime as _dt, \
-        timedelta as _td
-    base = checked or _date.today()
-    valid_until = _dt(base.year, base.month, base.day) + _td(days=days)
     assess_line = (
         f"Clerk assessment (the only one it makes): {basis}. "
         f"Checked {checked.isoformat() if checked else 'date not stated'}; "
@@ -460,22 +622,8 @@ def file_wf3(cap, dry_run=False, sort_info=None):
         return {"id": cap["id"], "outcome": "kicked",
                 "workspace": slug, "detail": reason}
     _wf3_mark(cap["id"], "wf3-kept", slug=slug)
-    c = pm_core.conn()
-    cur = c.cursor()
-    cur.execute(FILINGS_DDL)
-    cur.execute(
-        "INSERT INTO successbrian_os.wf3_filings "
-        "(capture_id, workspace_slug, doc_filename, kind, "
-        "checked_on, valid_until) VALUES (%s, %s, %s, %s, %s, %s) "
-        "ON CONFLICT (capture_id) DO UPDATE SET "
-        "workspace_slug = EXCLUDED.workspace_slug, "
-        "doc_filename = EXCLUDED.doc_filename, "
-        "kind = EXCLUDED.kind, checked_on = EXCLUDED.checked_on, "
-        "valid_until = EXCLUDED.valid_until, "
-        "recheck_requested_at = NULL",
-        (cap["id"], slug, filename, kind, checked, valid_until))
-    c.commit()
-    c.close()
+    _record_filing(cap["id"], slug, filename, kind, checked,
+                   valid_until)
     return {"id": cap["id"], "outcome": "kept",
             "workspace": slug, "detail": loc,
             "kind": kind,

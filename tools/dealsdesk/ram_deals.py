@@ -21,8 +21,12 @@ SOURCES: Jawa public API (categoryIds=4 Memory, paginated) + PicClick (eBay)
          public.price_history. Out-of-stock items are never sightings.
 ALERTS:  A listing with total >=32GB and $/GB <= cap is a DEAL: row in
          dealsdesk.ram_deal_alerts (deduped 14d by url/title+price) + a
-         message in public.successbrian_outbox (feeds Brian's digest), and it
-         is printed by `pending-alerts` for chat delivery. NOTHING AUTO-BUYS.
+         message in public.successbrian_outbox — DealsDesk's own alert sink,
+         the same one build_price_alerts uses (feeds Brian's digest).
+         Delivery lives INSIDE DealsDesk (Brian's ruling, 2026-10-25: coded
+         into the desk, never scheduled from a Muse). `pending-alerts` /
+         `mark-reported` remain as manual inspection utilities only.
+         NOTHING AUTO-BUYS.
 CALLED BY: systemd ram-deals.timer (every 4h) running `scan`.
     - CANONICAL SOURCE: successbrian-os/tools/dealsdesk/ram_deals.py
     - DEPLOYED COPY: /home/dealsdesk/scripts/ram_deals.py (k11-alpha)

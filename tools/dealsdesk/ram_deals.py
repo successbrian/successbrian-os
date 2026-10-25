@@ -480,6 +480,13 @@ def scan():
              VALUES ('ram_deals', 'scan', 'OK',
                      jsonb_build_object('raw', {len(raw)}, 'sightings', {sightings},
                                         'deals', {deals}))""", write=True)
+    # Seller/business capture -> people_unified + AnythingLLM (Brian's
+    # integration order, 2026-10-25). Guarded: capture never fails a scan.
+    try:
+        import seller_capture
+        seller_capture.run()
+    except Exception as e:
+        LOG.warning("seller capture failed (scan unaffected): %s", str(e)[:200])
     return deals
 
 

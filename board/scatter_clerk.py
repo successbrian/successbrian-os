@@ -26,6 +26,20 @@ overnight to become a packet). On every pass, the clerk:
 The clerk never judges and never rules the scatter: promote / park /
 discard stays Brian's SSB ruling. The board looks; the deciders
 work the packet; the recommendation comes back through the stream.
+
+WORKFLOW #3 — THE KEEPING WORKFLOW (Brian, 2026-10-25: "create
+workflow #3"): the sort is now three-way. A capture that arrives
+as INTEL (a research result from a requested lookup — a video
+analyzed, a page read, a price checked; today recognized by the
+producer's INTEL provenance stamp in its context) does not need
+judging and is not a task to do: it needs to be KEPT. The clerk
+files it as a document into its determined AnythingLLM workspace
+(determine() + allm_embed, the R32 sanctioned home), marks the
+capture wf3-kept with its workspace_slug, and creates NO board
+packet. If the filing cannot complete (workspace determined but
+not yet created, embed failure), the kick-aside law applies: the
+item goes to Workflow #2 as an atlas task for Altair, with the
+reason — never forced, never silently dropped.
 """
 import json
 import os
@@ -34,10 +48,20 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.expanduser("~/successbrian-os/tools/pm"))
+sys.path.insert(0, os.path.expanduser("~/successbrian-os/tools/atlas"))
 import pm_core  # noqa: E402
+import allm_embed  # noqa: E402
+import allm_workspaces as allm  # noqa: E402
 
 ATLAS_PY = os.path.expanduser("~/successbrian-os/tools/atlas/atlas.py")
 STATE = os.path.expanduser("~/successbrian-os/board/state/scatter_clerk.json")
+
+# Workflow #3 class marker (v1, deterministic): a capture is intel
+# when its producer stamped it as an INTEL filing. Muse's bridge
+# dump pipe stamps "chat INTEL dump" into the context of every
+# --kind intel filing (Brian's ruling, 2026-10-25). New producers
+# adopt the same stamp; the sort never guesses from content.
+INTEL_MARKER = "INTEL dump"
 
 EASY_QUESTIONS = [
     "Is this connected to a standing goal or launch — which one?",
@@ -172,13 +196,146 @@ def file_packet(members, dry_run=False):
     return key
 
 
+def is_wf3(cap):
+    """Workflow #3 class test: intel filings carry the stamp."""
+    return INTEL_MARKER in (cap.get("context") or "")
+
+
+def fetch_capture(cid):
+    c = pm_core.conn()
+    cur = c.cursor()
+    cur.execute(
+        "SELECT id, title, coalesce(context,''), "
+        "coalesce(raw_text,''), score, coalesce(recommendation,''), "
+        "cluster_key, status "
+        "FROM atlas.scattered_captures WHERE id = %s", (cid,))
+    r = cur.fetchone()
+    c.close()
+    if not r:
+        return None
+    return {"id": r[0], "title": r[1], "context": r[2], "raw": r[3],
+            "score": r[4], "recommendation": r[5], "cluster": r[6],
+            "status": r[7]}
+
+
+def _wf3_subject(title):
+    """The subject determine() routes on: the title minus the
+    producer's filing tags (INTEL —, VIDEO:, ...)."""
+    s = re.sub(r"^INTEL\s*[—-]\s*", "", title or "")
+    s = re.sub(r"^(VIDEO|PAGE|PRICE|WEB|RESEARCH)\s*:\s*", "", s,
+               flags=re.I)
+    return s.strip() or (title or "")
+
+
+def _wf3_mark(cap_id, recommendation, slug=None):
+    c = pm_core.conn()
+    cur = c.cursor()
+    cur.execute(
+        "UPDATE atlas.scattered_captures SET status='triaged', "
+        "triaged_at=now(), recommendation=%s, workspace_slug=%s "
+        "WHERE id=%s", (recommendation, slug, cap_id))
+    c.commit()
+    c.close()
+
+
+def _wf3_kick(cap, reason, dry_run=False):
+    """Kick-aside to Workflow #2: an atlas task for Altair carrying
+    the filing failure. The clerk never forces a misfit and never
+    drops one silently."""
+    key = f"task:wf3-kickaside-{cap['id']}"
+    title = (f"WF3 filing failed for capture #{cap['id']} — "
+             f"Altair to place: {cap['title']}")[:180]
+    details = {
+        "question": (
+            f"Workflow #3 (the keeping workflow) could not file "
+            f"Intel Bridge capture #{cap['id']} ('{cap['title']}')."
+            f"\n\nREASON: {reason}\n\nCONTEXT: "
+            f"{(cap['context'] or '')[:800]}\n\nINTEL: "
+            f"{(cap['raw'] or '')[:2000]}\n\nAltair: file this intel "
+            f"into its proper knowledge home (or create the "
+            f"workspace it waits on), then close this task."),
+        "theme": "wf3-kickaside",
+        "found_by": "scatter-clerk-wf3",
+        "source_captures": [cap["id"]],
+    }
+    if dry_run:
+        print(f"[dry-run] would kick capture #{cap['id']} -> {key} "
+              f"({reason})")
+        return key
+    r = subprocess.run(
+        ["python3", ATLAS_PY, "add-node", key, "atlas_task", title,
+         "--status", "queued", "--details", json.dumps(details)],
+        capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"kick-aside add-node failed: "
+                           f"{r.stderr[:300]}")
+    _wf3_mark(cap["id"], "wf3-kicked-to-wf2")
+    return key
+
+
+def file_wf3(cap, dry_run=False):
+    """File one intel capture into its knowledge home (WF3).
+
+    Returns {"id", "outcome": kept|kicked, "workspace", "detail"}.
+    """
+    subject = _wf3_subject(cap["title"])
+    c = pm_core.conn()
+    try:
+        d = allm.determine(c, subject)
+    finally:
+        c.close()
+    slug = d.get("workspace") or d.get("proposed_slug")
+    if not slug:
+        reason = f"determine() returned no workspace ({d})"
+        _wf3_kick(cap, reason, dry_run=dry_run)
+        return {"id": cap["id"], "outcome": "kicked",
+                "workspace": None, "detail": reason}
+    live = allm.live_workspaces()
+    if slug not in live:
+        reason = (f"workspace '{slug}' determined "
+                  f"(verdict {d.get('verdict')}) but not created in "
+                  f"AnythingLLM yet — filing waits on its creation")
+        _wf3_kick(cap, reason, dry_run=dry_run)
+        return {"id": cap["id"], "outcome": "kicked",
+                "workspace": slug, "detail": reason}
+    text = (f"# {cap['title']}\n\n"
+            f"Intel Bridge capture #{cap['id']}, filed by Workflow "
+            f"#3 (the keeping workflow).\n\n"
+            f"## Context\n{cap['context'] or ''}\n\n"
+            f"## Intel\n{cap['raw'] or ''}\n")
+    filename = f"intel-capture-{cap['id']}.md"
+    if dry_run:
+        print(f"[dry-run] would file capture #{cap['id']} -> "
+              f"{slug}/{filename}")
+        return {"id": cap["id"], "outcome": "kept",
+                "workspace": slug, "detail": "dry-run"}
+    try:
+        loc = allm_embed.embed_latest(slug, filename, text)
+    except Exception as e:
+        reason = f"embed into '{slug}' failed: {type(e).__name__}: {e}"
+        _wf3_kick(cap, reason, dry_run=dry_run)
+        return {"id": cap["id"], "outcome": "kicked",
+                "workspace": slug, "detail": reason}
+    _wf3_mark(cap["id"], "wf3-kept", slug=slug)
+    return {"id": cap["id"], "outcome": "kept",
+            "workspace": slug, "detail": loc}
+
+
 def run(dry_run=False):
     state = load_state()
     caps = fetch_new(state["last_capture_id"])
     if not caps:
         print("scatter clerk: no new raw captures")
-        return []
-    groups = group(caps)
+        return [], []
+    wf3_caps = [c for c in caps if is_wf3(c)]
+    board_caps = [c for c in caps if not is_wf3(c)]
+    wf3_results = []
+    for cap in wf3_caps:
+        res = file_wf3(cap, dry_run=dry_run)
+        wf3_results.append(res)
+        print(f"wf3 {res['outcome']} capture #{res['id']} -> "
+              f"{res['workspace'] or 'wf2'} ({res['detail']})")
+    groups = group(board_caps)
     keys = []
     for g in groups:
         keys.append(file_packet(g, dry_run=dry_run))
@@ -188,14 +345,28 @@ def run(dry_run=False):
         save_state(state)
         c = pm_core.conn()
         cur = c.cursor()
-        pm_core.decide(
-            cur, "scatter-clerk",
-            f"Scatter clerk packeted {len(caps)} new capture(s) into "
-            f"{len(keys)} board packet(s): {', '.join(keys)}",
-            origin="system")
+        if keys:
+            pm_core.decide(
+                cur, "scatter-clerk",
+                f"Scatter clerk packeted {len(board_caps)} new "
+                f"capture(s) into {len(keys)} board packet(s): "
+                f"{', '.join(keys)}",
+                origin="system")
+        if wf3_results:
+            kept = [r for r in wf3_results if r["outcome"] == "kept"]
+            kicked = [r for r in wf3_results
+                      if r["outcome"] == "kicked"]
+            pm_core.decide(
+                cur, "scatter-clerk",
+                f"Workflow #3 filed {len(kept)} intel capture(s) to "
+                f"their knowledge homes "
+                f"({', '.join('#%d->%s' % (r['id'], r['workspace']) for r in kept) or 'none'}); "
+                f"{len(kicked)} kicked to Workflow #2 "
+                f"({', '.join('#%d' % r['id'] for r in kicked) or 'none'})",
+                origin="system")
         c.commit()
         c.close()
-    return keys
+    return keys, wf3_results
 
 
 def main(argv=None):

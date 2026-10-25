@@ -15,6 +15,21 @@ MARKET:  Each class ref is ANCHORED to a seed street price from Brian's
          the sighting median when the anchor was set; recent = last 30 days,
          needs >=8 obs). Raw ask medians mix sizes/conditions and read high;
          the anchor keeps Brian's like-for-like street price as the base.
+DDR3:    Server DDR3 (Gen8/Mantis fleet) added 2026-10-25 at Brian's order
+         ("do a big scan and then put the best sources coded into
+         dealsdesk"). Big scan of 694 unique DDR3 listings set the seeds:
+         DDR3 RDIMM $1.10/GB (>=64GB kit median $1.09), DDR3 LRDIMM
+         $1.30/GB (>=64GB median $1.29; LRDIMM = the 32GB-stick path to
+         512GB in a Gen8), factor 0.75 like DDR4. Best sources by kept/junk
+         per query: PicClick "ddr3 rdimm 256gb lot" (134/3), "ddr3 ecc reg
+         rdimm" (81/4), "ddr3 server memory lot" (71/4), "pc3-12800r 16gb"
+         (67/1), "ddr3 lrdimm 32gb" (69/7). DROPPED: "ddr3 rdimm 128gb kit"
+         (21 junk of 72 — variant traps; covered by the others). Jawa DDR3
+         is 19 small consumer listings, zero server RAM — not a DDR3
+         source; consumer/SO-DIMM/ECC-UDIMM DDR3 is not tracked. DDR3
+         alert gates: RDIMM total >=64GB AND >=16GB per stick (sticks
+         <=8GB are rejected as parts per Brian's sourcing floor — small-
+         stick lots are sightings, never alerts); LRDIMM total >=32GB.
 SOURCES: Jawa public API (categoryIds=4 Memory, paginated) + PicClick (eBay)
          via picclick_rack_search. Every classified listing is stored in
          dealsdesk.ram_sightings (the market time series) and mirrored to
@@ -66,6 +81,12 @@ CLASSES = {
     "ddr4_consumer": (0.75, 5.70,
                       "seed: used DDR4 kit market midpoint $5.7/GB, "
                       "ram_price_reference.json 2026-10-20"),
+    "ddr3_rdimm": (0.75, 1.10,
+                   "seed: big DDR3 scan 2026-10-25: >=64GB RDIMM kit median "
+                   "$1.09/GB across 694 unique DDR3 listings (PicClick/eBay)"),
+    "ddr3_lrdimm": (0.75, 1.30,
+                    "seed: big DDR3 scan 2026-10-25: >=64GB LRDIMM median "
+                    "$1.29/GB (32GB-stick path to 512GB Gen8 configs)"),
 }
 
 MIN_ALERT_GB = 32        # alerts only for kit-size listings
@@ -74,7 +95,7 @@ MARKET_WINDOW_DAYS = 30
 MARKET_MIN_OBS = 8
 DEDUPE_DAYS = 14
 
-JAWA_QUERIES = [("DDR5", 8), ("DDR4", 8), ("RDIMM", 4)]
+JAWA_QUERIES = [("DDR5", 8), ("DDR4", 8), ("RDIMM", 4), ("DDR3", 8)]
 PICCLICK_QUERIES = [
     "ddr5 64gb 2x32gb kit",
     "ddr5 32gb 2x16gb kit",
@@ -82,6 +103,12 @@ PICCLICK_QUERIES = [
     "ddr4 rdimm 64gb ecc reg",
     "ddr4 rdimm 128gb ecc reg",
     "ddr4 64gb 2x32gb kit",
+    # DDR3 best sources (big scan 2026-10-25, kept/junk in docstring)
+    "ddr3 rdimm 256gb lot",
+    "ddr3 ecc reg rdimm",
+    "ddr3 server memory lot",
+    "pc3-12800r 16gb",
+    "ddr3 lrdimm 32gb",
 ]
 
 EXCLUDE = re.compile(
@@ -100,6 +127,7 @@ EXCLUDE = re.compile(
 MIN_PLAUSIBLE_PER_GB = {
     "ddr5_udimm": 2.00, "ddr5_sodimm": 2.00,
     "ddr4_rdimm": 0.50, "ddr4_consumer": 1.00,
+    "ddr3_rdimm": 0.20, "ddr3_lrdimm": 0.20,
 }
 MIN_PLAUSIBLE_FRACTION = 0.35
 
@@ -140,11 +168,14 @@ def parse_total_gb(title):
     m = re.search(r"(\d{2,3})\s*GB\s*\(\s*(\d+)\s*[xX]\s*(\d+)", t)
     if m:
         return int(m.group(1))
-    # '2x32GB' / '4 x 16GB' leading kit notation
+    # '2x32GB' / '4 x 16GB' kit notation; bulk lots go higher (16x16GB,
+    # 37x8GB) — allowed for small server sticks, capped at 72 sticks.
     m = re.search(r"(\d+)\s*[xX]\s*(\d+)\s*GB", t)
     if m:
         n, per = int(m.group(1)), int(m.group(2))
         if 1 < n <= 8 and per in (4, 8, 16, 24, 32, 48, 64):
+            return n * per
+        if 8 < n <= 72 and per in (4, 8, 16, 32):
             return n * per
     # '128GB kit' / '64GB DDR5' single figure
     m = re.search(r"(\d{2,3})\s*GB", t)
@@ -152,7 +183,29 @@ def parse_total_gb(title):
         gb = int(m.group(1))
         if gb in (16, 24, 32, 48, 64, 96, 128, 192, 256):
             return gb
+    # Bulk-lot totals ('Lot of 37 ... 296GB total'): largest figure >=64GB.
+    if re.search(r"\bLOT\b|\bTOTAL\b", t.upper()):
+        figs = [int(x) for x in re.findall(r"(\d{2,3})\s*GB", t)]
+        big = [f for f in figs if f >= 64]
+        if big:
+            return max(big)
     return None
+
+
+def per_stick_gb(title):
+    """Per-stick GB from KxS notation; single-stick listings = their total.
+    Lot titles without KxS ('Lot of 37 Samsung 8GB ... 296GB') use the
+    smaller GB figure as the stick size."""
+    m = re.search(r"(\d+)\s*[xX]\s*(\d+)\s*GB", title.replace(",", ""))
+    if m:
+        return int(m.group(2))
+    if "LOT" in title.upper():
+        total = parse_total_gb(title)
+        figs = [int(x) for x in re.findall(r"(\d+)\s*GB", title)]
+        smaller = [f for f in figs if total and f < total]
+        if smaller:
+            return max(smaller)
+    return parse_total_gb(title)
 
 
 def classify(title):
@@ -160,7 +213,7 @@ def classify(title):
     if not title or EXCLUDE.search(title):
         return None
     t = title.upper()
-    if "GDDR" in t or "DDR3" in t or "DDR2" in t:
+    if "GDDR" in t or "DDR2" in t:
         return None
     # Multi-variation 'lot' listings name many sizes; their price belongs to
     # one unknown variant — unusable as a sighting or an alert.
@@ -173,10 +226,22 @@ def classify(title):
         gen = 5
     elif "DDR4" in t or "PC4" in t:
         gen = 4
+    elif "DDR3" in t or re.search(r"PC3L?-?\d", t):
+        gen = 3
     if gen is None:
         return None
     gb = parse_total_gb(title)
     if gb is None or gb < 8:
+        return None
+    if gen == 3:
+        # Server DDR3 only (fleet Gen8/Mantis): consumer, SO-DIMM and ECC
+        # UDIMM DDR3 are not tracked.
+        if re.search(r"SO-?DIMM|204[ -]?PIN|LAPTOP|UNBUFFERED|UDIMM", title, re.I):
+            return None
+        if re.search(r"LRDIMM|LOAD\s*REDUCED|14900L|12800L", title, re.I):
+            return ("ddr3_lrdimm", gb)
+        if re.search(r"RDIMM|REGISTERED|\bREG\b|ECC|\d{4,5}R\b", title, re.I):
+            return ("ddr3_rdimm", gb)
         return None
     if gen == 5:
         if re.search(r"SO-?DIMM|260[ -]?PIN|LAPTOP", title, re.I):
@@ -313,7 +378,26 @@ CLASS_LABEL = {
     "ddr5_sodimm": "DDR5 SO-DIMM",
     "ddr4_rdimm": "DDR4 RDIMM ECC",
     "ddr4_consumer": "DDR4 consumer",
+    "ddr3_rdimm": "DDR3 RDIMM ECC",
+    "ddr3_lrdimm": "DDR3 LRDIMM",
 }
+
+# Per-class alert gates beyond price: minimum total GB, and for DDR3 RDIMM a
+# minimum per-stick size (sticks <=8GB are rejected as parts — Brian's
+# sourcing floor; small-stick lots still log as sightings).
+MIN_ALERT_GB_BY_CLASS = {"ddr3_rdimm": 64, "ddr3_lrdimm": 32}
+MIN_STICK_GB_BY_CLASS = {"ddr3_rdimm": 16}
+
+
+def alert_eligible(ram_class, title, gb):
+    if gb < MIN_ALERT_GB_BY_CLASS.get(ram_class, MIN_ALERT_GB):
+        return False
+    min_stick = MIN_STICK_GB_BY_CLASS.get(ram_class)
+    if min_stick:
+        per = per_stick_gb(title)
+        if per is not None and per < min_stick:
+            return False
+    return True
 
 
 def format_alert(ram_class, item, ref, cap):
@@ -382,8 +466,8 @@ def scan():
             LOG.info("implausible price skipped: $%.2f/GB (floor $%.2f) %s",
                      per, floor, item["title"][:70])
             continue
-        if (gb >= MIN_ALERT_GB and per <= cap and item["price"] >= 30
-                and not already_alerted(item)):
+        if (alert_eligible(ram_class, item["title"], gb) and per <= cap
+                and item["price"] >= 30 and not already_alerted(item)):
             if fire_alert(ram_class, item, ref, cap):
                 deals += 1
     LOG.info("scan done: %d raw, %d sightings, %d new deal(s)",
@@ -455,7 +539,8 @@ def mark_reported(ids):
 
 SELFTEST = [
     # (title, price, source, expect_class, expect_fire) at seed caps:
-    # ddr5 cap 11.90, ddr5_sodimm 10.85, rdimm 1.425, ddr4_consumer 4.275
+    # ddr5 cap 11.90, ddr5_sodimm 10.85, rdimm 1.425, ddr4_consumer 4.275,
+    # ddr3_rdimm cap 0.825, ddr3_lrdimm cap 0.975
     ("TEAMGROUP T-CREATE EXPERT DDR5 64GB kit (2x32GB) 6000 CL34", 1120.00, "jawa", "ddr5_udimm", False),
     ("G.SKILL Trident Z5 RGB 64GB (2x32GB) DDR5-5600 CL36", 745.00, "jawa", "ddr5_udimm", True),
     ("T-FORCE DELTA RGB DDR5 64GB (2 x 32GB) 6000MHz CL38", 775.00, "jawa", "ddr5_udimm", False),
@@ -469,6 +554,14 @@ SELFTEST = [
     ("ADATA 64GB 2x32GB DDR5-4800 CL40 Laptop SO-DIMM RAM", 105.50, "picclick_ebay", "ddr5_sodimm", False),
     ("G.SKILL Flare X5 64GB (2 x 32GB) DDR5 6000 Desktop Memory", 231.99, "picclick_ebay", "ddr5_udimm", False),
     ("Patriot Viper Elite 5 Ultra 16G 32G 48G 64G 96GB DDR5 6000 RAM Lot", 967.99, "picclick_ebay", None, False),
+    # DDR3 (real listings from the big scan 2026-10-25)
+    ("Axiom 128GB (8x16GB) DDR3 PC3-8500R Registered RDIMM 240-Pin", 76.99, "picclick_ebay", "ddr3_rdimm", True),
+    ("SK hynix 256GB (16x16GB) DDR3 RDIMM ECC Reg PC3-12800R 240-Pin", 219.99, "picclick_ebay", "ddr3_rdimm", False),
+    ("Samsung 32GB 4Rx4 PC3-14900L DDR3 ECC Server Memory RAM", 24.99, "picclick_ebay", "ddr3_lrdimm", True),
+    ("Lot of 37 Samsung 8GB PC3-10600R DDR3 ECC REG RDIMM 296GB", 129.00, "picclick_ebay", "ddr3_rdimm", False),
+    ("Sk Hynix 64Gb (16GB DDR3 X 4) PC3-12800R Server Memory", 7.00, "picclick_ebay", "ddr3_rdimm", False),
+    ("G.Skill Sniper Series 8GB (2x4GB) DDR3 1866MHz CL9 Desktop RAM", 20.00, "jawa", None, False),
+    ("Kingston 16GB (2x8GB) DDR3-1600 SO-DIMM Laptop Memory", 28.99, "jawa", None, False),
 ]
 
 
@@ -479,7 +572,7 @@ def selftest():
         c = classify(title)
         got_class = c[0] if c else None
         fire = False
-        if c and c[1] >= MIN_ALERT_GB:
+        if c and alert_eligible(c[0], title, c[1]):
             per = price / c[1]
             floor = max(MIN_PLAUSIBLE_PER_GB[c[0]],
                         MIN_PLAUSIBLE_FRACTION * caps[c[0]][0])

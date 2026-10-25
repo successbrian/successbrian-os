@@ -30,9 +30,8 @@ work the packet; the recommendation comes back through the stream.
 WORKFLOW #3 — THE KEEPING WORKFLOW (Brian, 2026-10-25: "create
 workflow #3"): the sort is now three-way. A capture that arrives
 as INTEL (a research result from a requested lookup — a video
-analyzed, a page read, a price checked; today recognized by the
-producer's INTEL provenance stamp in its context) does not need
-judging and is not a task to do: it needs to be KEPT. The clerk
+analyzed, a page read, a price checked) does not need judging
+and is not a task to do: it needs to be KEPT. The clerk
 files it as a document into its determined AnythingLLM workspace
 (determine() + allm_embed, the R32 sanctioned home), marks the
 capture wf3-kept with its workspace_slug, and creates NO board
@@ -56,12 +55,52 @@ import allm_workspaces as allm  # noqa: E402
 ATLAS_PY = os.path.expanduser("~/successbrian-os/tools/atlas/atlas.py")
 STATE = os.path.expanduser("~/successbrian-os/board/state/scatter_clerk.json")
 
-# Workflow #3 class marker (v1, deterministic): a capture is intel
-# when its producer stamped it as an INTEL filing. Muse's bridge
-# dump pipe stamps "chat INTEL dump" into the context of every
-# --kind intel filing (Brian's ruling, 2026-10-25). New producers
-# adopt the same stamp; the sort never guesses from content.
+# THE CLERK SORTS (Brian, 2026-10-25: "things should be sorted by
+# the clerk"). Every capture is classified BY THE CLERK — the
+# role's one-sentence definition ("the clerk looks at a mess and
+# puts it in one stack or another") applied to all three stacks.
+# Producer stamps and title tags are EVIDENCE the clerk weighs,
+# never the verdict: no producer sorts its own filing. The
+# classification is deterministic and explained per capture, and
+# the reasons ride along (packet details / the WF3 document), so
+# any mis-sort is visible and correctable. Judgment is the safe
+# default: only a clear intel result is kept; anything borderline
+# goes to the board.
 INTEL_MARKER = "INTEL dump"
+WF3_THRESHOLD = 4
+
+
+def classify(cap):
+    """The clerk's sort. Returns (route, score, reasons) where
+    route is 'wf3' (keep: Workflow #3) or 'board' (Workflow #1
+    packet — the exit for everything the clerk doesn't keep;
+    Workflow #2 receives kick-asides and WF1-check issues, as
+    chartered)."""
+    title = cap.get("title") or ""
+    context = cap.get("context") or ""
+    raw = cap.get("raw") or ""
+    score = 0
+    reasons = []
+    if re.match(r"(?i)^INTEL\b", title) or re.match(
+            r"(?i)^(VIDEO|PAGE|PRICE|WEB|RESEARCH)\s*:", title):
+        score += 3
+        reasons.append("title carries a filing tag (+3)")
+    if INTEL_MARKER in context:
+        score += 2
+        reasons.append("producer filed it as a lookup result (+2)")
+    if "http://" in context or "https://" in context:
+        score += 2
+        reasons.append("context carries a source URL (+2)")
+    if len(raw) >= 400:
+        score += 2
+        reasons.append("body is a fleshed-out result, %d chars (+2)"
+                       % len(raw))
+    if re.search(r"(?i)\b(checked|analyzed|retrieved)\b", context) \
+            or "source:" in context.lower():
+        score += 1
+        reasons.append("context speaks in checked/source terms (+1)")
+    route = "wf3" if score >= WF3_THRESHOLD else "board"
+    return route, score, reasons
 
 EASY_QUESTIONS = [
     "Is this connected to a standing goal or launch — which one?",
@@ -182,6 +221,10 @@ def file_packet(members, dry_run=False):
         "source_captures": [m["id"] for m in members],
         "theme": "scatter",
         "found_by": "scatter-clerk",
+        "clerk_sort": [
+            {"capture": m["id"], "route": "wf1-board",
+             "score": m["_sort"][1], "reasons": m["_sort"][2]}
+            for m in members if "_sort" in m],
     }
     if dry_run:
         print(f"[dry-run] would file {key}: {title}")
@@ -197,8 +240,8 @@ def file_packet(members, dry_run=False):
 
 
 def is_wf3(cap):
-    """Workflow #3 class test: intel filings carry the stamp."""
-    return INTEL_MARKER in (cap.get("context") or "")
+    """Back-compat wrapper: the clerk's sort decides (classify)."""
+    return classify(cap)[0] == "wf3"
 
 
 def fetch_capture(cid):
@@ -273,10 +316,12 @@ def _wf3_kick(cap, reason, dry_run=False):
     return key
 
 
-def file_wf3(cap, dry_run=False):
+def file_wf3(cap, dry_run=False, sort_info=None):
     """File one intel capture into its knowledge home (WF3).
 
     Returns {"id", "outcome": kept|kicked, "workspace", "detail"}.
+    sort_info (route, score, reasons) from classify() is recorded
+    in the filed document; None means a directed manual filing.
     """
     subject = _wf3_subject(cap["title"])
     c = pm_core.conn()
@@ -298,9 +343,14 @@ def file_wf3(cap, dry_run=False):
         _wf3_kick(cap, reason, dry_run=dry_run)
         return {"id": cap["id"], "outcome": "kicked",
                 "workspace": slug, "detail": reason}
+    if sort_info:
+        sort_line = (f"Clerk sort: Workflow #3 (score {sort_info[1]})"
+                     f" — " + "; ".join(sort_info[2]))
+    else:
+        sort_line = "Clerk sort: manual filing (clerk file job)"
     text = (f"# {cap['title']}\n\n"
             f"Intel Bridge capture #{cap['id']}, filed by Workflow "
-            f"#3 (the keeping workflow).\n\n"
+            f"#3 (the keeping workflow).\n{sort_line}\n\n"
             f"## Context\n{cap['context'] or ''}\n\n"
             f"## Intel\n{cap['raw'] or ''}\n")
     filename = f"intel-capture-{cap['id']}.md"
@@ -327,14 +377,18 @@ def run(dry_run=False):
     if not caps:
         print("scatter clerk: no new raw captures")
         return [], []
-    wf3_caps = [c for c in caps if is_wf3(c)]
-    board_caps = [c for c in caps if not is_wf3(c)]
+    for cap in caps:
+        cap["_sort"] = classify(cap)
+    wf3_caps = [c for c in caps if c["_sort"][0] == "wf3"]
+    board_caps = [c for c in caps if c["_sort"][0] != "wf3"]
     wf3_results = []
     for cap in wf3_caps:
-        res = file_wf3(cap, dry_run=dry_run)
+        res = file_wf3(cap, dry_run=dry_run, sort_info=cap["_sort"])
         wf3_results.append(res)
         print(f"wf3 {res['outcome']} capture #{res['id']} -> "
-              f"{res['workspace'] or 'wf2'} ({res['detail']})")
+              f"{res['workspace'] or 'wf2'} ({res['detail']}) "
+              f"[sort score {cap['_sort'][1]}: "
+              f"{'; '.join(cap['_sort'][2])}]")
     groups = group(board_caps)
     keys = []
     for g in groups:

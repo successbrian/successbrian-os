@@ -410,9 +410,28 @@ CREATE TABLE IF NOT EXISTS successbrian_os.price_intel (
     statement TEXT,
     checked_on DATE,
     valid_until TIMESTAMPTZ NOT NULL,
+    in_stock BOOLEAN,
+    stock_text TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 )
 """
+PRICE_ALTERS = [
+    "ALTER TABLE successbrian_os.price_intel "
+    "ADD COLUMN IF NOT EXISTS in_stock BOOLEAN",
+    "ALTER TABLE successbrian_os.price_intel "
+    "ADD COLUMN IF NOT EXISTS stock_text TEXT",
+]
+# STOCK IS TRACKED TOO (Brian, 2026-10-25: "we also want to track
+# inventories if known... so see if we can find out if things are
+# sold out. eventually all 680M's will be sold out. then at some
+# point all 780M's will be sold out"). Every price observation
+# records the stock state WHEN THE FILING STATES ONE: in_stock
+# true/false, with the exact phrase that carried it (stock_text)
+# for audit. Unknown stays NULL — not knowing is not the same as
+# sold out. A sold-out observation is still an observation (the
+# price archived with its date, per Brian's market-price rule);
+# it is simply never a current offer. The generational sell-out
+# (a whole chip class going dark) is read from the series.
 # PRICES ARE DATABASE STATE (Brian, 2026-10-25: "prices themselves
 # kept in databases — not anythingllm"). A price capture's FACTS
 # are extracted into successbrian_os.price_intel rows — queryable,
@@ -498,14 +517,15 @@ def _record_filing(cap_id, home, doc_filename, kind, checked,
 
 
 PRICE_TREND_DDL = """
-CREATE OR REPLACE VIEW successbrian_os.price_trend AS
-SELECT item, observed_on, amount, source_label,
+DROP VIEW IF EXISTS successbrian_os.price_trend;
+CREATE VIEW successbrian_os.price_trend AS
+SELECT item, observed_on, amount, source_label, in_stock,
        CASE WHEN prev_capture IS DISTINCT FROM capture_id
             THEN amount - prev_amount END AS change_from_prev,
        capture_id
 FROM (
     SELECT item, checked_on AS observed_on, amount,
-           source_label, capture_id,
+           source_label, in_stock, capture_id,
            lag(amount) OVER w AS prev_amount,
            lag(capture_id) OVER w AS prev_capture
     FROM successbrian_os.price_intel
@@ -532,6 +552,55 @@ ORDER BY item, observed_on, capture_id
 # idempotent. price_trend reads the series per item + source.
 
 
+_SOLD_OUT_PHRASES = ["sold out", "out of stock", "delisted",
+                     "no longer available", "back-order",
+                     "backorder", "discontinued"]
+_IN_STOCK_PHRASES = ["verified in stock", "in stock",
+                     "available now", "in-stock"]
+
+
+def _stock_signal(cap):
+    """The filing's stated stock state: (True|False|None, phrase).
+    A sold-out phrase wins over a generic in-stock mention (the
+    sold-out statement is the deliberate one; 'in stock' also
+    appears inside statements of Brian's price RULE). A phrase
+    immediately negated ('not sold out') doesn't count."""
+    text = " ".join([cap.get("title") or "",
+                     cap.get("context") or "",
+                     cap.get("raw") or ""]).lower()
+    def _unnegated(phrase):
+        i = text.find(phrase)
+        while i != -1:
+            before = text[max(0, i - 14):i]
+            if not re.search(r"(not|never|isn't|isnt)\s+$", before):
+                return True
+            i = text.find(phrase, i + 1)
+        return False
+    for phrase in _SOLD_OUT_PHRASES:
+        if _unnegated(phrase):
+            return False, phrase
+    for phrase in _IN_STOCK_PHRASES:
+        if _unnegated(phrase):
+            return True, phrase
+    return None, None
+
+
+PRICE_LATEST_DDL = """
+DROP VIEW IF EXISTS successbrian_os.price_latest;
+CREATE VIEW successbrian_os.price_latest AS
+SELECT DISTINCT ON (item, coalesce(source_label, ''))
+       item, source_label, amount, checked_on AS observed_on,
+       in_stock, stock_text, valid_until, capture_id
+FROM successbrian_os.price_intel
+ORDER BY item, coalesce(source_label, ''),
+         checked_on DESC, capture_id DESC
+"""
+# price_latest = the shelf's current state per item + source:
+# the newest observation, its price, and whether it was in stock
+# when seen. A row with in_stock = false is a sold-out shelf —
+# archived, dated, and never a current offer.
+
+
 def _write_price_rows(cap, checked, valid_until):
     """Insert the capture's price rows; returns the row count.
     At least one row is always written (amount NULL when the
@@ -541,20 +610,25 @@ def _write_price_rows(cap, checked, valid_until):
     item = _item_name(cap)
     url = _source_url(cap)
     statement = (cap.get("title") or "")[:300]
+    in_stock, stock_text = _stock_signal(cap)
     c = pm_core.conn()
     cur = c.cursor()
     cur.execute(PRICE_DDL)
+    for alter in PRICE_ALTERS:
+        cur.execute(alter)
     cur.execute(PRICE_TREND_DDL)
+    cur.execute(PRICE_LATEST_DDL)
     cur.execute("DELETE FROM successbrian_os.price_intel "
                 "WHERE capture_id = %s", (cap["id"],))
     for amount, label in points:
         cur.execute(
             "INSERT INTO successbrian_os.price_intel "
             "(capture_id, item, amount, source_label, source_url, "
-            "statement, checked_on, valid_until) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            "statement, checked_on, valid_until, in_stock, "
+            "stock_text) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (cap["id"], item, amount, label, url, statement,
-             checked, valid_until))
+             checked, valid_until, in_stock, stock_text))
     c.commit()
     c.close()
     return len(points)
@@ -697,9 +771,11 @@ def send_due_rechecks(dry_run=False):
                 f"valid-until date ({valid_until:%Y-%m-%d}); per "
                 f"Brian's shelf-life rule it must be rechecked at "
                 f"its source, not trusted. Altair: re-verify the "
-                f"facts, file the fresh result as a NEW capture "
-                f"noting 'recheck of capture #{cid}', and close "
-                f"this task."),
+                f"facts — INCLUDING whether the item is still in "
+                f"stock or has sold out (state it in the filing; "
+                f"stock is tracked alongside price) — file the "
+                f"fresh result as a NEW capture noting 'recheck "
+                f"of capture #{cid}', and close this task."),
             "theme": "wf3-recheck",
             "found_by": "scatter-clerk-wf3",
             "source_captures": [cid],

@@ -366,15 +366,27 @@ def _fix_brain(item, via_link_only=False, c=None):
         c.commit()
         row = brain_row(c, item["brain_topic"])
         return bool(row) and item["canonical_id"] in (row["tags"] or [])
-    r = subprocess.run(
-        ["python3", SECOND_BRAIN_PY, "--topic", item["brain_topic"],
-         "--content", item["distilled"], "--category", "doctrine",
-         "--confidence", "high", "--source", BRAIN_BUILD_SOURCE,
-         "--verification", "brian-ruling",
-         "--tags", item["canonical_id"] + ",knowledge-index"],
-        capture_output=True, text=True)
-    if r.returncode != 0:
-        raise RuntimeError(f"second_brain.py failed: {r.stderr[:300]}")
+    # NOTE (found live 2026-10-25): tools/second_brain.py writes
+    # public.second_brain, while Brian's ecosystem-first lookup
+    # order names altair.second_brain as the second brain. The two
+    # tables are a house inconsistency (ticketed by the reconcile
+    # run that found it). Until the house settles it, the index
+    # treats altair.second_brain as the brain of record — the table
+    # Brian named — and writes there with the sink's own fields.
+    cur = c.cursor()
+    try:
+        cur.execute(
+            """INSERT INTO altair.second_brain
+               (topic, category, content, confidence, source,
+                verification, tags, expires_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s, now() + interval '365 days')""",
+            (item["brain_topic"], "doctrine", item["distilled"],
+             "high", BRAIN_BUILD_SOURCE, "brian-ruling",
+             [item["canonical_id"], "knowledge-index"]))
+        c.commit()
+    except Exception:
+        c.rollback()
+        raise
     row = brain_row(c, item["brain_topic"])
     return bool(row)
 
@@ -524,6 +536,10 @@ def reconcile(dry_run=False, log=print):
                         summary["fixed"] += 1
                         continue
             except Exception as e:  # fix failed: ticket stays open
+                try:
+                    c.rollback()
+                except Exception:
+                    pass
                 note = f"fix attempt failed: {type(e).__name__}: {e}"
             if kind == "contradiction":
                 key = f"task:reconcile-research-{tid}"

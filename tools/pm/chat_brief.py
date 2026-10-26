@@ -98,7 +98,29 @@ def build(cur, conn):
         cur.execute(
             """SELECT count(*) AS n FROM atlas.nodes
                 WHERE node_key LIKE 'gate:%%' AND status='pending'""")
-        return f"Open gates: {cur.fetchone()['n']} (Atlas; board rules on them)"
+        line = (f"Open gates: {cur.fetchone()['n']} "
+                f"(Atlas; board rules on them)")
+        try:
+            cur.execute(
+                """SELECT count(*) FILTER (WHERE gate_state='open') AS o,
+                          count(DISTINCT workload_key)
+                            FILTER (WHERE gate_state='open') AS held
+                     FROM atlas.workload_gates_v""")
+            r = cur.fetchone()
+            if r and r["o"]:
+                cur.execute(
+                    """SELECT gate_name, workload_name
+                         FROM atlas.workload_gates_v
+                        WHERE gate_state='open' AND source='atlas'
+                        ORDER BY gate_name, workload_name LIMIT 1""")
+                top = cur.fetchone()
+                first = (f" \u2014 first: {top['gate_name']} holds "
+                         f"{top['workload_name']}" if top else "")
+                line += (f"; workload gates: {r['o']} open holding "
+                         f"{r['held']} workloads{first}")
+        except Exception:
+            conn.rollback()
+        return line
     lines.append("- " + section(gates, conn))
 
     def pressing():

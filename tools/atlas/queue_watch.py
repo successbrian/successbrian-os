@@ -44,7 +44,7 @@ EDGE = 8               # strata shown per side
 
 def pg():
     return psycopg2.connect(dbname=DBNAME, host="localhost",
-                            user="postgres", password="postgres")
+                            user="postgres")
 
 
 def fetch_queue(conn):
@@ -62,7 +62,22 @@ def fetch_queue(conn):
             "created_at, node_key")
         tasks = [{"key": r[0], "name": r[1], "created": r[2],
                   "kind": "task"} for r in cur.fetchall()]
-    return gates, tasks
+    # Workload-gate visibility (workload_gates.py's read model):
+    # which workloads each open gate is holding. A missing view must
+    # never kill the queue watch — it just reports gates plainly.
+    holds = {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT gate_key, workload_name FROM "
+                "atlas.workload_gates_v WHERE gate_state = 'open' "
+                "ORDER BY workload_name")
+            for gk, wn in cur.fetchall():
+                holds.setdefault(gk, []).append(wn)
+    except Exception:
+        conn.rollback()
+        holds = {}
+    return gates, tasks, holds
 
 
 def stratify(tasks, today):
@@ -118,7 +133,7 @@ def flags(strata):
 
 def report(conn, today=None):
     today = today or dt.date.today()
-    gates, tasks = fetch_queue(conn)
+    gates, tasks, holds = fetch_queue(conn)
     s = stratify(tasks, today)
     lines = ["# Queue Watch — pushing to the middle (R34)",
              "",
@@ -133,7 +148,14 @@ def report(conn, today=None):
     lines.append("")
     lines.append("## TOP — pending gates")
     for g in gates:
-        lines.append("- %s — %s" % (g["key"], g["name"]))
+        held = holds.get(g["key"], [])
+        suffix = ""
+        if held:
+            shown = ", ".join(held[:3])
+            if len(held) > 3:
+                shown += " +%d more" % (len(held) - 3)
+            suffix = " — holds: " + shown
+        lines.append("- %s — %s%s" % (g["key"], g["name"], suffix))
     lines.append("")
     lines.append("## TOP — newest open tasks")
     for t in s["top"]:

@@ -38,7 +38,7 @@ def psql(sql, write=False):
         return None
     if write:
         return True
-    return [l.split("\x1f") for l in r.stdout.strip().split("\n") if l.strip()]
+    return [l.split("\x1f") for l in r.stdout.split("\n") if l.strip()]
 
 
 def esc(s):

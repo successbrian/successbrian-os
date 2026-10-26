@@ -81,7 +81,8 @@ atlas_direct AS (
            CASE
                WHEN g.status = 'pending' THEN 'open'
                WHEN g.status IN ('done', 'passed', 'cleared', 'closed',
-                                 'complete', 'completed') THEN 'closed'
+                                 'complete', 'completed',
+                                 'satisfied') THEN 'closed'
                ELSE 'unknown'
            END AS gate_state,
            'blocks'::text AS relation,
@@ -111,7 +112,8 @@ atlas_direct AS (
                WHEN p.node_type = 'gate' AND p.status = 'pending'
                    THEN 'open'
                WHEN p.status IN ('done', 'passed', 'cleared', 'closed',
-                                 'complete', 'completed') THEN 'closed'
+                                 'complete', 'completed',
+                                 'satisfied') THEN 'closed'
                WHEN p.status IN ('planned', 'pending', 'proposed',
                                  'researching', 'blocked', 'queued',
                                  'open') THEN 'open'
@@ -177,7 +179,8 @@ proj AS (
            CASE
                WHEN pg.status = 'pending' THEN 'open'
                WHEN pg.status IN ('passed', 'done', 'cleared', 'closed',
-                                  'complete', 'completed') THEN 'closed'
+                                  'complete', 'completed',
+                                 'satisfied') THEN 'closed'
                ELSE 'unknown'
            END AS gate_state,
            'phase-gate'::text AS relation,
@@ -209,7 +212,8 @@ proj_chain AS (
            CASE
                WHEN d.status = 'pending' THEN 'open'
                WHEN d.status IN ('passed', 'done', 'cleared', 'closed',
-                                 'complete', 'completed') THEN 'closed'
+                                 'complete', 'completed',
+                                 'satisfied') THEN 'closed'
                ELSE 'unknown'
            END,
            'phase-gate-dependency',

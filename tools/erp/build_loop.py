@@ -57,10 +57,11 @@ DBNAME = "ecosystem_central"
 STANDING_TASK_TYPE = "recurring"
 STANDING_TASK_TITLE = "Workload needs handoff (SBOS -> DealsDesk)"
 
-PRICED_STATES = ("components_priced", "priced", "parts_ordered",
-                 "ordered", "building", "running", "complete",
-                 "deployed", "done")
-ONLINE_STATES = ("running", "complete", "deployed", "done")
+PRICED_STATES = ("components_priced", "parts_ordered",
+                 "parts_received", "building", "testing",
+                 "deployed", "priced", "ordered", "running",
+                 "complete", "done")
+ONLINE_STATES = ("deployed", "running", "complete", "done")
 
 
 def pg():
@@ -282,6 +283,7 @@ def publish(conn):
                     "(node_key, node_type, name, status, details) "
                     "VALUES (%s, 'need', %s, %s, %s) "
                     "ON CONFLICT (node_key) DO UPDATE SET "
+                    "status=EXCLUDED.status, "
                     "details=atlas.nodes.details || EXCLUDED.details, "
                     "updated_at=now()",
                     (nkey, "Need: " + (need["subject"] if need else
@@ -347,6 +349,10 @@ def apply_gate(conn, workload, gate_key, name, ok, criteria, build_id):
              gate_key))
         state = "reopened"
     else:
+        cur.execute(
+            "UPDATE atlas.nodes SET details = details || %s, "
+            "updated_at=now() WHERE node_key=%s",
+            (Json({"note": criteria}), gate_key))
         state = "open"
     cur.execute(
         "INSERT INTO atlas.edges (from_node, to_node, edge_type, "
@@ -417,8 +423,9 @@ def set_gates(conn):
              % b["status"]),
             ("online", "%s — online and verified" % b["name"],
              b["status"] in ONLINE_STATES,
-             "Clears when the build is running/complete/deployed "
-             "with its workloads live. Build status now: %s."
+             "Clears when the build reaches deployed in "
+             "DealsDesk's lifecycle with its workloads live. "
+             "Build status now: %s."
              % b["status"]),
         ]
         if b["budget_target"] is not None \

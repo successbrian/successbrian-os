@@ -524,7 +524,8 @@ AUDIENCES = [
 # never by sweeping a filesystem.
 PROJECTS = ["contactflowcrm", "trafficstreemz",
             "successbrian-os", "dealsdesk", "campaignsdesk",
-            "tradesdesk", "roadchat"]
+            "tradesdesk", "roadchat",
+            "civitasmarket"]
 
 # Blogs (R12b). The network-level body plus each named blog.
 # More blogs join the list as they are named (gamma's blog
@@ -578,7 +579,8 @@ SEGMENTS = {
                      "domain — the desks — sits in core as "
                      "SBOS plugins, R16; the domain's "
                      "knowledge bodies sit in the domain.)",
-        "bodies": ["contactflowcrm", "systeme-io"],
+        "bodies": ["contactflowcrm", "systeme-io",
+                   "civitasmarket"],
     },
     "crypto": {
         "character": "Time-sensitive trading and yield "
@@ -1992,6 +1994,29 @@ REGISTRY = [
      "ContactFlowCRM product material (Atlas proj:contactflowcrm).",
      "Product docs, specs, and research for ContactFlowCRM.",
      "live", ""),
+    ("civitasmarket", "domain", "CivitasMarket project",
+     None,
+     "CivitasMarket product material (Atlas "
+     "proj:civitasmarket): Brian's planned anti-scam "
+     "marketplace - a competitor to Shopify / eBay / Etsy - "
+     "and the ecommerce competitor + affiliate-program "
+     "landscape it competes in.",
+     "Product docs, specs, and competitor / "
+     "affiliate-program research for CivitasMarket. "
+     "Marketplace and ecommerce intel lands here as it "
+     "bears on CivitasMarket; general affiliate-marketing "
+     "intel stays with CampaignsDesk and its owning bodies.",
+     "live",
+     "Brian, 2026-10-26: 'build an anythingllm workspace "
+     "for a competitor to Shopify/eBay/Etsy... I have a "
+     "name for it already.' The name was found in "
+     "~/vibecoder-projects on k11-alpha (35 planned "
+     "vibe-coding projects): CivitasMarket, whose app "
+     "title is 'CivitasMarket - Anti-Scam Marketplace'; "
+     "confirmed by Brian 2026-10-26. Workspace created in "
+     "AnythingLLM 2026-10-26 via the API. Seed docs: the "
+     "project brief + the ecommerce competitor/affiliate "
+     "landscape (checked 2026-10-26)."),
     ("crypto-trading-yield", "domain", "TradesDesk", None,
      "Crypto / trading / yield research for the trading system.",
      "Trading-desk research in the crypto/yield families.",
@@ -2091,7 +2116,7 @@ def pg():
     # Mirrors atlas.py's connection identity: the atlas schema is
     # owned by the postgres role and atlas.py writes as postgres.
     return psycopg2.connect(dbname=DBNAME, host="localhost",
-                            user="postgres", password="postgres")
+                            user="postgres")
 
 
 def live_workspaces():

@@ -106,8 +106,13 @@ def match(now, newest_decision, digest_mtime, raw_captures,
               "view of what Brian decided is missing.")
     else:
         lag = hours_between(newest_decision, digest_mtime)
-        report["decisions"] = ("digest %.1fh behind the "
-                               "newest decision" % lag)
+        if digest_mtime >= newest_decision:
+            report["decisions"] = ("digest current — covers "
+                                   "decisions through %s"
+                                   % newest_decision.date())
+        else:
+            report["decisions"] = ("digest %.1fh behind the "
+                                   "newest decision" % lag)
         if newest_decision > digest_mtime and \
                 lag > DECISION_LAG_HOURS:
             drift("decisions-view-behind",

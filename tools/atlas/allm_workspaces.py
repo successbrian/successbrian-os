@@ -517,6 +517,31 @@ Brian's determination rules, encoded:
       this ruling; its per-operator status is
       UNRULED, not assumed.) Encoded below as
       OPERATOR_DESKS, enforced by selftest.
+  R40. DESKS FOLLOW WORKFLOWS (Brian, 2026-10-27:
+      'they may need different desks depending on
+      what specific type of workflow they have').
+      A desk is a standing working surface for a
+      recurring WORKFLOW TYPE, so an operator's desk
+      set is determined by their workflows — never a
+      fixed bundle every user gets. The OS reads the
+      operator's workflow types and builds one desk
+      per workflow type that warrants one: a
+      marketing/promotion workflow -> a CampaignsDesk;
+      an ecosystem needs/builds workflow -> a
+      DealsDesk; a trading workflow -> a TradesDesk.
+      Brian has all three because Brian runs all
+      three workflow types; an operator with only a
+      campaigns workflow gets only a CampaignsDesk,
+      and a desk for a workflow the operator does not
+      have is never built. This RESOLVES R39's
+      unruled point: TradesDesk is a workflow desk —
+      per-operator exactly when that operator has a
+      trading workflow, and not a default. New
+      workflow types an operator brings may warrant
+      desks beyond the reference three; the desk set
+      is derived, not enumerated once for all.
+      Encoded below as OPERATOR_DESKS +
+      desks_for_workflows(), enforced by selftest.
 
 Registry: atlas.allm_workspace_registry (ecosystem_central), seeded
 idempotently from this file. Live truth (which workspaces exist and
@@ -624,8 +649,16 @@ PROMOTION_MODEL = {
 OPERATOR_DESKS = {
     "built_by": "the operator's own SuccessBrian OS "
                 "instance, for that operator",
+    "selection_rule": "desks follow the operator's "
+                      "workflow types (R40): one desk "
+                      "per workflow type that warrants "
+                      "a standing desk — never a fixed "
+                      "bundle every user gets",
+    "named_in_r39": ["campaignsdesk", "dealsdesk"],
     "desks": {
         "campaignsdesk": {
+            "workflow_types": ["marketing campaigns",
+                               "promotion"],
             "builds": "the operator's marketing assets "
                       "and campaigns over their own "
                       "promotion graph (R38f)",
@@ -634,6 +667,9 @@ OPERATOR_DESKS = {
                                   "plugin — R13/R16)",
         },
         "dealsdesk": {
+            "workflow_types": ["ecosystem needs",
+                               "builds", "hosting",
+                               "procurement"],
             "builds": "reads the operator's ecosystem "
                       "needs (determined by their OS) "
                       "and plans, finds and builds "
@@ -643,13 +679,38 @@ OPERATOR_DESKS = {
                                   "(private repo, SBOS "
                                   "plugin — R16)",
         },
+        "tradesdesk": {
+            "workflow_types": ["trading"],
+            "builds": "the operator's trading workflow "
+                      "— strategy and risk operations",
+            "reference_instance": "Brian's TradesDesk "
+                                  "(private repo, SBOS "
+                                  "plugin — R16)",
+            "when": "only when the operator has a "
+                    "trading workflow (R40)",
+        },
     },
     "operator_data": "each operator's desk data is that "
                      "operator's — private; it never "
                      "ships with the OS",
-    "unruled": ["tradesdesk: per-operator instantiation "
-                "was not named in the 2026-10-27 ruling"],
+    "resolved": ["tradesdesk: per-operator status "
+                 "resolved by R40 (2026-10-27) — a "
+                 "workflow desk, built when the operator "
+                 "has a trading workflow; not a default "
+                 "desk for every operator"],
 }
+
+
+def desks_for_workflows(workflow_types):
+    """R40: the desk set an operator's OS builds for them,
+    derived from their workflow types. Unknown workflow
+    types map to no desk here — a new workflow may warrant
+    a new desk pattern, which is a determination, not an
+    assumption this function makes."""
+    wanted = set(workflow_types)
+    return sorted(
+        slug for slug, d in OPERATOR_DESKS["desks"].items()
+        if wanted & set(d["workflow_types"]))
 
 # Marketing assets (R38, Brian 2026-10-27). Each Wix blog/site
 # is its OWN node of type marketing_asset — a separate node
@@ -3237,21 +3298,27 @@ def selftest(conn):
           "R38f: Brian's instance conforms to the model — "
           "every marketing asset markets a promoted thing "
           "that exists as its own node")
-    check(set(OPERATOR_DESKS["desks"])
+    check(set(OPERATOR_DESKS["named_in_r39"])
           == {"campaignsdesk", "dealsdesk"}
           and all(slug in reg_slugs
                   for slug in OPERATOR_DESKS["desks"]),
           "R39: the OS builds each operator their own "
-          "CampaignsDesk and DealsDesk — exactly the two "
-          "desks Brian named, and Brian's instances of "
-          "both exist as reference instances (Brian, "
-          "2026-10-27)")
-    check("tradesdesk" not in OPERATOR_DESKS["desks"]
-          and any("tradesdesk" in u
-                  for u in OPERATOR_DESKS["unruled"]),
-          "R39: TradesDesk per-operator status stays "
-          "UNRULED — it was not named in the ruling and "
-          "is not silently assumed")
+          "desks — CampaignsDesk and DealsDesk are the "
+          "two Brian named, and Brian's instances of "
+          "all reference desks exist (Brian, 2026-10-27)")
+    check(desks_for_workflows(["marketing campaigns"])
+          == ["campaignsdesk"]
+          and desks_for_workflows(["trading"])
+          == ["tradesdesk"]
+          and desks_for_workflows(
+              ["marketing campaigns", "ecosystem needs",
+               "trading"])
+          == ["campaignsdesk", "dealsdesk", "tradesdesk"],
+          "R40: desk sets are derived from workflow "
+          "types — a campaigns-only operator gets only "
+          "a CampaignsDesk, a trading workflow adds a "
+          "TradesDesk, and Brian's three workflows map "
+          "to his three desks (Brian, 2026-10-27)")
     check(sum(1 for (frm, _t, et, _n) in _plan
               if frm == "allm:successbrian-os"
               and et == "contains") == len(SEGMENTS),

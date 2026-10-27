@@ -495,6 +495,28 @@ Brian's determination rules, encoded:
       pattern is the product's. Encoded below as
       PROMOTION_MODEL + MARKETING_ASSETS + ASSET_EDGES,
       enforced by selftest.
+  R39. THE OS BUILDS EACH OPERATOR'S OWN DESKS
+      (Brian, 2026-10-27: 'when someone downloads
+      successbrian os; their successbrian os builds
+      THEIR campaignsdesk and dealsdesk'). The desks
+      are not Brian's private desks handed over or
+      sold as-is — they are per-operator instances
+      the operator's own SuccessBrian OS builds for
+      them. Their CampaignsDesk builds and manages
+      THEIR marketing assets and campaigns over THEIR
+      promotion graph (R38f). Their DealsDesk reads
+      THEIR ecosystem's needs — which their OS
+      determines (R14; the SBOS -> DealsDesk loop) —
+      and plans, finds and builds against them
+      (builds, hosting, items). Brian's CampaignsDesk
+      and DealsDesk (private repos; SBOS plugins per
+      R13/R16) are the REFERENCE instances the
+      pattern is learned from; an operator's desk
+      data is that operator's, private, and never
+      ships with the OS. (TradesDesk was not named in
+      this ruling; its per-operator status is
+      UNRULED, not assumed.) Encoded below as
+      OPERATOR_DESKS, enforced by selftest.
 
 Registry: atlas.allm_workspace_registry (ecosystem_central), seeded
 idempotently from this file. Live truth (which workspaces exist and
@@ -593,6 +615,40 @@ PROMOTION_MODEL = {
     "identity_edges_forbidden": True,
     "applies_to": "every SuccessBrian OS operator/user, "
                   "not only Brian",
+}
+
+# Per-operator desks (R39, Brian 2026-10-27): when someone
+# downloads SuccessBrian OS, THEIR OS builds THEIR OWN
+# CampaignsDesk and DealsDesk. Brian's desks are the
+# reference instances; the model is operator-general.
+OPERATOR_DESKS = {
+    "built_by": "the operator's own SuccessBrian OS "
+                "instance, for that operator",
+    "desks": {
+        "campaignsdesk": {
+            "builds": "the operator's marketing assets "
+                      "and campaigns over their own "
+                      "promotion graph (R38f)",
+            "reference_instance": "Brian's CampaignsDesk "
+                                  "(private repo, SBOS "
+                                  "plugin — R13/R16)",
+        },
+        "dealsdesk": {
+            "builds": "reads the operator's ecosystem "
+                      "needs (determined by their OS) "
+                      "and plans, finds and builds "
+                      "against them — builds, hosting, "
+                      "items",
+            "reference_instance": "Brian's DealsDesk "
+                                  "(private repo, SBOS "
+                                  "plugin — R16)",
+        },
+    },
+    "operator_data": "each operator's desk data is that "
+                     "operator's — private; it never "
+                     "ships with the OS",
+    "unruled": ["tradesdesk: per-operator instantiation "
+                "was not named in the 2026-10-27 ruling"],
 }
 
 # Marketing assets (R38, Brian 2026-10-27). Each Wix blog/site
@@ -3181,6 +3237,21 @@ def selftest(conn):
           "R38f: Brian's instance conforms to the model — "
           "every marketing asset markets a promoted thing "
           "that exists as its own node")
+    check(set(OPERATOR_DESKS["desks"])
+          == {"campaignsdesk", "dealsdesk"}
+          and all(slug in reg_slugs
+                  for slug in OPERATOR_DESKS["desks"]),
+          "R39: the OS builds each operator their own "
+          "CampaignsDesk and DealsDesk — exactly the two "
+          "desks Brian named, and Brian's instances of "
+          "both exist as reference instances (Brian, "
+          "2026-10-27)")
+    check("tradesdesk" not in OPERATOR_DESKS["desks"]
+          and any("tradesdesk" in u
+                  for u in OPERATOR_DESKS["unruled"]),
+          "R39: TradesDesk per-operator status stays "
+          "UNRULED — it was not named in the ruling and "
+          "is not silently assumed")
     check(sum(1 for (frm, _t, et, _n) in _plan
               if frm == "allm:successbrian-os"
               and et == "contains") == len(SEGMENTS),

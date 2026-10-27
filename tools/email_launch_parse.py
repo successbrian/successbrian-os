@@ -31,6 +31,13 @@ NOTES:
       use ON CONFLICT (vendor_id, product_name) DO NOTHING: rows the MunchEye
       monolith already vetted (tier/vet_score set) are never overwritten by
       email candidates.
+    - VENDORS also dual-write to people.companies — THE one companies
+      table (Brian's ruling, 2026-10-27) — as kind affiliate_program,
+      collection affiliate-intel. Both affiliate_intel.vendors copies
+      (altair 224 + people_unified 446) were merged into people.companies
+      on 2026-10-27 (471 unique; merge_affiliate_vendors.py in the
+      companies-unification build). Launches remain affiliate_intel
+      event intel; the company store is people.companies.
     - The launches table has no source column as of 2026-10-04; email rows
       are identifiable by tier IS NULL AND muncheye_url IS NULL. Adding a
       source column is a schema decision for the monolith's (private) repo.
@@ -421,11 +428,13 @@ def candidate_sql(c):
            _sql_lit(c["launch_date"]), recurring, tool_type))
 
 
-def kssh_psql(sql):
-    """Run SQL on k11-alpha's altair database via kssh (base64 pattern)."""
+def kssh_psql(sql, db="altair"):
+    """Run SQL on k11-alpha via kssh (base64 pattern). Default db is
+    altair (the affiliate_intel pipeline); db='people_unified' targets
+    the ONE companies table."""
     b64 = base64.b64encode(sql.encode()).decode()
     cmd = (f"psql -h /var/run/postgresql -U successbrian "
-           f"-d altair -v ON_ERROR_STOP=1 -t -A "
+           f"-d {db} -v ON_ERROR_STOP=1 -t -A "
            f"-c \"$(echo {b64} | base64 -d)\"")
     r = subprocess.run([KSSH, cmd], capture_output=True, text=True,
                        timeout=180)
@@ -467,7 +476,38 @@ def db_record(cands):
         return 0, skipped
     sql = "\n".join(candidate_sql(c) for c in fresh)
     kssh_psql(sql)
+    # Dual-write the vendors into the ONE companies table
+    # (people.companies, Brian's ruling 2026-10-27): launches stay in
+    # affiliate_intel (event intel, vendor FK lives there), but a
+    # vendor is a business and the company store is people.companies.
+    # A failure here must not lose the launch recording, so it warns.
+    try:
+        vendors = sorted({c["vendor"] for c in fresh})
+        csql = "\n".join(company_upsert_sql(v) for v in vendors)
+        kssh_psql(csql, db="people_unified")
+    except Exception as e:
+        print("WARN: people.companies vendor upsert failed: %s" % e,
+              file=sys.stderr)
     return len(fresh), skipped
+
+
+def company_upsert_sql(vendor):
+    v = _sql_lit(vendor)
+    return (
+        "INSERT INTO people.companies (name, name_key, kind, kinds, "
+        "collections, status, source_tables, what_we_know, extra_data) "
+        "VALUES (%s, lower(%s), 'affiliate_program', "
+        "ARRAY['affiliate_program','marketplace_seller'], "
+        "ARRAY['affiliate-intel'], 'active', "
+        "ARRAY['affiliate_intel.vendors'], "
+        "'Affiliate launch vendor (email_launch_parse).', "
+        "'{\"kind_source\": \"email_launch_parse\"}'::jsonb) "
+        "ON CONFLICT (name_key) DO UPDATE SET "
+        "kinds = ARRAY(SELECT DISTINCT unnest(people.companies.kinds || "
+        "ARRAY['affiliate_program','marketplace_seller'])), "
+        "collections = ARRAY(SELECT DISTINCT unnest("
+        "people.companies.collections || ARRAY['affiliate-intel'])), "
+        "updated_at = now();" % (v, v))
 
 
 def kb_fallback(cands):

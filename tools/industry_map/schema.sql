@@ -17,23 +17,12 @@ CREATE TABLE IF NOT EXISTS successbrian_os.industry_maps (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS successbrian_os.industry_companies (
-    id           SERIAL PRIMARY KEY,
-    map_id       INTEGER NOT NULL REFERENCES successbrian_os.industry_maps(id)
-                     ON DELETE CASCADE,
-    name         TEXT NOT NULL,
-    sector       TEXT NOT NULL DEFAULT '',
-    what_we_know TEXT NOT NULL DEFAULT '',
-    status       TEXT NOT NULL DEFAULT 'active',
-    is_mine      BOOLEAN NOT NULL DEFAULT FALSE,
-    my_role      TEXT,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (map_id, name)
-);
-CREATE INDEX IF NOT EXISTS industry_companies_map_idx
-    ON successbrian_os.industry_companies (map_id);
-CREATE INDEX IF NOT EXISTS industry_companies_status_idx
-    ON successbrian_os.industry_companies (map_id, status);
+-- COMPANIES ARE NOT CREATED HERE. Since Brian's one-companies-table
+-- ruling (2026-10-27), companies live in people_unified.people.companies
+-- (kind = business kind; a map is a collection on the company row).
+-- industry_map.py add-company writes there. The old
+-- successbrian_os.industry_companies table was merged and DROPPED
+-- 2026-10-27; do not recreate it.
 
 CREATE TABLE IF NOT EXISTS successbrian_os.industry_company_links (
     id           SERIAL PRIMARY KEY,

@@ -476,8 +476,24 @@ Brian's determination rules, encoded:
       2026-10-27); (e) the same separation holds for
       every surface: a Facebook page, a Substack, a
       presentation page are asset nodes marketing
-      their subjects, never the subjects themselves.
-      Encoded below as MARKETING_ASSETS + ASSET_EDGES,
+      their subjects, never the subjects themselves;
+      (f) THIS IS EVERY OPERATOR'S SHAPE, not just
+      Brian's (Brian, 2026-10-27: 'every successbrian
+      os user is going to have things they promote,
+      and then marketing assets that help them promote
+      them'). Every SuccessBrian OS user — the ruled
+      audiences: one-person multi-business operators,
+      network marketers, blogging/social builders, AI
+      system builders — has PROMOTED THINGS (programs,
+      offers, businesses they promote) and MARKETING
+      ASSETS that help them promote those things
+      (blogs, sites, pages, funnels, posts). The OS
+      models both node classes PER OPERATOR with typed
+      edges between them, and never collapses any
+      operator's asset into the thing it promotes.
+      Brian's ecosystem is the reference instance; the
+      pattern is the product's. Encoded below as
+      PROMOTION_MODEL + MARKETING_ASSETS + ASSET_EDGES,
       enforced by selftest.
 
 Registry: atlas.allm_workspace_registry (ecosystem_central), seeded
@@ -556,6 +572,28 @@ PROJECTS = ["contactflowcrm", "trafficstreemz",
             "successbrian-os", "dealsdesk", "campaignsdesk",
             "tradesdesk", "roadchat",
             "civitasmarket"]
+
+# The promotion graph model (R38f, Brian 2026-10-27): the
+# shape EVERY SuccessBrian OS operator's promotion world
+# takes — two node classes and typed edges between them.
+# This registry below is Brian's instance of the model;
+# the model itself is operator-general and is part of what
+# the OS gives every user (CampaignsDesk manages the asset
+# side; the promoted things are the operator's programs,
+# offers and businesses).
+PROMOTION_MODEL = {
+    "node_classes": {
+        "promoted_thing": "a program, offer, business or "
+                          "product an operator promotes",
+        "marketing_asset": "a blog, site, page, funnel, "
+                           "post or surface that helps "
+                           "promote a promoted thing",
+    },
+    "edge_types": ["markets", "captures_for"],
+    "identity_edges_forbidden": True,
+    "applies_to": "every SuccessBrian OS operator/user, "
+                  "not only Brian",
+}
 
 # Marketing assets (R38, Brian 2026-10-27). Each Wix blog/site
 # is its OWN node of type marketing_asset — a separate node
@@ -3128,6 +3166,21 @@ def selftest(conn):
           "TrafficStreemz program resolve to two different "
           "nodes joined by a markets edge (Brian, "
           "2026-10-27)")
+    check(set(PROMOTION_MODEL["node_classes"])
+          == {"promoted_thing", "marketing_asset"}
+          and all(et in ALLOWED_EDGE_TYPES
+                  and et not in IDENTITY_EDGE_TYPES
+                  for et in PROMOTION_MODEL["edge_types"])
+          and PROMOTION_MODEL["identity_edges_forbidden"]
+          is True,
+          "R38f: the promotion model holds two distinct "
+          "node classes joined only by typed, non-identity "
+          "edges (Brian, 2026-10-27)")
+    check(all(a["markets"] in reg_slugs
+              for a in MARKETING_ASSETS),
+          "R38f: Brian's instance conforms to the model — "
+          "every marketing asset markets a promoted thing "
+          "that exists as its own node")
     check(sum(1 for (frm, _t, et, _n) in _plan
               if frm == "allm:successbrian-os"
               and et == "contains") == len(SEGMENTS),

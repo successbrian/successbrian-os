@@ -1,0 +1,4 @@
+title = "SBOS gitleaks config — secrets closure 2026-10-27"
+[allowlist]
+description = "Placeholder/example files only — never real env or key files"
+paths = ['''(^|/)\.env\.example$''', '''(^|/)gitleaks-pre-commit\.sh$''']

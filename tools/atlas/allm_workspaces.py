@@ -450,6 +450,36 @@ Brian's determination rules, encoded:
       readiness. That is by design under the amendment:
       one 14B draw does not get to call itself ready.)
 
+  R38. ASSETS ARE NOT PROGRAMS — THE GRAPH RULE (Brian,
+      2026-10-27: 'do this as nodes/graph not as a tree.
+      each wix blog/site is it's own thing and these are
+      marketing assets; they are not the same as the
+      PROGRAM i may be talking about'). The ecosystem is
+      a GRAPH of typed nodes and typed edges, never a
+      tree: a node may carry many edges and no edge
+      redefines the node it touches. In particular:
+      (a) every Wix blog/site is its OWN node of type
+      marketing_asset; (b) a program / business / skin
+      (TrafficStreemz the program) is a DIFFERENT node,
+      even when the name matches the asset's name
+      exactly; (c) the only edges between an asset and
+      its program are typed relationship edges —
+      markets, captures_for — never identity edges
+      (no is / is_a / contains / part_of merger);
+      (d) what a program IS and DOES is read from the
+      program node; an asset's copy, pages and claims
+      are facts about the ASSET only, and using them as
+      the program's definition is a category error —
+      the failure this rule was written from (an
+      Easy20Now fit test run against the TrafficStreemz
+      Wix blog instead of the TrafficStreemz program,
+      2026-10-27); (e) the same separation holds for
+      every surface: a Facebook page, a Substack, a
+      presentation page are asset nodes marketing
+      their subjects, never the subjects themselves.
+      Encoded below as MARKETING_ASSETS + ASSET_EDGES,
+      enforced by selftest.
+
 Registry: atlas.allm_workspace_registry (ecosystem_central), seeded
 idempotently from this file. Live truth (which workspaces exist and
 their document counts) is read from AnythingLLM's own database,
@@ -526,6 +556,69 @@ PROJECTS = ["contactflowcrm", "trafficstreemz",
             "successbrian-os", "dealsdesk", "campaignsdesk",
             "tradesdesk", "roadchat",
             "civitasmarket"]
+
+# Marketing assets (R38, Brian 2026-10-27). Each Wix blog/site
+# is its OWN node of type marketing_asset — a separate node
+# from the program/business/skin it markets, even when the
+# name is identical. Assets never appear in REGISTRY (they are
+# not knowledge bodies) and never merge with their program:
+# the link is a typed edge (ASSET_EDGES), never identity.
+# node = asset node key; markets = the program slug it markets.
+MARKETING_ASSETS = [
+    {"node": "asset:wix/successbrian-os",
+     "name": "SuccessBrian OS (Wix site)",
+     "url": "https://aiprofits2025.wixsite.com/successbrian-os",
+     "markets": "successbrian-os"},
+    {"node": "asset:wix/trafficstreemz",
+     "name": "TrafficStreemz (Wix site/blog)",
+     "url": "https://aiprofits2025.wixsite.com/trafficstreemz",
+     "markets": "trafficstreemz"},
+]
+
+# Typed edges from marketing assets to what they market (R38).
+# Allowed types here: markets, captures_for. Identity edge
+# types (is, is_a, contains, part_of) are FORBIDDEN on an
+# asset -> program edge: a shared name is a relationship,
+# never a merger.
+ASSET_EDGES = [
+    ("asset:wix/successbrian-os", "successbrian-os", "markets",
+     "The Wix site markets the SuccessBrian OS program; "
+     "the site is an asset, not the program (R38)."),
+    ("asset:wix/successbrian-os", "successbrian-os",
+     "captures_for",
+     "The site's job is audience/capture for the program "
+     "via its FlexiFunnels door (R38)."),
+    ("asset:wix/trafficstreemz", "trafficstreemz", "markets",
+     "The Wix blog markets the TrafficStreemz program; "
+     "the blog is an asset, not the program (R38)."),
+    ("asset:wix/trafficstreemz", "trafficstreemz",
+     "captures_for",
+     "The blog builds audience/waitlist for the "
+     "TrafficStreemz program; it does not define it (R38)."),
+]
+
+IDENTITY_EDGE_TYPES = {"is", "is_a", "same_as", "contains",
+                       "part_of"}
+
+
+def asset_node(slug):
+    """R38: the marketing-asset node for a program slug, or
+    None. The asset node is NEVER the program slug itself."""
+    for a in MARKETING_ASSETS:
+        if a["markets"] == slug:
+            return a["node"]
+    return None
+
+
+def program_of_asset(node):
+    """R38: the program slug a marketing-asset node markets,
+    or None. Reading a program starts from ITS node; an
+    asset node's facts never stand in for it."""
+    for a in MARKETING_ASSETS:
+        if a["node"] == node:
+            return a["markets"]
+    return None
+
 
 # Blogs (R12b). The network-level body plus each named blog.
 # More blogs join the list as they are named (gamma's blog
@@ -933,6 +1026,9 @@ ALLOWED_EDGE_TYPES = {
     "implements", "maps-to", "near", "plugin_of", "requires",
     "researches", "runs-on", "supports",
     "principal_of", "vendor_of",
+    # R38: typed relationship edges from a marketing asset
+    # to the program it serves — never identity.
+    "markets", "captures_for",
 }
 
 # slug, kind, owner, category, purpose, ingest_rule, status, note
@@ -3006,6 +3102,32 @@ def selftest(conn):
               for frm, to, et, _n in RELATIONSHIPS),
           "R27: every coded cross-link joins two "
           "registered bodies with an allowed edge type")
+    check(all(a["node"] != a["markets"]
+              and a["node"].startswith("asset:")
+              for a in MARKETING_ASSETS),
+          "R38: every marketing asset is its own node, "
+          "distinct from the program it markets — a shared "
+          "name is never a merger")
+    check(all(a["node"] not in reg_slugs
+              for a in MARKETING_ASSETS),
+          "R38: asset nodes are not knowledge bodies and "
+          "never enter the workspace registry")
+    check(all(et in ALLOWED_EDGE_TYPES
+              and et not in IDENTITY_EDGE_TYPES
+              and frm.startswith("asset:")
+              and to in reg_slugs
+              for frm, to, et, _n in ASSET_EDGES),
+          "R38: asset -> program edges are typed "
+          "relationship edges (markets / captures_for) "
+          "only, never identity edges")
+    check(asset_node("trafficstreemz")
+          == "asset:wix/trafficstreemz"
+          and program_of_asset("asset:wix/trafficstreemz")
+          == "trafficstreemz",
+          "R38: the TrafficStreemz Wix blog and the "
+          "TrafficStreemz program resolve to two different "
+          "nodes joined by a markets edge (Brian, "
+          "2026-10-27)")
     check(sum(1 for (frm, _t, et, _n) in _plan
               if frm == "allm:successbrian-os"
               and et == "contains") == len(SEGMENTS),

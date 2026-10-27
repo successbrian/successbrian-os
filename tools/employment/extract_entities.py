@@ -4,8 +4,11 @@
 PURPOSE: For recruiter/outbound employment emails already in
     public.job_tracking, use LOCAL models (Penny 7B first, Morpheus 14B on
     failure) to extract person/company/role/pay, then upsert people into
-    people.people and hiring companies into lead_discovery.companies
-    (people_unified DB), and fill gaps on the job_tracking row.
+    people.people and hiring companies into people.companies
+    (people_unified DB — THE one companies table, Brian's ruling
+    2026-10-27; kind stays 'unclassified' until a human/research pass
+    classifies the business, hiring facts ride in extra_data), and
+    fill gaps on the job_tracking row.
 WHY: Brian 2026-10-03 - "as it discovers company names and people names, it
     populates data into people_unified. use existing tables." + "use penny
     and Morpheus models for ai support". No cloud models, no per-token cost
@@ -23,7 +26,7 @@ NOTES:
       in notes) are skipped.
     - Staffing-agency placeholder employers ("Project Blue", "Confidential"
       — flagged by Penny as company_is_placeholder) are never inserted
-      into lead_discovery.companies; the job_tracking row is marked
+      into people.companies; the job_tracking row is marked
       company_confidence='masked' instead (learning 2026-10-04).
     - Extracted schedule/hours info is appended to the tracking row's notes
       and clears the hours_unknown gap the scan recorded.
@@ -35,6 +38,7 @@ NOTES:
 """
 import argparse
 import base64
+import datetime
 import json
 import os
 import re
@@ -204,23 +208,33 @@ def upsert_company(ent, contact_email, mhash=None):
         return ("skipped", "placeholder employer: " + company[:40])
     existing = kssh_psql(
         "people_unified",
-        "SELECT id, contact_email FROM lead_discovery.companies "
-        "WHERE lower(company_name) = lower(%s) LIMIT 1;" % sql_lit(company)
+        "SELECT id, coalesce(extra_data->>'contact_email','') "
+        "FROM people.companies WHERE name_key = lower(%s) LIMIT 1;"
+        % sql_lit(company)
     ).strip()
     if existing:
         cid, cemail = existing.split("|")
-        set_email = (", contact_email = %s" % sql_lit(contact_email)
-                     if contact_email and not cemail else "")
+        extra = {"is_hiring": True, "source_type": "employment_scan",
+                 "last_seen_at": datetime.datetime.now().isoformat()}
+        if contact_email and not cemail:
+            extra["contact_email"] = contact_email
         kssh_psql("people_unified",
-                  "UPDATE lead_discovery.companies SET is_hiring = true, "
-                  "last_seen_at = now()%s WHERE id = %s;"
-                  % (set_email, cid))
+                  "UPDATE people.companies SET "
+                  "collections = ARRAY(SELECT DISTINCT unnest("
+                  "collections || ARRAY['lead-discovery'])), "
+                  "extra_data = coalesce(extra_data,'{}'::jsonb) "
+                  "|| %s::jsonb, updated_at = now() WHERE id = %s;"
+                  % (sql_lit(json.dumps(extra)), cid))
         return ("merged", "id " + cid)
+    extra = {"is_hiring": True, "source_type": "employment_scan",
+             "contact_email": contact_email or ""}
     kssh_psql("people_unified",
-              "INSERT INTO lead_discovery.companies (company_name, "
-              "is_hiring, contact_email, source_type) VALUES (%s, true, %s,"
-              " 'employment_scan');"
-              % (sql_lit(company), sql_lit(contact_email or "")))
+              "INSERT INTO people.companies (name, name_key, kind, "
+              "collections, status, source_tables, extra_data) VALUES "
+              "(%s, lower(%s), 'unclassified', ARRAY['lead-discovery'], "
+              "'new', ARRAY['employment.extract_entities'], %s::jsonb);"
+              % (sql_lit(company), sql_lit(company),
+                 sql_lit(json.dumps(extra))))
     return ("inserted", company)
 
 

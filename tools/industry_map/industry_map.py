@@ -21,8 +21,16 @@ CALLED BY:
 
 NOTES:
     - CANONICAL: successbrian-os/tools/industry_map/
-    - DB: successbrian_os.industry_maps + industry_companies +
-      industry_company_links + industry_intel + industry_intel_sources.
+    - DB: maps, links, intel and sources stay in ecosystem_central
+      (successbrian_os.industry_maps + industry_company_links +
+      industry_intel + industry_intel_sources). COMPANIES live in
+      people_unified.people.companies — THE one companies table
+      (Brian's ruling, 2026-10-27: only ONE companies table; a map is a
+      collection on the company row, kind is a column). add-company
+      upserts there with collections += the map slug; kind comes from
+      --kind or the map default (mlm-industry -> mlm,
+      affiliate-marketing -> affiliate_program,
+      supplement-delivery-tech -> manufacturer, else unclassified).
       Runs against the k11 Postgres the same way tools/audience does
       (localhost psql from k11).
     - Generic schema on purpose: no entrepreneur-specific data is
@@ -49,13 +57,31 @@ from common import pg_password
 PG = {"host": "localhost", "dbname": "ecosystem_central",
       "user": "successbrian"}
 PG["password"] = pg_password(PG["host"], PG["dbname"], PG["user"])
+PG_PEOPLE = {"host": "localhost", "dbname": "people_unified",
+             "user": "successbrian"}
+try:
+    PG_PEOPLE["password"] = pg_password(PG_PEOPLE["host"],
+                                        PG_PEOPLE["dbname"],
+                                        PG_PEOPLE["user"])
+except RuntimeError:
+    # ~/.pgpass carries no people_unified entry; local trust auth
+    # serves it (seller_capture proves the route), so an empty
+    # password is correct here rather than a hard import failure.
+    PG_PEOPLE["password"] = os.environ.get("PGPASSWORD", "")
+
+MAP_KIND_DEFAULT = {"mlm-industry": "mlm",
+                    "affiliate-marketing": "affiliate_program",
+                    "supplement-delivery-tech": "manufacturer",
+                    "tradesdesk": "unclassified"}
 
 
-def _psql(sql, variables=None, field_sep="\t"):
+def _psql(sql, variables=None, field_sep="\t", pg=None):
     """Run SQL via the psql CLI. Values go through -v variables so nothing
-    is interpolated into SQL by hand."""
-    env = dict(os.environ, PGPASSWORD=PG["password"])
-    cmd = ["psql", "-h", PG["host"], "-U", PG["user"], "-d", PG["dbname"],
+    is interpolated into SQL by hand. pg=PG_PEOPLE targets the ONE
+    companies table in people_unified."""
+    pg = pg or PG
+    env = dict(os.environ, PGPASSWORD=pg["password"])
+    cmd = ["psql", "-h", pg["host"], "-U", pg["user"], "-d", pg["dbname"],
            "-v", "ON_ERROR_STOP=1", "-t", "-A", "-F", field_sep]
     for k, v in (variables or {}).items():
         cmd += ["-v", "%s=%s" % (k, v)]
@@ -68,6 +94,11 @@ def _psql(sql, variables=None, field_sep="\t"):
 
 def _rows(sql, variables=None):
     return [l for l in _psql(sql, variables).split("\n") if l.strip()]
+
+
+def _rows_p(sql, variables=None):
+    return [l for l in _psql(sql, variables, pg=PG_PEOPLE).split("\n")
+            if l.strip()]
 
 
 def _map_id(slug):
@@ -110,30 +141,50 @@ def cmd_list_maps(_args):
 
 
 def cmd_add_company(args):
-    mid = _map_id(args.map)
+    _map_id(args.map)  # map must exist; companies key off its slug
+    kind = args.kind or MAP_KIND_DEFAULT.get(args.map, "unclassified")
+    desk = "tradesdesk" if args.map == "tradesdesk" else ""
     _psql(
-        "INSERT INTO successbrian_os.industry_companies"
-        " (map_id, name, sector, what_we_know, status, is_mine, my_role)"
-        " VALUES (:'mid', :'name', :'sector', :'what', :'status',"
-        "         :'mine'::boolean, :'role')"
-        " ON CONFLICT (map_id, name) DO UPDATE SET"
-        " sector=EXCLUDED.sector, what_we_know=EXCLUDED.what_we_know,"
-        " status=EXCLUDED.status, is_mine=EXCLUDED.is_mine,"
-        " my_role=EXCLUDED.my_role;",
-        {"mid": mid, "name": args.name, "sector": args.sector or "",
+        "INSERT INTO people.companies"
+        " (name, name_key, kind, kinds, sector, what_we_know, status,"
+        "  is_mine, brians_role, collections, desk, source_tables)"
+        " VALUES (:'name', lower(:'name'), :'kind', ARRAY[:'kind'],"
+        "         :'sector', :'what', :'status', :'mine'::boolean,"
+        "         :'role', ARRAY[:'slug'], NULLIF(:'desk',''),"
+        "         ARRAY['industry_map'])"
+        " ON CONFLICT (name_key) DO UPDATE SET"
+        " kind = CASE WHEN people.companies.kind = 'unclassified'"
+        "             THEN EXCLUDED.kind ELSE people.companies.kind END,"
+        " kinds = ARRAY(SELECT DISTINCT unnest("
+        "             people.companies.kinds || EXCLUDED.kinds)),"
+        " sector = COALESCE(NULLIF(EXCLUDED.sector,''),"
+        "                   people.companies.sector),"
+        " what_we_know = CASE WHEN EXCLUDED.what_we_know <> ''"
+        "             THEN EXCLUDED.what_we_know"
+        "             ELSE people.companies.what_we_know END,"
+        " status = EXCLUDED.status, is_mine = EXCLUDED.is_mine,"
+        " brians_role = COALESCE(NULLIF(EXCLUDED.brians_role,''),"
+        "                        people.companies.brians_role),"
+        " collections = ARRAY(SELECT DISTINCT unnest("
+        "             people.companies.collections || EXCLUDED.collections)),"
+        " desk = COALESCE(people.companies.desk, EXCLUDED.desk),"
+        " updated_at = now();",
+        {"name": args.name, "kind": kind, "sector": args.sector or "",
          "what": args.what or "", "status": args.status or "active",
          "mine": "true" if args.mine else "false",
-         "role": args.my_role or ""})
-    print("company upserted: %s [%s]" % (args.name, args.map))
+         "role": args.my_role or "", "slug": args.map, "desk": desk},
+        pg=PG_PEOPLE)
+    print("company upserted: %s [%s] kind=%s (people.companies)"
+          % (args.name, args.map, kind))
 
 
 def cmd_list_companies(args):
-    mid = _map_id(args.map)
+    _map_id(args.map)
     filt = "" if not args.status else " AND status=:'status'"
-    rows = _rows(
-        "SELECT name, status, is_mine FROM successbrian_os.industry_companies"
-        " WHERE map_id=:'mid'" + filt + " ORDER BY name;",
-        {"mid": mid, "status": args.status or ""})
+    rows = _rows_p(
+        "SELECT name, status, is_mine FROM people.companies"
+        " WHERE :'slug' = ANY(collections)" + filt + " ORDER BY name;",
+        {"slug": args.map, "status": args.status or ""})
     if not rows:
         print("no companies on map '%s'" % args.map)
         return
@@ -225,15 +276,16 @@ def cmd_report(args):
     name = _rows("SELECT name FROM successbrian_os.industry_maps "
                  "WHERE id=:'mid';", {"mid": mid})[0]
     print("=== %s ===" % name)
-    for r in _rows(
-            "SELECT status, COUNT(*) FROM successbrian_os.industry_companies"
-            " WHERE map_id=:'mid' GROUP BY status ORDER BY status;",
-            {"mid": mid}):
+    for r in _rows_p(
+            "SELECT status, COUNT(*) FROM people.companies"
+            " WHERE :'slug' = ANY(collections)"
+            " GROUP BY status ORDER BY status;",
+            {"slug": args.map}):
         status, n = r.split("\t")
         print("companies [%s]: %s" % (status, n))
-    mine = _rows("SELECT COUNT(*) FROM successbrian_os.industry_companies"
-                 " WHERE map_id=:'mid' AND is_mine;",
-                 {"mid": mid})[0]
+    mine = _rows_p("SELECT COUNT(*) FROM people.companies"
+                   " WHERE :'slug' = ANY(collections) AND is_mine;",
+                   {"slug": args.map})[0]
     print("my companies: %s" % mine)
     links = _rows("SELECT COUNT(*) FROM successbrian_os.industry_company_links"
                   " WHERE map_id=:'mid';", {"mid": mid})[0]
@@ -272,10 +324,11 @@ def cmd_export_graph(args):
     mname = _rows("SELECT name FROM successbrian_os.industry_maps "
                   "WHERE id=:'mid';", {"mid": mid})[0]
     companies = []
-    for r in _rows("SELECT name, what_we_know, status, is_mine FROM"
-                   " successbrian_os.industry_companies"
-                   " WHERE map_id=:'mid' ORDER BY is_mine DESC, name;",
-                   {"mid": mid}):
+    for r in _rows_p("SELECT name, what_we_know, status, is_mine FROM"
+                     " people.companies"
+                     " WHERE :'slug' = ANY(collections)"
+                     " ORDER BY is_mine DESC, name;",
+                     {"slug": args.map}):
         nm, what, status, is_mine = r.split("\t", 3)
         companies.append({"name": nm, "what": what, "status": status,
                           "mine": is_mine == "t"})
@@ -405,6 +458,10 @@ def main():
     p.add_argument("--what", default="")
     p.add_argument("--mine", action="store_true")
     p.add_argument("--my-role", default="")
+    p.add_argument("--kind", default="",
+                   help="business kind for people.companies (mlm, "
+                        "affiliate_program, manufacturer, software_saas, "
+                        "education_training, ...); default: per-map")
 
     p = sub.add_parser("list-companies", help="list companies on a map")
     p.add_argument("--map", required=True)

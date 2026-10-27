@@ -30,6 +30,7 @@ digestible). Findings beyond the limit are reported, not minted.
 """
 import argparse
 import json
+import os
 import re
 import socket
 import subprocess
@@ -44,7 +45,7 @@ def psql(sql):
         ['psql', '-h', 'localhost', '-U', 'postgres', '-d', 'ecosystem_central',
          '-t', '-A', '-F', '\t', '-v', 'ON_ERROR_STOP=1'],
         input=sql, capture_output=True, text=True,
-        env={'PGPASSWORD': 'postgres', 'PATH': '/usr/bin:/bin'})
+        env={'PATH': '/usr/bin:/bin', 'HOME': os.path.expanduser('~')})
     if p.returncode != 0:
         print(p.stderr.strip(), file=sys.stderr)
         sys.exit(1)
@@ -324,11 +325,14 @@ def detect_prospect():
             f.state = "already-minted"
         out.append(f)
 
-    # Source A: companies Brian is involved in (mlm_companies) that no
-    # keystone or register line covers.
+    # Source A: MLM companies Brian is involved in (the ONE companies
+    # table, people.companies kind='mlm' — Brian's ruling 2026-10-27;
+    # formerly people.mlm_companies) that no keystone or register
+    # line covers.
     comp_rows = rows_pu(
-        "SELECT name, status, brians_role FROM people.mlm_companies "
-        "WHERE brians_role IS NOT NULL AND brians_role <> '' "
+        "SELECT name, status, brians_role FROM people.companies "
+        "WHERE kind = 'mlm' AND brians_role IS NOT NULL "
+        "AND brians_role <> '' "
         "ORDER BY name")
     for name, status, role in comp_rows:
         if name.lower() in COVERED_COMPANIES:
@@ -337,7 +341,7 @@ def detect_prospect():
             continue  # research/intel only, no involvement
         cand("company-%s" % _slug(name),
              None, "keystone", name,
-             "mlm_companies: status=%s; Brian's role: %s"
+             "people.companies (mlm): status=%s; Brian's role: %s"
              % (status, role.strip()),
              "Is %s a keystone (a business line the staff tracks and "
              "keeps healthy), a register line, or intel only?" % name)

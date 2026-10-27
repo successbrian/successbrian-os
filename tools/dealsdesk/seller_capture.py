@@ -14,17 +14,24 @@ DESIGN:  DealsDesk CAPTURES FACTS about the businesses and sellers its
            1. PostgreSQL / ecosystem_central — sightings + price_history
               (written by the scanners themselves; the system of record
               for found data).
-           2. PostgreSQL / people_unified.lead_scraper.businesses — one
-              row per discovered business/seller: name, category, tags,
-              source='dealsdesk', research_status='discovered', and an
-              extra_data JSONB carrying platform, first/last seen,
-              sighting + deal counts, best $/GB seen, sample listing
-              URLs. Upsert key: lower(name) + platform. This table is
-              the handoff surface — relationship CRUNCHING (scoring,
-              outreach, who-knows-who) does NOT live in DealsDesk; it
-              belongs to ContactFlowCRM, which reads these records.
+           2. PostgreSQL / people_unified.people.companies — THE one
+              companies table (Brian's ruling, 2026-10-27: only ONE
+              companies table; kind says what kind of business it is).
+              One row per discovered business/seller: kind = the
+              capture category (marketplace_seller | supplier),
+              kinds[] carries it too, collections includes
+              'dealsdesk-sellers', desk='dealsdesk', and an extra_data
+              JSONB carrying platform(s), first/last seen, sighting +
+              deal counts, best $/GB seen, sample listing URLs.
+              Upsert key: name_key (lower(name)); platforms accumulate
+              in extra_data. This table is the handoff surface —
+              relationship CRUNCHING (scoring, outreach, who-knows-who)
+              does NOT live in DealsDesk; it belongs to ContactFlowCRM,
+              which reads people.companies (desk='dealsdesk').
               NOT written: people.people (the 211M-row scraped dataset —
-              wrong shape, sellers would vanish into it) and
+              wrong shape, sellers would vanish into it),
+              lead_scraper.businesses (the pre-2026-10-27 seller table,
+              deprecated by the one-companies-table ruling) and
               affiliate_intel.vendors (affiliate-program world, not
               marketplace sellers).
            3. AnythingLLM workspace 'dealsdesk' — two living documents
@@ -162,31 +169,67 @@ def build_business(b):
             "description": desc, "tags": tags, "extra": extra}
 
 
-def upsert_business(rec):
-    extra_json = json.dumps(rec["extra"], ensure_ascii=False)
-    tags_sql = "ARRAY[" + ",".join("'%s'" % esc(t) for t in rec["tags"]) + "]"
+def build_company(rec):
+    """Capture shape -> people.companies fields (pure; selftested).
+
+    The ONE companies table (Brian, 2026-10-27): kind is the capture
+    category, collections marks the DealsDesk seller collection, desk
+    is dealsdesk. Seller facts (platform, sightings, deals, best $/GB,
+    samples) ride in extra_data, merged on update so platforms and
+    history accumulate instead of overwriting each other."""
+    kind = rec["category"]
+    sector = ("Hardware / RAM marketplace" if kind == "marketplace_seller"
+              else "Hardware supplier")
+    return {"name": rec["name"], "name_key": rec["name"].strip().lower(),
+            "kind": kind, "kinds": [kind], "sector": sector,
+            "collections": ["dealsdesk-sellers"], "desk": "dealsdesk",
+            "what_we_know": rec["description"], "status": "active",
+            "extra": rec["extra"]}
+
+
+def upsert_company(rec):
+    comp = build_company(rec)
     rows = psql(PEOPLEDB,
-                """SELECT id FROM lead_scraper.businesses
-                   WHERE source = 'dealsdesk' AND lower(name) = lower('%s')
-                     AND extra_data->>'platform' = '%s' LIMIT 1"""
-                % (esc(rec["name"]), esc(rec["extra"]["platform"])))
+                """SELECT id, COALESCE(extra_data::text, '{}')
+                   FROM people.companies WHERE name_key = '%s' LIMIT 1"""
+                % esc(comp["name_key"]))
     if rows:
+        try:
+            old_extra = json.loads(rows[0][1])
+        except Exception:
+            old_extra = {}
+        extra = dict(old_extra)
+        platforms = sorted(set((extra.get("platforms") or [])
+                               + ([extra["platform"]] if extra.get("platform") else [])
+                               + [comp["extra"]["platform"]]))
+        extra.update(comp["extra"])
+        extra["platforms"] = platforms
+        extra["platform"] = comp["extra"]["platform"]
         psql(PEOPLEDB,
-             """UPDATE lead_scraper.businesses
-                SET category = '%s', description = '%s', tags = %s,
+             """UPDATE people.companies
+                SET kinds = ARRAY(SELECT DISTINCT unnest(kinds || ARRAY['%s'])),
+                    collections = ARRAY(SELECT DISTINCT unnest(collections || ARRAY['dealsdesk-sellers'])),
+                    desk = COALESCE(desk, 'dealsdesk'),
+                    sector = COALESCE(sector, '%s'),
+                    what_we_know = CASE WHEN what_we_know = '' THEN '%s' ELSE what_we_know END,
                     extra_data = '%s'::jsonb, updated_at = NOW()
                 WHERE id = %d"""
-             % (esc(rec["category"]), esc(rec["description"]), tags_sql,
-                esc(extra_json), int(rows[0][0])), write=True)
+             % (esc(comp["kind"]), esc(comp["sector"]),
+                esc(comp["what_we_know"]),
+                esc(json.dumps(extra, ensure_ascii=False)), int(rows[0][0])),
+             write=True)
         return "updated"
     psql(PEOPLEDB,
-         """INSERT INTO lead_scraper.businesses
-            (name, category, description, tags, research_status, source,
-             extra_data, created_at, updated_at)
-            VALUES ('%s', '%s', '%s', %s, 'discovered', 'dealsdesk',
-                    '%s'::jsonb, NOW(), NOW())"""
-         % (esc(rec["name"]), esc(rec["category"]), esc(rec["description"]),
-            tags_sql, esc(extra_json)), write=True)
+         """INSERT INTO people.companies
+            (name, name_key, kind, kinds, sector, collections, desk,
+             what_we_know, status, source_tables, extra_data)
+            VALUES ('%s', '%s', '%s', ARRAY['%s'], '%s',
+                    ARRAY['dealsdesk-sellers'], 'dealsdesk', '%s', 'active',
+                    ARRAY['dealsdesk.seller_capture'], '%s'::jsonb)"""
+         % (esc(comp["name"]), esc(comp["name_key"]), esc(comp["kind"]),
+            esc(comp["kind"]), esc(comp["sector"]),
+            esc(comp["what_we_know"]),
+            esc(json.dumps(comp["extra"], ensure_ascii=False))), write=True)
     return "inserted"
 
 
@@ -197,7 +240,7 @@ def seller_registry_md(businesses):
              "as facts for relationship building. DealsDesk records who "
              "they are, what they sell, and the best prices seen; "
              "relationship work itself lives in ContactFlowCRM, reading "
-             "people_unified.lead_scraper.businesses (source='dealsdesk').",
+             "people_unified.people.companies (desk='dealsdesk').",
              ""]
     for b in sorted(businesses, key=lambda x: x["name"].lower()):
         e = b["extra"]
@@ -257,7 +300,7 @@ def run(embed_docs=True):
                   for b in aggregate_sellers() + aggregate_suppliers()]
     ins = upd = 0
     for rec in businesses:
-        r = upsert_business(rec)
+        r = upsert_company(rec)
         ins += r == "inserted"
         upd += r == "updated"
     LOG.info("businesses captured: %d (%d new, %d updated)",
@@ -314,6 +357,18 @@ def selftest():
         print("FAIL  dedupe_key normalization")
     else:
         print("PASS  dedupe_key normalization")
+    for b, want_name, want_cat, want_platform in SELFTEST:
+        comp = build_company(build_business(b))
+        ok = (comp["name_key"] == want_name.strip().lower()
+              and comp["kind"] == want_cat
+              and comp["kinds"] == [want_cat]
+              and comp["desk"] == "dealsdesk"
+              and comp["collections"] == ["dealsdesk-sellers"]
+              and comp["extra"]["platform"] == want_platform)
+        if not ok:
+            fails += 1
+        print(f"{'PASS' if ok else 'FAIL'}  companies map: {comp['name']} "
+              f"kind={comp['kind']} desk={comp['desk']}")
     print("selftest:", "ALL PASS" if fails == 0 else f"{fails} FAILURE(S)")
     return 1 if fails else 0
 

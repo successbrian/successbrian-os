@@ -542,6 +542,58 @@ Brian's determination rules, encoded:
       is derived, not enumerated once for all.
       Encoded below as OPERATOR_DESKS +
       desks_for_workflows(), enforced by selftest.
+  R41. THE CORE IS A PLUGIN SUBSTRATE + AN AGENT
+      DESK-BUILDER (Brian, 2026-10-28: 'what successbrian
+      os needs to have in it ... is the core functionality
+      that allows the plugins to be as efficient as
+      possible — and have the core functionality that
+      allows the user's ai agents to build their 'desks'
+      plugins for them'). The core's defining job:
+      (1) PLUGIN-EFFICIENCY SUBSTRATE — shared services
+      the plugins/desks CONSUME instead of duplicating:
+      second brain + master index, Atlas graph, one
+      calendar with carry-forward, contacts, document
+      homes, automation, permissions/approvals, project/
+      QA, capacity/sensing, hosting/deployment, intake.
+      A desk that re-implements a core service marks a
+      CORE GAP, not a desk feature. (2) AGENT DESK-
+      BUILDER — the in-OS capability by which the
+      operator's OWN AI agents build that operator's
+      desk plugins: discover workflows, derive the desk
+      set (R40), scaffold/register the desks, wire core
+      services, QA-verify. The desks are the UNIQUE
+      FACTOR in each operator's business — differentiated
+      machinery grown from that operator's own workflows
+      and intel — and the builder keeps improving them
+      through daily chats with the operator: their intel
+      grows, their desks improve, their business becomes
+      more agentic day by day (Rule 23, generalized per
+      operator). THE BUILDER'S OPERATING CONDITION
+      (Brian, 2026-10-28): the builder is AGENT- AND
+      MODEL-AGNOSTIC. The OS ships with Altair, and the
+      operator's other agents are UNKNOWN and
+      UNENUMERATED — some may be more powerful than
+      Brian's. Whatever agents are present (Altair,
+      Muse, Grok, anything else) drive the build
+      through standard agent-usable interfaces;
+      deterministic scaffolding, validation and QA live
+      in the CORE, so build quality never depends on
+      which agent or model drove it, and no single AI
+      provider is load-bearing. SHIPPED CREW (Brian,
+      2026-10-28, restating 2026-10-24): Altair and Lyra
+      are NAMED CONSTANTS that ship with the OS; the CEO
+      agent's name is PER-OPERATOR CONFIGURATION chosen
+      at onboarding — Brian's own CEO agent name
+      ('Meghan') is operator-private and is NEVER a
+      shipped default. THE TWO-PART TEST for every
+      future core/plugin decision: (a) does the plugin
+      consume core rather than duplicate it? (b) could
+      an operator's agent build this desk from core
+      functionality? A 'no' on either is a core gap to
+      file, not a desk workaround to celebrate. Extends
+      R39/R40; Brian's desks remain reference instances
+      and operator data remains private. Encoded below
+      as CORE_REQUIREMENT, enforced by selftest.
 
 Registry: atlas.allm_workspace_registry (ecosystem_central), seeded
 idempotently from this file. Live truth (which workspaces exist and
@@ -711,6 +763,85 @@ def desks_for_workflows(workflow_types):
     return sorted(
         slug for slug, d in OPERATOR_DESKS["desks"].items()
         if wanted & set(d["workflow_types"]))
+
+
+# The core requirement (R41, Brian 2026-10-28): SuccessBrian OS
+# core = the plugin-efficiency substrate + the agent desk-builder.
+# Every future core/plugin decision is checked against the
+# two-part test recorded here, as data.
+CORE_REQUIREMENT = {
+    "ruling": "R41",
+    "brian_words": "what successbrian os needs to have in it "
+                   "... is the core functionality that allows "
+                   "the plugins to be as efficient as possible "
+                   "— and have the core functionality that "
+                   "allows the user's ai agents to build their "
+                   "'desks' plugins for them",
+    "substrate": {
+        "job": "core functionality that allows the plugins to "
+               "be as efficient as possible",
+        "services": [
+            "second brain + knowledge_index master index",
+            "Atlas graph",
+            "one calendar with carry-forward",
+            "contacts",
+            "AnythingLLM document homes",
+            "automation",
+            "permissions/approval gates",
+            "PM project/QA",
+            "capacity sensing",
+            "hosting/deployment paths",
+            "Intel Bridge/clerk intake",
+            "shared code (sbos_common)",
+        ],
+        "rule": "plugins consume core services rather than "
+                "duplicating them; a desk re-implementing a "
+                "core service marks a core gap",
+    },
+    "desk_builder": {
+        "job": "core functionality that allows the user's ai "
+               "agents to build their 'desks' plugins for them",
+        "steps": ["discover workflows",
+                  "derive the desk set (R40)",
+                  "scaffold/register the desks",
+                  "wire core services",
+                  "QA-verify"],
+        "purpose": "the desks are the unique factor in each "
+                   "operator's business — differentiated "
+                   "machinery grown from that operator's own "
+                   "workflows and intel",
+        "improvement_loop": "daily chats with the operator -> "
+                            "intel grows (second brain) -> "
+                            "desks improve -> the business "
+                            "becomes more agentic day by day "
+                            "(Rule 23, generalized per operator)",
+        "ships_with": "Altair, the bundled agent",
+        "operating_condition": {
+            "agent_and_model_agnostic": True,
+            "builders": "the operator's Altair and any other "
+                        "agents present — unknown, unenumerated, "
+                        "possibly more powerful than Brian's; "
+                        "whatever model/provider powers them "
+                        "(Muse, Grok, anything else)",
+            "interfaces": "standard agent-usable interfaces",
+            "deterministic_core": ["scaffolding", "validation",
+                                   "QA"],
+            "no_single_provider_load_bearing": True,
+        },
+    },
+    "shipped_crew": {
+        "named_constants": ["Altair", "Lyra"],
+        "ceo_agent_name": "per-operator configuration, chosen "
+                          "at onboarding — never a shipped "
+                          "default (Brian's own CEO agent name "
+                          "is operator-private)",
+    },
+    "two_part_test": [
+        "does the plugin consume core rather than duplicate it?",
+        "could an operator's agent build this desk from core "
+        "functionality?",
+    ],
+}
 
 # Marketing assets (R38, Brian 2026-10-27). Each Wix blog/site
 # is its OWN node of type marketing_asset — a separate node
@@ -3319,6 +3450,45 @@ def selftest(conn):
           "a CampaignsDesk, a trading workflow adds a "
           "TradesDesk, and Brian's three workflows map "
           "to his three desks (Brian, 2026-10-27)")
+    check(CORE_REQUIREMENT["ruling"] == "R41"
+          and len(CORE_REQUIREMENT["substrate"]["services"])
+          >= 10
+          and "Atlas graph"
+          in CORE_REQUIREMENT["substrate"]["services"],
+          "R41: the core requirement is encoded as data — a "
+          "plugin-efficiency substrate of named shared "
+          "services plugins consume instead of duplicating "
+          "(Brian, 2026-10-28)")
+    check(CORE_REQUIREMENT["two_part_test"]
+          == ["does the plugin consume core rather than "
+              "duplicate it?",
+              "could an operator's agent build this desk "
+              "from core functionality?"],
+          "R41: the two-part test every core/plugin decision "
+          "is checked against (Brian, 2026-10-28)")
+    check(CORE_REQUIREMENT["desk_builder"]["steps"]
+          == ["discover workflows", "derive the desk set "
+              "(R40)", "scaffold/register the desks",
+              "wire core services", "QA-verify"]
+          and CORE_REQUIREMENT["desk_builder"]
+          ["operating_condition"]
+          ["agent_and_model_agnostic"] is True
+          and CORE_REQUIREMENT["desk_builder"]
+          ["operating_condition"]
+          ["no_single_provider_load_bearing"] is True,
+          "R41: the desk-builder derives, scaffolds, wires "
+          "and QA-verifies desks, agent- and model- "
+          "agnostically — no single AI provider is "
+          "load-bearing (Brian, 2026-10-28)")
+    check(CORE_REQUIREMENT["shipped_crew"]["named_constants"]
+          == ["Altair", "Lyra"]
+          and "per-operator configuration"
+          in CORE_REQUIREMENT["shipped_crew"]["ceo_agent_name"]
+          and "Meghan" not in str(CORE_REQUIREMENT),
+          "R41 crew: Altair and Lyra ship named; the CEO "
+          "agent's name is per-operator configuration, and "
+          "Brian's own CEO name appears nowhere in the "
+          "shipped requirement (Brian, 2026-10-28)")
     check(sum(1 for (frm, _t, et, _n) in _plan
               if frm == "allm:successbrian-os"
               and et == "contains") == len(SEGMENTS),

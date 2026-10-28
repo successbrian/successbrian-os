@@ -579,7 +579,19 @@ Brian's determination rules, encoded:
       deterministic scaffolding, validation and QA live
       in the CORE, so build quality never depends on
       which agent or model drove it, and no single AI
-      provider is load-bearing. SHIPPED CREW (Brian,
+      provider is load-bearing. INTEGRATION ROLE
+      (Brian, 2026-10-28, 'very key'): an operator's
+      integrated external agent — Brian's proof
+      instance is Spencer, his Muse connected via
+      Tailscale — works as BEHIND-THE-SCENES SUPPORT
+      TO THE SHIPPED ALTAIR (research, build, check,
+      in service of the crew) and may even be the
+      surface the operator chats with, WITHOUT
+      replacing the crew or forking the system: Altair
+      + the core remain the system of record, and
+      there is ONE SHARED RECORD regardless of chat
+      surface (Rule 23, generalized per operator).
+      SHIPPED CREW (Brian,
       2026-10-28, restating 2026-10-24): Altair and Lyra
       are NAMED CONSTANTS that ship with the OS; the CEO
       agent's name is PER-OPERATOR CONFIGURATION chosen
@@ -845,6 +857,24 @@ CORE_REQUIREMENT = {
             "deterministic_core": ["scaffolding", "validation",
                                    "QA"],
             "no_single_provider_load_bearing": True,
+            "integration_role": {
+                "role": "an operator's integrated external "
+                        "agent works as behind-the-scenes "
+                        "support to the shipped Altair — "
+                        "research, build, check — in service "
+                        "of the crew (Brian's proof instance: "
+                        "Spencer, his Muse connected via "
+                        "Tailscale)",
+                "may_be_chat_surface": True,
+                "never": "replaces the crew or forks the "
+                         "system",
+                "system_of_record": "Altair + the core",
+                "one_shared_record": "one shared record "
+                                     "regardless of which "
+                                     "surface the operator "
+                                     "chats with (Rule 23, "
+                                     "generalized)",
+            },
         },
     },
     "shipped_crew": {
@@ -3516,7 +3546,13 @@ def selftest(conn):
           ["agent_and_model_agnostic"] is True
           and CORE_REQUIREMENT["desk_builder"]
           ["operating_condition"]
-          ["no_single_provider_load_bearing"] is True,
+          ["no_single_provider_load_bearing"] is True
+          and CORE_REQUIREMENT["desk_builder"]
+          ["operating_condition"]["integration_role"]
+          ["system_of_record"] == "Altair + the core"
+          and CORE_REQUIREMENT["desk_builder"]
+          ["operating_condition"]["integration_role"]
+          ["may_be_chat_surface"] is True,
           "R41: the desk-builder derives, scaffolds, wires "
           "and QA-verifies desks, agent- and model- "
           "agnostically — no single AI provider is "

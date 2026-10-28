@@ -619,6 +619,15 @@ Brian's determination rules, encoded:
       context-window size: it is the persistent second
       brain (indexed, verified, dependency-retained)
       that rehydrates any agent's context on demand.
+      INTAKE PIPELINE: the Bridge -> clerk -> Altair
+      path is a named core service — the clerk digests
+      raw captures (classify, deepen/research,
+      factcheck/vet, route, compress to packets and
+      filings) and Altair ingests ONLY pre-digested
+      material. BACKPRESSURE PRINCIPLE: digestion
+      capacity is sized against filing rate; undigested
+      raw intel is not knowledge; Altair never drinks
+      from the raw firehose.
       The OS remembers for the agent — which is how a
       forgetful external agent performs as if it
       remembers. Encoded in CORE_REQUIREMENT as
@@ -821,7 +830,8 @@ CORE_REQUIREMENT = {
             "PM project/QA",
             "capacity sensing",
             "hosting/deployment paths",
-            "Intel Bridge/clerk intake",
+            "Intel Bridge intake -> clerk digestion "
+            "-> Altair ingest pipeline",
             "shared code (sbos_common)",
         ],
         "rule": "plugins consume core services rather than "
@@ -883,6 +893,17 @@ CORE_REQUIREMENT = {
                           "at onboarding — never a shipped "
                           "default (Brian's own CEO agent name "
                           "is operator-private)",
+    },
+    "intake_pipeline": {
+        "stages": ["raw Intel Bridge captures",
+                   "clerk digestion — classify, deepen/"
+                   "research, factcheck/vet, route, compress "
+                   "to packets and filings",
+                   "Altair ingests ONLY pre-digested material"],
+        "backpressure": "digestion capacity is sized "
+                        "against filing rate; undigested "
+                        "raw intel is not knowledge; Altair "
+                        "never drinks from the raw firehose",
     },
     "crew_interaction": {
         "ceo_agent": "a background executive — operators in "
@@ -3578,7 +3599,13 @@ def selftest(conn):
           in CORE_REQUIREMENT["memory_architecture"]["claim"]
           and "remembers for the agent"
           in CORE_REQUIREMENT["memory_architecture"]
-          ["interop_payoff"],
+          ["interop_payoff"]
+          and "never drinks from the raw firehose"
+          in CORE_REQUIREMENT["intake_pipeline"]
+          ["backpressure"]
+          and "not knowledge"
+          in CORE_REQUIREMENT["intake_pipeline"]
+          ["backpressure"],
           "R41 addendum: the CEO agent is a background "
           "executive whose work surfaces as results; Altair "
           "is the chat surface; operators get outcomes, the "

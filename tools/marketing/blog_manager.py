@@ -14,10 +14,16 @@ What it does:
   * Converts plain markdown articles into Wix Ricos rich content
     deterministically (headings, paragraphs, bold/italic/links,
     blockquotes, bullet + numbered lists) — no model in the loop.
-  * Creates DRAFT posts, publishes drafts, lists posts/drafts, deletes
-    test drafts, and keeps the registry table
-    successbrian_os.marketing_blog_posts in step (PostgreSQL is the
-    state home, per R32).
+  * Uploads images to the Wix Media Manager (site-media v1) and
+    embeds them: a standalone markdown line ![alt](media:KEY) becomes
+    a Ricos IMAGE node (KEY resolves through a media map of uploaded
+    files), and ![video](youtube-url) becomes a Ricos VIDEO node.
+    A draft can also carry a cover image (the draft's `media`).
+  * Creates DRAFT posts, publishes drafts, REVISES published posts
+    (PATCH the post's draft, then republish — the post id and URL
+    survive), lists posts/drafts, deletes test drafts, and keeps the
+    registry table successbrian_os.marketing_blog_posts in step
+    (PostgreSQL is the state home, per R32).
 
 Approval law (Brian, stands since 2026-10-22): building drafts is
 internal work; PUBLISHING a post is an outward act and needs Brian's
@@ -36,6 +42,10 @@ CLI:
   status                      config presence (never prints the key)
   list [--drafts]             remote posts (or drafts) from Wix
   draft --title T --file F.md [--source S] [--publish]
+        [--media media.json] [--cover-media media.json]
+  upload --file F.png [--name N]     upload to Media Manager (JSON out)
+  revise --draft-id ID --file F.md [--media media.json]
+        [--cover-media media.json] [--excerpt E] [--publish]
   publish --draft-id ID
   delete-draft --draft-id ID
   sync                        reconcile registry with remote state
@@ -44,10 +54,12 @@ CLI:
 """
 import argparse
 import json
+import mimetypes
 import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -55,7 +67,27 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
 import pm_core  # noqa: E402
 
 API_BASE = "https://www.wixapis.com/blog/v3"
+MEDIA_BASE = "https://www.wixapis.com/site-media/v1"
 ENV_PATH = os.path.expanduser("~/successbrian-os/.env")
+
+# Brian's ruling (2026-10-26): every page of ALL of our blogs points to
+# his Substack, professionally, at the bottom. One Substack for the whole
+# fleet. Drafts created through this engine get the standard closing
+# block appended (idempotent: skipped when the link is already present),
+# so no post can ship without it and no post ever carries it twice.
+SUBSTACK_URL = "https://successbrianhub.substack.com"
+POST_FOOTER_MD = (
+    "\n\n**Read more from Brian Lathe on Substack**\n\n"
+    "This blog is one room in a bigger house. My main writing lives on "
+    "Substack - longer pieces, new posts first, always free to read: "
+    "[Brian Lathe on Substack](https://successbrianhub.substack.com).\n"
+)
+
+
+def with_post_footer(md):
+    if SUBSTACK_URL in md:
+        return md
+    return md.rstrip() + "\n" + POST_FOOTER_MD
 
 
 # ---------------------------------------------------------------- env
@@ -98,11 +130,11 @@ class WixError(RuntimeError):
     pass
 
 
-def api(method, path, body=None, cfg=None):
+def api(method, path, body=None, cfg=None, base=API_BASE):
     cfg = cfg or config()
     if not cfg["api_key"] or not cfg["site_id"]:
         raise WixError("Wix config missing (WIX_API_KEY / WIX_SITE_ID)")
-    url = API_BASE + path
+    url = base + path
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Authorization", cfg["api_key"])
@@ -136,16 +168,146 @@ def list_drafts(cfg=None, limit=50):
     return out.get("draftPosts", [])
 
 
-def create_draft(title, ricos, cfg=None, excerpt=None, publish=False):
+def create_draft(title, ricos, cfg=None, excerpt=None, publish=False,
+                 cover=None):
     cfg = cfg or config()
     draft = {"title": title, "richContent": ricos}
     if excerpt:
         draft["excerpt"] = excerpt
+    if cover:
+        draft["media"] = cover
     if cfg["member_id"]:
         draft["memberId"] = cfg["member_id"]
     out = api("POST", "/draft-posts",
               {"draftPost": draft, "publish": bool(publish)}, cfg)
     return out.get("draftPost", out)
+
+
+def update_draft(draft_id, cfg=None, ricos=None, cover=None, excerpt=None,
+                 title=None):
+    """Revise a draft post in place (PATCH /draft-posts/{id}).
+
+    For a PUBLISHED post this edits its draft half; call publish_draft
+    afterwards to push the revision live. The post id and URL survive.
+    The fieldMask format ({"paths": [...]}) was verified live against
+    the API on 2026-10-28 (throwaway-draft round trip).
+    """
+    cfg = cfg or config()
+    draft = {"id": draft_id}
+    if cfg["member_id"]:
+        # The API rejects updates without post owner information.
+        draft["memberId"] = cfg["member_id"]
+    paths = []
+    if ricos is not None:
+        draft["richContent"] = ricos
+        paths.append("richContent")
+    if cover is not None:
+        draft["media"] = cover
+        paths.append("media")
+    if excerpt is not None:
+        draft["excerpt"] = excerpt
+        paths.append("excerpt")
+    if title is not None:
+        draft["title"] = title
+        paths.append("title")
+    if not paths:
+        raise WixError("update_draft: nothing to update")
+    out = api("PATCH", "/draft-posts/%s" % draft_id,
+              {"draftPost": draft, "fieldMask": {"paths": paths}}, cfg)
+    return out.get("draftPost", out)
+
+
+# ------------------------------------------------------------- media
+
+def upload_media(local_path, cfg=None, file_name=None):
+    """Upload one local file to the Wix Media Manager.
+
+    Flow (Wix site-media v1): POST /files/generate-upload-url ->
+    PUT the bytes to the signed uploadUrl -> the file descriptor.
+    Upload processing is async, so poll GET /files/{id} until the
+    descriptor carries width/height (image ready). Returns the file
+    dict: {id, url (static.wixstatic.com), width, height, ...}.
+    """
+    cfg = cfg or config()
+    name = file_name or os.path.basename(local_path)
+    mime = (mimetypes.guess_type(name)[0] or "application/octet-stream")
+    out = api("POST", "/files/generate-upload-url",
+              {"mimeType": mime, "fileName": name}, cfg, base=MEDIA_BASE)
+    upload_url = out.get("uploadUrl")
+    if not upload_url:
+        raise WixError("generate-upload-url returned no uploadUrl: %s"
+                       % str(out)[:200])
+    with open(local_path, "rb") as fh:
+        data = fh.read()
+    sep = "&" if "?" in upload_url else "?"
+    put_url = upload_url + sep + "filename=" + urllib.parse.quote(name)
+    req = urllib.request.Request(put_url, data=data, method="PUT")
+    req.add_header("Content-Type", mime)
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            raw = resp.read().decode()
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode(errors="replace")[:500]
+        raise WixError("media PUT -> HTTP %s: %s" % (e.code, detail))
+    up = json.loads(raw) if raw else {}
+    file_obj = _normalize_file(up.get("file", up))
+    fid = file_obj.get("id")
+    # Wait for processing to finish (operationStatus READY / dims set).
+    for _ in range(10):
+        if file_obj.get("width") and file_obj.get("height"):
+            break
+        if not fid:
+            break
+        import time
+        time.sleep(2)
+        got = api("GET", "/files/%s" % urllib.parse.quote(fid, safe=""),
+                  None, cfg, base=MEDIA_BASE)
+        file_obj = _normalize_file(got.get("file", got)) or file_obj
+    return file_obj
+
+
+def _normalize_file(file_obj):
+    """Flatten a site-media file descriptor.
+
+    The PUT response carries width/height at top level; the GET
+    descriptor nests them at media.image.image.{width,height} and
+    names the file 'filename' there / 'displayName' at top level.
+    Downstream code (media map, cover) wants one flat shape.
+    """
+    if not isinstance(file_obj, dict):
+        return file_obj
+    img = ((file_obj.get("media") or {}).get("image") or {}).get("image") \
+        or {}
+    if not file_obj.get("width"):
+        file_obj["width"] = img.get("width")
+    if not file_obj.get("height"):
+        file_obj["height"] = img.get("height")
+    if not file_obj.get("fileName"):
+        file_obj["fileName"] = (img.get("filename")
+                                or file_obj.get("displayName"))
+    if not file_obj.get("url"):
+        file_obj["url"] = img.get("url")
+    return file_obj
+
+
+def cover_media(file_obj):
+    """Build a draft-post `media` (cover) value from an uploaded file.
+
+    The Draft object has no coverMedia field — the cover lives in
+    `media`, and its wixMedia.image must be an OBJECT {id} on write
+    (the wix:image:// URI string only appears on reads). Verified
+    live 2026-10-28 on a throwaway draft: coverMedia was silently
+    ignored, the URI-string form errored ("Expected an object"),
+    and this shape round-trips.
+    """
+    return {"wixMedia": {"image": {"id": file_obj["id"]}},
+            "displayed": True, "custom": True}
+
+
+def media_entry(file_obj):
+    """One media-map entry for md_to_ricos ![alt](media:KEY) nodes."""
+    return {"id": file_obj["id"], "width": file_obj.get("width"),
+            "height": file_obj.get("height")}
 
 
 def publish_draft(draft_id, cfg=None):
@@ -176,8 +338,14 @@ class _Ids:
 
 
 _LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
+# Bold-wrapped link **[label](url)** and plain link, in one token pass.
+_TOKEN_RE = re.compile(
+    r"\*\*\[(?P<bl>[^\]]+)\]\((?P<bu>https?://[^)\s]+)\)\*\*"
+    r"|\[(?P<l>[^\]]+)\]\((?P<u>https?://[^)\s]+)\)")
 _BOLD_RE = re.compile(r"\*\*([^*]+)\*\*")
 _ITALIC_RE = re.compile(r"(?<!\*)\*([^*\n]+)\*(?!\*)")
+# Standalone media lines: ![alt](media:KEY) or ![video](youtube-url).
+_MEDIA_LINE_RE = re.compile(r"^!\[([^\]]*)\]\(([^)\s]+)\)$")
 
 
 def _inline_plain(text):
@@ -213,19 +381,29 @@ def _inline_plain(text):
 
 
 def _inline(text):
-    """Parse **bold**, *italic*, [label](url) into TEXT nodes."""
+    """Parse **bold**, *italic*, [label](url) into TEXT nodes.
+
+    A bold-wrapped link **[label](url)** is a single token: the label
+    gets BOLD + LINK decorations and no literal ** survives (the old
+    link-first pass left the asterisks as plain text — visible on the
+    live post 1 GitHub CTA until the 2026-10-28 revision).
+    """
     nodes = []
-    # Links first (their labels may themselves carry bold/italic).
     pos = 0
-    for m in _LINK_RE.finditer(text):
+    for m in _TOKEN_RE.finditer(text):
         if m.start() > pos:
             nodes.extend(_inline_plain(text[pos:m.start()]))
-        label, url = m.group(1), m.group(2)
+        if m.group("bl") is not None:
+            label, url, bold = m.group("bl"), m.group("bu"), True
+        else:
+            label, url, bold = m.group("l"), m.group("u"), False
         deco = [{"type": "LINK",
                  "linkData": {"link": {"url": url, "target": "BLANK"}}}]
         for sn in _inline_plain(label):
-            sn["textData"]["decorations"] = (
-                sn["textData"]["decorations"] + deco)
+            d = list(sn["textData"]["decorations"])
+            if bold and not any(x["type"] == "BOLD" for x in d):
+                d = [{"type": "BOLD"}] + d
+            sn["textData"]["decorations"] = d + deco
             nodes.append(sn)
         pos = m.end()
     if pos < len(text):
@@ -241,12 +419,53 @@ def _para(text, ids):
             "nodes": _inline(text), "paragraphData": {}}
 
 
-def md_to_ricos(md):
+def _media_node(stripped, media, ids):
+    """IMAGE / VIDEO node for a standalone media line, else None.
+
+    ![alt](media:KEY)  -> IMAGE node; KEY resolves through the media
+        map ({KEY: {"id", "width", "height"}} from uploaded files).
+    ![video](URL)      -> VIDEO node for a YouTube watch URL.
+    An unresolved media:KEY is a hard error — silently dropping an
+    image the author asked for is how posts ship without their art.
+    """
+    m = _MEDIA_LINE_RE.match(stripped)
+    if not m:
+        return None
+    alt, target = m.group(1), m.group(2)
+    if target.startswith("media:"):
+        key = target[len("media:"):]
+        entry = (media or {}).get(key)
+        if not entry:
+            raise ValueError("media line references unknown key %r "
+                             "(not in the media map)" % key)
+        return {"type": "IMAGE", "id": ids.next(), "nodes": [],
+                "imageData": {
+                    "containerData": {"width": {"size": "CONTENT"},
+                                      "alignment": "CENTER"},
+                    "image": {"src": {"id": entry["id"]},
+                              "width": entry.get("width"),
+                              "height": entry.get("height")},
+                    "altText": alt}}
+    if alt.strip().lower() == "video" and (
+            "youtube.com/watch" in target or "youtu.be/" in target):
+        return {"type": "VIDEO", "id": ids.next(), "nodes": [],
+                "videoData": {
+                    "containerData": {"width": {"size": "CONTENT"},
+                                      "alignment": "CENTER",
+                                      "textWrap": True},
+                    "video": {"src": {"url": target}}}}
+    return None
+
+
+def md_to_ricos(md, media=None):
     """Convert markdown to a Wix Ricos document ({'nodes': [...]}).
 
     Supports #/##/### headings, paragraphs, > blockquotes, - bullets,
-    1. numbered lists, and inline bold/italic/links. Anything else is
-    passed through as plain paragraph text — deterministic, no model.
+    1. numbered lists, inline bold/italic/links (including bold-wrapped
+    links), and standalone media lines ![alt](media:KEY) /
+    ![video](youtube-url) when a media map is supplied. Anything else
+    is passed through as plain paragraph text — deterministic, no
+    model.
     """
     ids = _Ids()
     nodes = []
@@ -270,6 +489,11 @@ def md_to_ricos(md):
         line = lines[i].rstrip()
         stripped = line.strip()
         if not stripped:
+            i += 1
+            continue
+        mnode = _media_node(stripped, media, ids)
+        if mnode is not None:
+            nodes.append(mnode)
             i += 1
             continue
         m = re.match(r"^(#{1,3})\s+(.*)", stripped)
@@ -302,6 +526,8 @@ def md_to_ricos(md):
         while i < len(lines):
             nxt = lines[i].strip()
             if not nxt or re.match(r"^(#{1,3}\s|>|[-*]\s|\d+\.\s)", nxt):
+                break
+            if _MEDIA_LINE_RE.match(nxt):
                 break
             para.append(nxt)
             i += 1
@@ -378,12 +604,22 @@ def cmd_list(_conn, drafts=False):
     return "%d %s(s):\n%s" % (len(rows), kind, "\n".join(out))
 
 
-def cmd_draft(conn, title, path, source=None, publish=False):
+def _load_json(path):
     with open(path) as fh:
-        md = fh.read()
-    ricos = md_to_ricos(md)
+        return json.load(fh)
+
+
+def cmd_draft(conn, title, path, source=None, publish=False,
+              media_path=None, cover_path=None):
+    with open(path) as fh:
+        md = with_post_footer(fh.read())
+    media = _load_json(media_path) if media_path else None
+    ricos = md_to_ricos(md, media=media)
+    cover = None
+    if cover_path:
+        cover = cover_media(_load_json(cover_path))
     cfg = config()
-    draft_post = create_draft(title, ricos, cfg)
+    draft_post = create_draft(title, ricos, cfg, cover=cover)
     status = "draft"
     post_id = None
     if publish:
@@ -397,6 +633,42 @@ def cmd_draft(conn, title, path, source=None, publish=False):
         with conn.cursor() as cur:
             cur.execute("UPDATE successbrian_os.marketing_blog_posts "
                         "SET post_id = %s WHERE id = %s", (post_id, rid))
+        conn.commit()
+    return msg
+
+
+def cmd_upload(_conn, path, name=None):
+    file_obj = upload_media(path, file_name=name)
+    return json.dumps(file_obj, indent=1)
+
+
+def cmd_revise(conn, draft_id, path, media_path=None, cover_path=None,
+               excerpt=None, publish=False):
+    """Revise an existing post: PATCH its draft, optionally republish.
+
+    Content file is a full replacement article (same footer rule as
+    drafts). The registry row is refreshed, keeping the same post id.
+    """
+    with open(path) as fh:
+        md = with_post_footer(fh.read())
+    media = _load_json(media_path) if media_path else None
+    ricos = md_to_ricos(md, media=media)
+    cover = None
+    if cover_path:
+        cover = cover_media(_load_json(cover_path))
+    cfg = config()
+    update_draft(draft_id, cfg, ricos=ricos, cover=cover, excerpt=excerpt)
+    msg = "draft revised in place: %s" % draft_id
+    if publish:
+        post_id = publish_draft(draft_id, cfg)
+        msg += "; republished as post %s" % post_id
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE successbrian_os.marketing_blog_posts
+                      SET post_id = %s, status = 'published',
+                          updated_at = now()
+                    WHERE site_id = %s AND draft_id = %s""",
+                (post_id, cfg["site_id"], draft_id))
         conn.commit()
     return msg
 
@@ -476,6 +748,46 @@ def selftest(live=False):
           li["nodes"][0]["nodes"][0]["type"] == "PARAGRAPH")
     check("deterministic conversion",
           json.dumps(md_to_ricos(md)) == json.dumps(doc))
+    # Bold-wrapped link: **[label](url)** -> BOLD+LINK, no literal **.
+    bdoc = md_to_ricos("**[Get it](https://example.com/get)** — free\n")
+    bpara = bdoc["nodes"][0]
+    btexts = [t["textData"]["text"] for t in bpara["nodes"]]
+    bdecos = [d["type"] for t in bpara["nodes"]
+              for d in t["textData"]["decorations"]]
+    check("bold-link has no literal **",
+          not any("**" in t for t in btexts), "".join(btexts)[:60])
+    check("bold-link carries BOLD+LINK",
+          "BOLD" in bdecos and "LINK" in bdecos)
+    # Media lines: image via media map, video via YouTube URL.
+    mmap = {"hero": {"id": "abc123_hero.png", "width": 1600,
+                     "height": 900}}
+    mdoc = md_to_ricos("Before.\n\n![A diagram](media:hero)\n\n"
+                       "![video](https://www.youtube.com/watch?v=XYZ123)\n\n"
+                       "After.\n", media=mmap)
+    mtypes = [n["type"] for n in mdoc["nodes"]]
+    check("image node from media line", "IMAGE" in mtypes)
+    check("video node from media line", "VIDEO" in mtypes)
+    img = next(n for n in mdoc["nodes"] if n["type"] == "IMAGE")
+    check("image node src id + dims",
+          img["imageData"]["image"]["src"]["id"] == "abc123_hero.png"
+          and img["imageData"]["image"]["width"] == 1600)
+    vid = next(n for n in mdoc["nodes"] if n["type"] == "VIDEO")
+    check("video node src url",
+          vid["videoData"]["video"]["src"]["url"]
+          == "https://www.youtube.com/watch?v=XYZ123")
+    try:
+        md_to_ricos("![x](media:missing)\n", media=mmap)
+        check("unknown media key is a hard error", False)
+    except ValueError:
+        check("unknown media key is a hard error", True)
+    cov = cover_media({"id": "abc123_hero.png", "width": 1600,
+                       "height": 900, "fileName": "hero.png"})
+    check("cover media shape (media.wixMedia.image {id})",
+          cov["wixMedia"]["image"]["id"] == "abc123_hero.png"
+          and cov["displayed"] is True)
+    footed = with_post_footer(md)
+    check("substack footer appended", SUBSTACK_URL in footed)
+    check("substack footer idempotent", with_post_footer(footed) == footed)
 
     # Registry round trip inside a rolled-back transaction.
     conn = pm_core.conn()
@@ -535,6 +847,20 @@ def main(argv=None):
     dp.add_argument("--file", required=True)
     dp.add_argument("--source")
     dp.add_argument("--publish", action="store_true")
+    dp.add_argument("--media", help="media map JSON for ![alt](media:KEY)")
+    dp.add_argument("--cover-media",
+                    help="uploaded-file JSON to set as cover image")
+    up = sub.add_parser("upload")
+    up.add_argument("--file", required=True)
+    up.add_argument("--name")
+    rp = sub.add_parser("revise")
+    rp.add_argument("--draft-id", required=True)
+    rp.add_argument("--file", required=True)
+    rp.add_argument("--media", help="media map JSON for ![alt](media:KEY)")
+    rp.add_argument("--cover-media",
+                    help="uploaded-file JSON to set as cover image")
+    rp.add_argument("--excerpt")
+    rp.add_argument("--publish", action="store_true")
     pp = sub.add_parser("publish")
     pp.add_argument("--draft-id", required=True)
     xp = sub.add_parser("delete-draft")
@@ -558,7 +884,16 @@ def main(argv=None):
             out = cmd_list(conn, drafts=args.drafts)
         elif args.cmd == "draft":
             out = cmd_draft(conn, args.title, args.file,
-                            source=args.source, publish=args.publish)
+                            source=args.source, publish=args.publish,
+                            media_path=args.media,
+                            cover_path=args.cover_media)
+        elif args.cmd == "upload":
+            out = cmd_upload(conn, args.file, name=args.name)
+        elif args.cmd == "revise":
+            out = cmd_revise(conn, args.draft_id, args.file,
+                             media_path=args.media,
+                             cover_path=args.cover_media,
+                             excerpt=args.excerpt, publish=args.publish)
         elif args.cmd == "publish":
             out = cmd_publish(conn, args.draft_id)
         elif args.cmd == "delete-draft":

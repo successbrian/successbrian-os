@@ -37,3 +37,12 @@ tools/ecosystem_intel/trading_systems.py.bak*
 tools/pm/state/
 board/state/
 *.lock
+
+# Secrets + local-only data homes — never tracked (2026-10-28 hygiene,
+# Greg-ready phase 1): the tracked .env is what put a live API key in
+# the public repo; rotation made the history copy worthless, this keeps
+# it from ever happening again.
+.env
+frontdesk/
+knowledge_bridge/
+*.bak

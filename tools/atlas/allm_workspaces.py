@@ -594,6 +594,24 @@ Brian's determination rules, encoded:
       R39/R40; Brian's desks remain reference instances
       and operator data remains private. Encoded below
       as CORE_REQUIREMENT, enforced by selftest.
+      Addendum (Brian, 2026-10-28 16:48): CREW
+      INTERACTION — the CEO agent is a BACKGROUND
+      EXECUTIVE: operators in most cases do not chat
+      with it; it works continuously on things they may
+      never see, and they SEE RESULTS. Altair is the
+      daily chat surface. TWO KNOWLEDGE LEVELS — the
+      operator surface is simple (chat + results,
+      outcomes only); the architect's hows/whys stay
+      fully transparent underneath, available, never
+      forced. MEMORY ARCHITECTURE — SBOS memory is NOT
+      context-window size: it is the persistent second
+      brain (indexed, verified, dependency-retained)
+      that rehydrates any agent's context on demand.
+      The OS remembers for the agent — which is how a
+      forgetful external agent performs as if it
+      remembers. Encoded in CORE_REQUIREMENT as
+      crew_interaction / knowledge_levels /
+      memory_architecture, enforced by selftest.
 
 Registry: atlas.allm_workspace_registry (ecosystem_central), seeded
 idempotently from this file. Live truth (which workspaces exist and
@@ -835,6 +853,29 @@ CORE_REQUIREMENT = {
                           "at onboarding — never a shipped "
                           "default (Brian's own CEO agent name "
                           "is operator-private)",
+    },
+    "crew_interaction": {
+        "ceo_agent": "a background executive — operators in "
+                     "most cases do not chat with it; it works "
+                     "continuously on things they may never "
+                     "see; operators SEE RESULTS (a results/"
+                     "outcome surface is part of the core)",
+        "altair": "the daily chat surface",
+    },
+    "knowledge_levels": {
+        "operator": "a simple surface — chat + results, "
+                    "outcomes only",
+        "architect": "the hows and whys — full transparency "
+                     "underneath, available, never forced",
+    },
+    "memory_architecture": {
+        "claim": "SBOS memory is not context-window size",
+        "is": "the persistent second brain — indexed, "
+              "verified, dependency-retained — that "
+              "rehydrates any agent's context on demand",
+        "interop_payoff": "the OS remembers for the agent: "
+                          "a forgetful external agent "
+                          "performs as if it remembers",
     },
     "two_part_test": [
         "does the plugin consume core rather than duplicate it?",
@@ -3489,6 +3530,25 @@ def selftest(conn):
           "agent's name is per-operator configuration, and "
           "Brian's own CEO name appears nowhere in the "
           "shipped requirement (Brian, 2026-10-28)")
+    check(CORE_REQUIREMENT["crew_interaction"]["altair"]
+          == "the daily chat surface"
+          and "SEE RESULTS"
+          in CORE_REQUIREMENT["crew_interaction"]["ceo_agent"]
+          and "outcomes only"
+          in CORE_REQUIREMENT["knowledge_levels"]["operator"]
+          and "never forced"
+          in CORE_REQUIREMENT["knowledge_levels"]["architect"]
+          and "not context-window size"
+          in CORE_REQUIREMENT["memory_architecture"]["claim"]
+          and "remembers for the agent"
+          in CORE_REQUIREMENT["memory_architecture"]
+          ["interop_payoff"],
+          "R41 addendum: the CEO agent is a background "
+          "executive whose work surfaces as results; Altair "
+          "is the chat surface; operators get outcomes, the "
+          "architect keeps full transparency; and SBOS "
+          "memory is the persistent second brain that "
+          "remembers for any agent (Brian, 2026-10-28)")
     check(sum(1 for (frm, _t, et, _n) in _plan
               if frm == "allm:successbrian-os"
               and et == "contains") == len(SEGMENTS),

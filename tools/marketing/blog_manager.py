@@ -76,16 +76,20 @@ ENV_PATH = os.path.expanduser("~/successbrian-os/.env")
 # block appended (idempotent: skipped when the link is already present),
 # so no post can ship without it and no post ever carries it twice.
 SUBSTACK_URL = "https://successbrianhub.substack.com"
+# The footer emits the TRACKED URL (Brian 2026-10-29: all links
+# tracked for clicking); the redirector resolves it to
+# SUBSTACK_URL. campaignsdesk.outbound_links slug sbos-substack.
+TRACKED_SUBSTACK_URL = "https://successbrianvps.com/v/sbos-substack"
 POST_FOOTER_MD = (
     "\n\n**Read more from Brian Lathe on Substack**\n\n"
     "This blog is one room in a bigger house. My main writing lives on "
     "Substack - longer pieces, new posts first, always free to read: "
-    "[Brian Lathe on Substack](https://successbrianhub.substack.com).\n"
+    "[Brian Lathe on Substack](https://successbrianvps.com/v/sbos-substack).\n"
 )
 
 
 def with_post_footer(md):
-    if SUBSTACK_URL in md:
+    if SUBSTACK_URL in md or TRACKED_SUBSTACK_URL in md:
         return md
     return md.rstrip() + "\n" + POST_FOOTER_MD
 
@@ -811,7 +815,7 @@ def selftest(live=False):
           cov["wixMedia"]["image"]["id"] == "abc123_hero.png"
           and cov["displayed"] is True)
     footed = with_post_footer(md)
-    check("substack footer appended", SUBSTACK_URL in footed)
+    check("substack footer appended", TRACKED_SUBSTACK_URL in footed)
     check("substack footer idempotent", with_post_footer(footed) == footed)
 
     # Registry round trip inside a rolled-back transaction.

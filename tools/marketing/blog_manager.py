@@ -461,7 +461,7 @@ def md_to_ricos(md, media=None):
     """Convert markdown to a Wix Ricos document ({'nodes': [...]}).
 
     Supports #/##/### headings, paragraphs, > blockquotes, - bullets,
-    1. numbered lists, inline bold/italic/links (including bold-wrapped
+    1. numbered lists, --- dividers, inline bold/italic/links (including bold-wrapped
     links), and standalone media lines ![alt](media:KEY) /
     ![video](youtube-url) when a media map is supplied. Anything else
     is passed through as plain paragraph text — deterministic, no
@@ -496,6 +496,13 @@ def md_to_ricos(md, media=None):
             nodes.append(mnode)
             i += 1
             continue
+        if stripped in ("---", "***", "___"):
+            nodes.append({"type": "DIVIDER", "id": ids.next(), "nodes": [],
+                          "dividerData": {"lineStyle": "SINGLE",
+                                          "alignment": "CENTER",
+                                          "width": "LARGE"}})
+            i += 1
+            continue
         m = re.match(r"^(#{1,3})\s+(.*)", stripped)
         if m:
             nodes.append({"type": "HEADING", "id": ids.next(),
@@ -525,7 +532,8 @@ def md_to_ricos(md, media=None):
         i += 1
         while i < len(lines):
             nxt = lines[i].strip()
-            if not nxt or re.match(r"^(#{1,3}\s|>|[-*]\s|\d+\.\s)", nxt):
+            if not nxt or nxt in ("---", "***", "___") \
+                    or re.match(r"^(#{1,3}\s|>|[-*]\s|\d+\.\s)", nxt):
                 break
             if _MEDIA_LINE_RE.match(nxt):
                 break

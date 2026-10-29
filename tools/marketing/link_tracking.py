@@ -86,8 +86,8 @@ def add_slug():
     sys.path.insert(0, "/home/successbrian/successbrian-os/tools/pm"); import pm_core; conn = pm_core.conn(); cur = conn.cursor()
     cur.execute(
         "insert into campaignsdesk.outbound_links"
-        " (slug, target_url, link_kind, article_slug, label)"
-        " values (%s, %s, %s, %s, %s)"
+        " (slug, target_url, link_kind, article_slug, label, active)"
+        " values (%s, %s, %s, %s, %s, true)"
         " on conflict (slug) do update set target_url = excluded.target_url,"
         " link_kind = excluded.link_kind, label = excluded.label,"
         " article_slug = excluded.article_slug, active = true",

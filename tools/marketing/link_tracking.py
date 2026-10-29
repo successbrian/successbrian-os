@@ -13,6 +13,7 @@ rebuilt 2026-10-29 (Spencer) in the exact format it replaces.
 
 Usage:
   python3 link_tracking.py render          # print the conf to stdout
+  python3 link_tracking.py add --slug S --url U [--kind K] [--label L] [--article A]
   python3 link_tracking.py deploy          # render, ship, nginx -t, reload
 """
 import subprocess
@@ -55,10 +56,14 @@ def ssh(cmd, **kw):
 
 
 def deploy():
+    import tempfile
     conf, n = render()
-    r = subprocess.run(["scp", "-o", "ConnectTimeout=10", "/dev/stdin",
+    fd, tmp = tempfile.mkstemp(prefix="sbos-links-", suffix=".conf")
+    with open(fd, "w") as fh:
+        fh.write(conf)
+    r = subprocess.run(["scp", "-o", "ConnectTimeout=10", tmp,
                         "%s:/tmp/sbos-links.conf" % GAMMA],
-                       input=conf, capture_output=True, text=True, timeout=90)
+                       capture_output=True, text=True, timeout=90)
     if r.returncode != 0:
         raise SystemExit("scp failed: " + r.stderr)
     r = ssh("cp %s %s.bak-auto && cp /tmp/sbos-links.conf %s && "
@@ -69,9 +74,33 @@ def deploy():
     print("link_tracking deploy: %d active slugs live" % n)
 
 
+def add_slug():
+    import argparse
+    ap = argparse.ArgumentParser(prog="link_tracking.py add")
+    ap.add_argument("--slug", required=True)
+    ap.add_argument("--url", required=True)
+    ap.add_argument("--kind", default="other")
+    ap.add_argument("--label", default="")
+    ap.add_argument("--article", default=None)
+    a = ap.parse_args(sys.argv[2:])
+    sys.path.insert(0, "/home/successbrian/successbrian-os/tools/pm"); import pm_core; conn = pm_core.conn(); cur = conn.cursor()
+    cur.execute(
+        "insert into campaignsdesk.outbound_links"
+        " (slug, target_url, link_kind, article_slug, label)"
+        " values (%s, %s, %s, %s, %s)"
+        " on conflict (slug) do update set target_url = excluded.target_url,"
+        " link_kind = excluded.link_kind, label = excluded.label,"
+        " article_slug = excluded.article_slug, active = true",
+        (a.slug, a.url, a.kind, a.article, a.label))
+    conn.commit()
+    print("link_tracking: slug live in registry:", a.slug, "->", a.url)
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "deploy":
         deploy()
+    elif len(sys.argv) > 1 and sys.argv[1] == "add":
+        add_slug()
     else:
         conf, n = render()
         print(conf)

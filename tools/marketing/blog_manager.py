@@ -438,7 +438,7 @@ def _media_node(stripped, media, ids):
         if not entry:
             raise ValueError("media line references unknown key %r "
                              "(not in the media map)" % key)
-        return {"type": "IMAGE", "id": ids.next(), "nodes": [],
+        node = {"type": "IMAGE", "id": ids.next(), "nodes": [],
                 "imageData": {
                     "containerData": {"width": {"size": "CONTENT"},
                                       "alignment": "CENTER"},
@@ -446,6 +446,12 @@ def _media_node(stripped, media, ids):
                               "width": entry.get("width"),
                               "height": entry.get("height")},
                     "altText": alt}}
+        if entry.get("link"):
+            # Optional click-through (media map entry "link": URL) —
+            # Brian 2026-10-29: blog images click through to WhatsApp.
+            node["imageData"]["link"] = {"url": entry["link"],
+                                         "target": "BLANK"}
+        return node
     if alt.strip().lower() == "video" and (
             "youtube.com/watch" in target or "youtu.be/" in target):
         return {"type": "VIDEO", "id": ids.next(), "nodes": [],

@@ -499,7 +499,18 @@ def md_to_ricos(md, media=None):
             continue
         mnode = _media_node(stripped, media, ids)
         if mnode is not None:
+            # Breathing room around standalone media (Brian 2026-10-29:
+            # images sat jammed against the text). An empty paragraph
+            # on each side renders as vertical space in the Wix theme;
+            # collapse doubles so back-to-back media stay tight-ish.
+            spacer = lambda: {"type": "PARAGRAPH", "id": ids.next(),
+                              "nodes": [], "paragraphData": {}}
+            if nodes and nodes[-1]["type"] != "PARAGRAPH":
+                nodes.append(spacer())
+            elif nodes and nodes[-1].get("nodes"):
+                nodes.append(spacer())
             nodes.append(mnode)
+            nodes.append(spacer())
             i += 1
             continue
         if stripped in ("---", "***", "___"):

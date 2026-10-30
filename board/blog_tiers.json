@@ -1,0 +1,44 @@
+{
+ "dated": "2026-10-29",
+ "held": {
+  "aegeanvedaflow": "Tier placement is Brian's OPEN question (a Tier 4 placement was recommended to him and is unanswered at this date) - it is NOT in Tier 1 and no tier is asserted for it here.",
+  "cryptostreemz": "Tier placement is Brian's OPEN question (a Tier 4 placement was recommended to him and is unanswered at this date) - it is NOT in Tier 1 and no tier is asserted for it here."
+ },
+ "how_to_update": "When Brian rules a tier change, edit ONLY this file: move the blog's slug between the tier lists (or change its held entry), update 'dated' and note the ruling in 'source'. No code change is needed or wanted - tiers are data, not code truth. The clerk re-reads this file on each fresh load.",
+ "source": "Brian's Tier 1 core-family ruling 2026-10-29 21:22 CDT (contactflowcrm, gotbackup, zilara, trafficstreemz, scam watch, ai for network marketers, successbrian os) + blog release ranking 2026-10-29 (~/workspace/builds/blog-release-ranking-2026-10-29.md) for tiers 2-4 + WS3 build record 2026-10-29 21:38 CDT for the held skins",
+ "tier1_core_family": [
+  "contactflowcrm-blog",
+  "gotbackup-blog",
+  "zilara-blog",
+  "trafficstreemz-blog",
+  "scam-watch",
+  "ai-network-marketers",
+  "successbrian-os-blog"
+ ],
+ "tier2": [
+  "ai-builders",
+  "mens-health",
+  "kaspa",
+  "hashrate-harbor",
+  "mountain-north"
+ ],
+ "tier3": [
+  "essential-oils-everyday",
+  "longevity-olive",
+  "oliabo-blog",
+  "bannerbedlam",
+  "choozpoll",
+  "civitasmarket-blog",
+  "aoem"
+ ],
+ "tier4_held": [
+  "civitasdex-blog",
+  "civitasreserve-blog",
+  "cryptobotcraze",
+  "doughdiamonds",
+  "novusferre",
+  "vextorgrid",
+  "crypto-trading-yield",
+  "driving-dollars-digest"
+ ]
+}

@@ -53,6 +53,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.request
 
 sys.path.insert(0, os.path.expanduser("~/successbrian-os/tools/pm"))
 sys.path.insert(0, os.path.expanduser("~/successbrian-os/tools/atlas"))
@@ -111,7 +112,241 @@ CREATE TABLE IF NOT EXISTS successbrian_os.wf3_filings (
 """
 
 
-def classify(cap):
+# ------------------------------------------------------------------
+# BLOG AWARENESS (WS3, Brian's upgrade order 2026-10-29 21:38 CDT:
+# "build in the upgrades needed based on what we learned tonight").
+# When a capture's text names a registered blog, the clerk attaches
+# that blog's context — slug, derived launch state + next step,
+# tier, open issue count — to the packet / WF3 filing AND to the
+# clerk_sort record, and two word rules (reasons in words, never
+# scores) adjust the sort:
+#   (i)  a capture that resolves or advances an open item of a
+#        Tier-1 (core-family) blog strengthens toward a WF1 board
+#        packet, with the blog context attached;
+#   (ii) a discovery about a HELD blog (an open
+#        issue-skin-not-launchable Atlas task, or Tier-4 held in
+#        the tier data) files as WF3 kept intel UNLESS its text
+#        says the held state changed (skin launched / priced /
+#        settled) — then it goes to the board.
+# Borderline stays board, as always: a held-blog capture that does
+# not declare itself a finished result is NOT forced into WF3.
+#
+# HOW THE CONTEXT IS OBTAINED (chosen route, and why): the blog
+# list is read from campaignsdesk.blogs in the DB at runtime
+# (never hardcoded), and state / next step / blockers come from
+# IMPORTING campaignsdesk/code/blog_launch.py as a library
+# (load_facts + derive_blog) — the one derivation Brian's launch
+# state machine owns; the clerk does not reimplement it. If that
+# import ever fails, the context degrades to slug/tier/blocker
+# counts read from the same source tables blog_launch reads
+# (blog_checklist + atlas.nodes issue tasks) with the state
+# honestly marked unavailable — sorting never blocks on it.
+#
+# TIERS ARE DATA, NOT CODE: board/blog_tiers.json (source + date
+# inside). Brian's future tier ruling edits that file only.
+# CryptoStreemz / AegeanVedaFlow are HELD there: their tier
+# placement is Brian's open question, they are NOT Tier 1.
+BLOG_TIERS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "blog_tiers.json")
+_BLOG_CACHE = {"at": 0.0, "contexts": None}
+
+_HELD_CHANGE_PHRASES = (
+    "skin launched", "skin is launched", "skin now live",
+    "skin is now launchable", "skin priced", "skin is priced",
+    "pricing set", "pricing settled", "composition settled",
+    "skin composition settled", "no longer held", "held state changed",
+    "skin is launchable",
+)
+_ADVANCE_PHRASES = (
+    "resolves", "resolved", "resolving", "advances", "advanced",
+    "completes", "completed", "settles", "settled", "now present",
+    "recorded present", "is present", "shipped", "closes", "closed",
+    "done for", "finished",
+)
+
+
+def load_blog_tiers():
+    """Tier data from board/blog_tiers.json. Returns
+    {slug: (tier_label, held_note_or_None)}; {} if unreadable."""
+    try:
+        data = json.load(open(BLOG_TIERS_PATH))
+    except Exception:
+        return {}
+    out = {}
+    for slug in data.get("tier1_core_family") or []:
+        out[slug] = ("tier1", None)
+    for slug in data.get("tier2") or []:
+        out[slug] = ("tier2", None)
+    for slug in data.get("tier3") or []:
+        out[slug] = ("tier3", None)
+    for slug in data.get("tier4_held") or []:
+        out[slug] = ("tier4-held", "Tier 4 held in the tier data")
+    for slug, note in (data.get("held") or {}).items():
+        out[slug] = ("held", note)
+    return out
+
+
+def _blog_match_phrases(slug, name):
+    """Normalized phrases that name this blog in capture text:
+    the slug, the slug as words, the slug minus its -blog suffix,
+    and the display name's core (parentheticals / working-name
+    tails stripped). Longest phrases win at match time."""
+    phrases = set()
+    def add(p):
+        p = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]", " ",
+                                       (p or "").lower())).strip()
+        if len(p) >= 4:
+            phrases.add(p)
+    add(slug)
+    add(slug.replace("-", " "))
+    if slug.endswith("-blog"):
+        add(slug[:-5])
+        add(slug[:-5].replace("-", " "))
+    core = re.sub(r"\([^)]*\)", " ", name or "")
+    core = core.split("—")[0].split(" - ")[0]
+    add(core)
+    add(re.sub(r"\bblog\b", "", core))
+    return sorted(phrases, key=len, reverse=True)
+
+
+def load_blog_contexts(force=False):
+    """{slug: context} for every registered blog, cached briefly.
+    Context: slug, name, tier, held + held_reason, derived state,
+    next step, open issue (blocker) list + count, checklist
+    present/open item lists, source stamp, checked_at."""
+    import time as _time
+    now = _time.time()
+    if (not force and _BLOG_CACHE["contexts"] is not None
+            and now - _BLOG_CACHE["at"] < 300):
+        return _BLOG_CACHE["contexts"]
+    from datetime import datetime as _dt
+    checked_at = _dt.now().astimezone().isoformat(timespec="seconds")
+    tiers = load_blog_tiers()
+    contexts = {}
+    try:
+        c = pm_core.conn()
+        cur = c.cursor()
+        cur.execute("SELECT slug, name FROM campaignsdesk.blogs "
+                    "ORDER BY slug")
+        blogs = cur.fetchall()
+        c.close()
+    except Exception:
+        _BLOG_CACHE.update(at=now, contexts={})
+        return {}
+    # Primary: blog_launch.py's own derivation, imported.
+    derived, derivation_source = {}, None
+    try:
+        sys.path.insert(0, os.path.expanduser("~/campaignsdesk/code"))
+        import blog_launch as _bl
+        conn = _bl.connect()
+        try:
+            facts = _bl.load_facts(conn)
+        finally:
+            conn.close()
+        for slug, f in facts.items():
+            derived[slug] = _bl.derive_blog(f)
+        derivation_source = ("blog_launch.py load_facts()+derive_blog() "
+                             "imported from ~/campaignsdesk/code "
+                             "(checklist: campaignsdesk.blog_checklist; "
+                             "blockers: atlas.nodes task:blog:<slug>:issue-*)")
+    except Exception as exc:
+        derivation_source = (f"blog_launch.py import unavailable "
+                             f"({type(exc).__name__}: {exc}); state "
+                             f"unavailable — counts read from "
+                             f"campaignsdesk.blog_checklist + atlas.nodes")
+        try:
+            c = pm_core.conn()
+            cur = c.cursor()
+            cur.execute(
+                "SELECT node_key FROM atlas.nodes WHERE node_key LIKE "
+                "'task:blog:%:issue-%' AND status='queued'")
+            blk = {}
+            for (key,) in cur.fetchall():
+                parts = key.split(":")
+                if len(parts) >= 4:
+                    blk.setdefault(parts[2], []).append(parts[3])
+            c.close()
+            for slug, _n in blogs:
+                derived[slug] = {"state": "unknown (derivation "
+                                 "unavailable)", "next_step": None,
+                                 "blockers": sorted(blk.get(slug, [])),
+                                 "checklist_present": [],
+                                 "checklist_open": []}
+        except Exception:
+            pass
+    for slug, name in blogs:
+        d = derived.get(slug) or {}
+        checklist_present, checklist_open = [], []
+        steps = d.get("steps") or []
+        for step, st in steps:
+            if st == "done":
+                checklist_present.append(step[0])
+            elif st == "open":
+                checklist_open.append(step[0])
+        if not steps and "checklist_present" in d:
+            checklist_present = d["checklist_present"]
+        blockers = d.get("blockers") or []
+        tier, tier_note = tiers.get(slug, ("not in tier data", None))
+        held_reasons = []
+        if "issue-skin-not-launchable" in blockers:
+            held_reasons.append("open Atlas issue "
+                                "issue-skin-not-launchable")
+        if tier in ("held", "tier4-held"):
+            held_reasons.append(tier_note or f"tier data says {tier}")
+        nxt = d.get("next_step")
+        contexts[slug] = {
+            "slug": slug, "name": name,
+            "tier": tier, "tier_note": tier_note,
+            "held": bool(held_reasons),
+            "held_reason": "; ".join(held_reasons) or None,
+            "state": d.get("state"),
+            "next_step": ({"key": nxt[0], "title": nxt[2]}
+                          if nxt else None),
+            "blockers": blockers,
+            "open_issue_count": len(blockers),
+            "checklist_present": checklist_present,
+            "checklist_open": checklist_open,
+            "source": derivation_source,
+            "checked_at": checked_at,
+            "_phrases": _blog_match_phrases(slug, name),
+        }
+    _BLOG_CACHE.update(at=now, contexts=contexts)
+    return contexts
+
+
+def match_blog(cap, contexts=None):
+    """The registered blog a capture's text names, or None.
+    Longest phrase match wins, so 'zilara blog' beats a bare
+    'zilara' inside another blog's name."""
+    text = " ".join([cap.get("title") or "", cap.get("context") or "",
+                     cap.get("raw") or ""])
+    norm = " " + re.sub(r"\s+", " ", re.sub(
+        r"[^a-z0-9 ]", " ", text.lower())).strip() + " "
+    contexts = contexts if contexts is not None else load_blog_contexts()
+    best, best_len = None, 0
+    for slug, ctx in contexts.items():
+        for phrase in ctx.get("_phrases") or []:
+            if len(phrase) > best_len and f" {phrase} " in norm:
+                best, best_len = ctx, len(phrase)
+    if best is None:
+        return None
+    return {k: v for k, v in best.items() if not k.startswith("_")}
+
+
+def blog_context_line(ctx):
+    """One plain line carrying a blog context, for packets/filings."""
+    nxt = ctx.get("next_step")
+    return (f"blog {ctx['slug']} ({ctx['name']}): tier {ctx['tier']}; "
+            f"derived state {ctx.get('state')}; next step "
+            f"{(nxt['key'] + ' — ' + nxt['title']) if nxt else 'none'}; "
+            f"open issues {ctx['open_issue_count']}"
+            + (f" ({', '.join(ctx['blockers'])})" if ctx["blockers"]
+               else "")
+            + (f"; HELD — {ctx['held_reason']}" if ctx["held"] else "")
+            + f" [source: {ctx['source']}; checked {ctx['checked_at']}]")
+
+
+def classify(cap, contexts=None):
     """The clerk's sort, stated in words. Returns (route, reasons)
     where route is 'wf3' (keep: Workflow #3) or 'board' (Workflow
     #1 packet — the exit for everything the clerk doesn't keep;
@@ -138,14 +373,69 @@ def classify(cap):
         carries = True
         reasons.append("carries its source (URL in context)")
     if declares and carries:
-        return "wf3", reasons
-    if not declares:
-        reasons.append("does not declare itself a result — "
-                       "judgment is the default")
-    if not carries:
-        reasons.append("carries no worked result or source — "
-                       "judgment is the default")
-    return "board", reasons
+        route = "wf3"
+    else:
+        route = "board"
+        if not declares:
+            reasons.append("does not declare itself a result — "
+                           "judgment is the default")
+        if not carries:
+            reasons.append("carries no worked result or source — "
+                           "judgment is the default")
+    # BLOG AWARENESS overlay (see the section above classify):
+    # context is attached whenever a registered blog is named;
+    # the two word rules below are the only routing effects.
+    try:
+        ctx = match_blog(cap, contexts=contexts)
+    except Exception:
+        ctx = None
+    cap["_blog_context"] = ctx
+    if ctx:
+        reasons.append(
+            "names a registered blog — blog context attached: "
+            + blog_context_line(ctx))
+        text_low = " ".join([title, context, raw]).lower()
+        if ctx["held"]:
+            changed = [p for p in _HELD_CHANGE_PHRASES
+                       if p in text_low]
+            if changed:
+                reasons.append(
+                    f"blog {ctx['slug']} is held ({ctx['held_reason']}) "
+                    f"BUT the text says the held state changed "
+                    f"('{changed[0]}') — that is a judgment for the "
+                    f"board, not a filing: board packet")
+                route = "board"
+            elif route == "wf3":
+                reasons.append(
+                    f"blog {ctx['slug']} is held ({ctx['held_reason']}) "
+                    f"and the text does not say the held state "
+                    f"changed — a discovery about a held blog is "
+                    f"kept intel: Workflow #3 filing, blog context "
+                    f"attached")
+            else:
+                reasons.append(
+                    f"blog {ctx['slug']} is held ({ctx['held_reason']}) "
+                    f"and the text does not say the held state "
+                    f"changed, but this capture does not declare "
+                    f"itself a finished result — borderline stays "
+                    f"with the board, blog context attached")
+        elif ctx["tier"] == "tier1":
+            advances = [p for p in _ADVANCE_PHRASES if p in text_low]
+            if advances:
+                reasons.append(
+                    f"blog {ctx['slug']} is a Tier 1 core-family blog "
+                    f"and the text says an open item is resolved or "
+                    f"advanced ('{advances[0]}') — that strengthens "
+                    f"it toward a Workflow #1 board packet, blog "
+                    f"context attached")
+                route = "board"
+            else:
+                reasons.append(
+                    f"blog {ctx['slug']} is a Tier 1 core-family blog; "
+                    f"the text does not say an open item is resolved "
+                    f"or advanced — routing unchanged, blog context "
+                    f"attached")
+    return route, reasons
 
 
 def _checked_on(cap):
@@ -258,8 +548,330 @@ def fetch_new(last_id):
             for r in rows]
 
 
+# ------------------------------------------------------------------
+# PLAIN-WORDS HEAD (Brian, 2026-10-26, capture #204: "the packet
+# didn't make sense to me"). Every packet OPENS with a short head
+# in ordinary language — what this is, what Brian said or what
+# happened, and why it is in front of the board — and the existing
+# bookkeeping (provenance, dilemma, judge questions, source) sits
+# BELOW it. The head is composed deterministically from the
+# captures' own titles, contexts, and raw text, Brian's quoted
+# words first. If the deterministic head fails the plainness test
+# below, the clerk may ask Morpheus (the fleet's drafting hands —
+# llama-server at 127.0.0.1:11437, the board's own endpoint per
+# board/config/brian.yaml) for a constrained restatement: restate
+# only, no new facts. If the model is unreachable, slow, or its
+# text fails the same test, the code head ships — a head NEVER
+# blocks a filing.
+HEAD_MARKER = "IN PLAIN WORDS:"
+MORPHEUS_URL = os.environ.get(
+    "SC_MORPHEUS_URL", "http://127.0.0.1:11437/v1/chat/completions")
+_MODEL_BUDGET = {"left": int(os.environ.get("SC_PLAIN_MODEL_MAX", "3"))}
+
+_HEAD_JARGON = ("capture #", "scatter packet", "ssb", "wf1", "wf2",
+                "wf3", "atlas.", "packeted", "triage",
+                "mdm", "medallion", "observability", "golden record",
+                "blast radius", "provenance", "stewardship")
+_TAG_RE = re.compile(
+    r"^(?:Q&A\s+)?(?:Q\d+\s+)?(?:RULING|ANSWER|STATUS|UPDATE|"
+    r"CORRECTION|ASSESSMENT|NOTE|INTEL|RESEARCH|LANDSCAPE|"
+    r"FIX ORDERED|ORDER|FINDING|QUESTION)\s*[:\-—]\s*", re.I)
+_DATE_RE = re.compile(r"\b(20\d{2}-\d{2}-\d{2})\b")
+def _find_brian_quote(raw):
+    """Find Brian's quoted words in a capture's raw text with a
+    plain scan (no backtracking-prone regex): a 'Brian' mention,
+    then a ':' or em-dash within the next 90 chars, then a quote
+    mark; the quote runs to its closing mark, where a mark
+    followed by a lowercase letter is a contraction and does not
+    close it. Returns '' when nothing checks out."""
+    if not raw:
+        return ""
+    low = raw.lower()
+    pos = 0
+    for _ in range(8):
+        i = low.find("brian", pos)
+        if i < 0:
+            return ""
+        pos = i + 5
+        window = raw[i:i + 90]
+        seps = [j for j, ch in enumerate(window) if ch in ":—"]
+        s = -1
+        for cand in seps:
+            rest_c = window[cand + 1:]
+            k = 0
+            while k < len(rest_c) and rest_c[k] in " \t":
+                k += 1
+            if k < len(rest_c) and rest_c[k] in "'\"":
+                s = cand
+                break
+        if s < 0:
+            continue
+        rest = window[s + 1:]
+        k = 0
+        while k < len(rest) and rest[k] in " \t":
+            k += 1
+        mark = rest[k]
+        start = i + s + 1 + k + 1
+        out = []
+        j = start
+        while j < len(raw) and j - start <= 900:
+            ch = raw[j]
+            if ch == mark:
+                nxt = raw[j + 1] if j + 1 < len(raw) else ""
+                if not nxt.islower():
+                    break
+            if ch == "\n" and raw[j + 1:j + 2] == "\n":
+                break
+            out.append(ch)
+            j += 1
+        q = "".join(out).strip()
+        if len(q) >= 15 and _quote_ok(q):
+            return q
+    return ""
+
+
+def _quote_ok(q):
+    """A real Brian quote, not a fragment of Muse's prose: not a
+    possessive stub ('s own record...'), no all-caps header pair
+    in its opening, no filing provenance."""
+    if re.match(r"^[a-z]\s", q):
+        return False
+    if re.search(r"\b[A-Z]{3,}\s+[A-Z]{3,}\b", q[:200]):
+        return False
+    if "filed by Muse" in q.lower()[:60]:
+        return False
+    return True
+
+
+def _trim_words(text, limit):
+    text = re.sub(r"\s+", " ", (text or "")).strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    for sep in (". ", "! ", "? "):
+        i = cut.rfind(sep)
+        if i >= limit // 2:
+            return cut[:i + 1]
+    i = cut.rfind(" ")
+    return (cut[:i] if i > 0 else cut).rstrip(",;:") + "…"
+
+
+def _plain_clause(title):
+    """The capture's title, filing tags stripped, as one plain
+    sentence. Titles in this house already state the substance
+    ('common dump for ALL nodes...'); the tags ('Q&A Q5 RULING:')
+    are the bookkeeping Brian could not read past."""
+    t = re.sub(r"\s+", " ", (title or "")).strip()
+    prev = None
+    while prev != t:
+        prev = t
+        t = _TAG_RE.sub("", t).strip()
+    t = t.replace(" + ", ", and ").replace(";", ",")
+    t = re.sub(r"\s+", " ", t).strip(" -—")
+    if not t:
+        return ""
+    if t[-1] not in ".?!":
+        t += "."
+    return t[0].upper() + t[1:]
+
+
+def _first_sentences(text, limit=320, count=2):
+    text = re.sub(r"\s+", " ", (text or "")).strip()
+    if not text:
+        return ""
+    out = []
+    for sent in re.split(r"(?<=[.!?])\s+", text):
+        s = sent.strip()
+        if not s:
+            continue
+        letters = [ch for ch in s if ch.isalpha()]
+        if (letters and len(s) > 12
+                and sum(ch.isupper() for ch in letters) / len(letters)
+                > 0.6):
+            continue  # an all-caps header line, not prose
+        if s.lower().startswith(("filed by", "context:", "source:")):
+            continue
+        s = re.sub(r"^[A-Z][A-Z /-]{2,30}(\([^)]*\))?:\s+", "", s)
+        if s:
+            s = s[0].upper() + s[1:]
+        out.append(s)
+        if len(out) >= count:
+            break
+    return _trim_words(" ".join(out), limit)
+
+
+def _trim_quote(q, limit=480):
+    """Trim Brian's quoted words at sentence ends, keeping at
+    least through the first sentence that carries the decision
+    ('we need', 'so yes', 'i want', 'should', 'must') — the
+    ruling usually sits at the end of his reasoning, and a head
+    that keeps only the problem statement misleads."""
+    q = re.sub(r"\s+", " ", (q or "")).strip()
+    if len(q) <= limit:
+        return q
+    sents = re.split(r"(?<=[.!?])\s+", q)
+    markers = ("we need", "so yes", "i want", "should", "must")
+    out = ""
+    for s in sents:
+        out = (out + " " + s).strip()
+        if (any(mk in s.lower() for mk in markers)
+                and len(out) >= 120):
+            break
+        if len(out) >= limit:
+            break
+    if len(out) > limit:
+        out = _trim_words(out, limit)
+    return out
+
+
+def _what_said(m):
+    """(label, text): Brian's own quoted words when the capture
+    carries them; otherwise the first plain sentences of the
+    filing, labelled as what happened."""
+    raw = m.get("raw") or ""
+    dm = (_DATE_RE.search(m.get("context") or "")
+          or _DATE_RE.search(raw))
+    date = dm.group(1) if dm else ""
+    q = _find_brian_quote(raw)
+    if q:
+        when = f"On {date}: " if date else ""
+        return "WHAT BRIAN SAID:", f"{when}\"{_trim_quote(q)}\""
+    body = _first_sentences(raw)
+    if body:
+        return "WHAT HAPPENED:", body
+    ctx = _first_sentences(m.get("context") or "", 280, 2)
+    if ctx:
+        return "WHAT HAPPENED:", ctx
+    return ("WHAT HAPPENED:",
+            "This was filed to the Intel Bridge for the board "
+            "to look at.")
+
+
+def _why_here(members):
+    titles = " ".join((m.get("title") or "") for m in members).lower()
+    if "ruling" in titles or "ruled" in titles or "ordered" in titles:
+        return ("Brian has already decided this. It is here so the "
+                "board can judge whether the decision becomes "
+                "planned work, waits for its moment, or is set "
+                "aside — and what would settle that.")
+    if "?" in titles or "question" in titles:
+        return ("It is here so the board can judge the question "
+                "and bring back a recommendation. The ruling "
+                "itself stays Brian's.")
+    return ("It is here so the board can look at it and judge: "
+            "does it become planned work, wait for its moment, "
+            "or get set aside — and what would settle that?")
+
+
+def _head_plain_enough(head):
+    """The plainness test, in words: no filing jargon outside
+    Brian's own quoted words, no run-on lines, a real 'what this
+    is' line, and at least two full sentences."""
+    low = head.lower()
+    stripped = re.sub(r'"[^"]*"', '""', low)  # quoted words exempt
+    # Word-boundary matching: a plain substring test flags the
+    # fleet's own name ("SuccessBrian" contains "ssb").
+    if any(re.search(r"(?<![a-z0-9])" + re.escape(j) + r"(?![a-z0-9])",
+                     stripped) for j in _HEAD_JARGON):
+        return False
+    if any(len(line) > 560 for line in head.splitlines()):
+        return False
+    what = [l for l in head.splitlines()
+            if l.startswith("WHAT THIS IS:")]
+    if not what or len(what[0]) > 480:
+        return False
+    return len(re.findall(r"[.!?]", head)) >= 2
+
+
+def _model_head(members):
+    """Morpheus restatement, constrained to the captures' own
+    facts. Returns a full head (marker first) or None."""
+    if _MODEL_BUDGET["left"] <= 0:
+        return None
+    _MODEL_BUDGET["left"] -= 1
+    src = []
+    for m in members:
+        src.append(f"TITLE: {m.get('title', '')}")
+        if m.get("context"):
+            src.append("CONTEXT: " + m["context"][:700])
+        if m.get("raw"):
+            src.append("TEXT: " + m["raw"][:1300])
+    prompt = (
+        "Write exactly three short parts, each starting with its "
+        "label, in plain ordinary words a tired person can follow "
+        "at a glance:\n"
+        "WHAT THIS IS: one sentence saying what this filing is "
+        "about.\n"
+        "WHAT BRIAN SAID: one or two sentences saying what Brian "
+        "said or decided, or what happened if he did not speak.\n"
+        "WHY IT IS HERE: one sentence — the board is asked to "
+        "judge whether this becomes planned work, waits for its "
+        "moment, or is set aside.\n\nTEXT:\n" + "\n".join(src))
+    payload = {"model": "morpheus",
+               "messages": [
+                   {"role": "system",
+                    "content": "You restate text in plain, ordinary "
+                               "words. Use ONLY facts in the text "
+                               "given. Never add facts, names, "
+                               "numbers, or opinions that are not "
+                               "there. Short sentences. No jargon."},
+                   {"role": "user", "content": prompt}],
+               "temperature": 0.2, "max_tokens": 260}
+    try:
+        req = urllib.request.Request(
+            MORPHEUS_URL, data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=150) as r:
+            out = json.load(r)
+        text = out["choices"][0]["message"]["content"].strip()
+    except Exception:
+        return None
+    if not text.startswith("WHAT THIS IS:"):
+        return None
+    head = HEAD_MARKER + "\n" + text
+    return head if _head_plain_enough(head) else None
+
+
+def plain_head(members, allow_model=True):
+    """The plain-words head for a packet. Returns (head, how)
+    where how is 'code' or 'morpheus'."""
+    whats = []
+    for m in members:
+        clause = _plain_clause(m.get("title") or "")
+        if clause and clause not in whats:
+            whats.append(clause)
+    what = _trim_words(" ".join(whats), 460)
+    if len(members) > 1:
+        what += (f" (This packet pulls together {len(members)} "
+                 f"related filings.)")
+    lines = [HEAD_MARKER, f"WHAT THIS IS: {what}"]
+    said = []
+    for m in members:
+        label, text = _what_said(m)
+        line = f"{label} {text}"
+        if line not in said:
+            said.append(line)
+        if len(said) >= 2:
+            break
+    lines.extend(said)
+    lines.append("WHY IT IS HERE: " + _why_here(members))
+    head = "\n".join(lines)
+    if _head_plain_enough(head):
+        return head, "code"
+    if allow_model:
+        mh = _model_head(members)
+        if mh:
+            return mh, "morpheus"
+    return head, "code"
+
+
+
+
 def packet_text(members):
     lines = []
+    head, _how = plain_head(members)
+    lines.append(head)
+    lines.append("")
     titles = "; ".join(m["title"] for m in members)
     lines.append(f"SCATTER PACKET — {titles}")
     lines.append("")
@@ -284,6 +896,17 @@ def packet_text(members):
     for i, q in enumerate(EASY_QUESTIONS, 1):
         lines.append(f"{i}. {q}")
     lines.append("")
+    blog_ctxs = [m.get("_blog_context") for m in members
+                 if m.get("_blog_context")]
+    if blog_ctxs:
+        lines.append("BLOG CONTEXT (attached by the clerk — "
+                     "registered blog named in this packet):")
+        seen = set()
+        for ctx in blog_ctxs:
+            if ctx["slug"] not in seen:
+                seen.add(ctx["slug"])
+                lines.append("- " + blog_context_line(ctx))
+        lines.append("")
     lines.append("SOURCE: atlas.scattered_captures "
                  + ", ".join(f"#{m['id']}" for m in members))
     return "\n".join(lines)
@@ -305,8 +928,11 @@ def file_packet(members, dry_run=False):
         "found_by": "scatter-clerk",
         "clerk_sort": [
             {"capture": m["id"], "route": "wf1-board",
-             "reasons": m["_sort"][1]}
+             "reasons": m["_sort"][1],
+             "blog_context": m.get("_blog_context")}
             for m in members if "_sort" in m],
+        "blog_context": [m["_blog_context"] for m in members
+                         if m.get("_blog_context")],
     }
     if dry_run:
         print(f"[dry-run] would file {key}: {title}")
@@ -634,6 +1260,27 @@ def _write_price_rows(cap, checked, valid_until):
     return len(points)
 
 
+
+def _kindex_register(cap, kind, slug=None, filename=None, doc_text=None):
+    """ONE WRITE PATH (Brian, 2026-10-25, capture #174): every kept
+    filing is registered in the master index (board/kindex.py) —
+    index record first, canonical ID carried by the document.
+    Guarded: a registration failure never breaks the sweep; the
+    reconcile job catches the unlinked item later."""
+    try:
+        import kindex as _kx
+        return _kx.register(
+            subject=f"intel-capture-{cap['id']}",
+            title=cap["title"], kind=f"intel-{kind}", status="current",
+            workspace=slug, filename=filename,
+            source_capture_id=cap["id"], doc_text=doc_text)
+    except Exception as e:
+        print(f"[kindex] registration for capture #{cap['id']} failed "
+              f"(sweep continues; reconcile will catch it): "
+              f"{type(e).__name__}: {e}")
+        return None
+
+
 def file_price_intel(cap, kind, checked, valid_until,
                      dry_run=False):
     """The price branch of Workflow #3: facts to the database,
@@ -648,6 +1295,7 @@ def file_price_intel(cap, kind, checked, valid_until,
                 "workspace": "db:price_intel", "detail": "dry-run",
                 "kind": kind,
                 "valid_until": valid_until.date().isoformat()}
+    _kindex_register(cap, kind)
     n = _write_price_rows(cap, checked, valid_until)
     _wf3_mark(cap["id"], "wf3-kept", slug="db:price_intel")
     _record_filing(cap["id"], "db:price_intel", "price_intel",
@@ -714,12 +1362,30 @@ def file_wf3(cap, dry_run=False, sort_info=None):
         f"Checked {checked.isoformat() if checked else 'date not stated'}; "
         f"valuable until {valid_until.date().isoformat()} — "
         f"recheck after that date.")
+    _blog_ctx = cap.get("_blog_context")
+    if _blog_ctx is None and sort_info is None:
+        try:
+            _blog_ctx = match_blog(cap)
+            cap["_blog_context"] = _blog_ctx
+        except Exception:
+            _blog_ctx = None
+    blog_line = (("\nBlog context (attached by the clerk): "
+                  + blog_context_line(_blog_ctx) + "\n")
+                 if _blog_ctx else "")
     text = (f"# {cap['title']}\n\n"
             f"Intel Bridge capture #{cap['id']}, filed by Workflow "
-            f"#3 (the keeping workflow).\n{sort_line}\n{assess_line}\n\n"
+            f"#3 (the keeping workflow).\n{sort_line}\n{assess_line}\n"
+            f"{blog_line}\n"
             f"## Context\n{cap['context'] or ''}\n\n"
             f"## Intel\n{cap['raw'] or ''}\n")
     filename = f"intel-capture-{cap['id']}.md"
+    try:
+        import kindex as _kx
+        _cid = _kx.mint_id(f"intel-capture-{cap['id']}")
+        text += (f"\nCanonical ID: {_cid} (master index: PostgreSQL "
+                 f"successbrian_os.knowledge_index)\n")
+    except Exception:
+        pass
     if dry_run:
         print(f"[dry-run] would file capture #{cap['id']} -> "
               f"{slug}/{filename} ({assess_line})")
@@ -734,6 +1400,8 @@ def file_wf3(cap, dry_run=False, sort_info=None):
         _wf3_kick(cap, reason, dry_run=dry_run)
         return {"id": cap["id"], "outcome": "kicked",
                 "workspace": slug, "detail": reason}
+    _kindex_register(cap, kind, slug=slug, filename=filename,
+                     doc_text=text)
     _wf3_mark(cap["id"], "wf3-kept", slug=slug)
     _record_filing(cap["id"], slug, filename, kind, checked,
                    valid_until)
@@ -867,8 +1535,71 @@ def run(dry_run=False):
     return keys, wf3_results, rechecks
 
 
+def blog_selftest():
+    """Blog-awareness test path (WS3, 2026-10-29): three IN-MEMORY
+    sample captures through classify() only. Nothing is packeted,
+    filed, or written — the live sweep never sees these (they have
+    no capture ids and run() is never called). Prints each sample's
+    route + the clerk's explained reasons verbatim, then
+    BLOG_AWARE_OK when all three sort as expected."""
+    samples = [
+        ("tier1-resolves-open-item", {
+            "id": None,
+            "title": "ContactFlowCRM blog: pp05 capture item resolved",
+            "context": ("The capture door for the ContactFlowCRM blog "
+                        "was recorded present today, which resolves "
+                        "the open pp05 capture planning item."),
+            "raw": "Short working note, not a filed result.",
+        }, "board", "contactflowcrm-blog"),
+        ("held-blog-discovery-no-change", {
+            "id": None,
+            "title": "INTEL — CryptoStreemz skin observation",
+            "context": ("checked 2026-10-29; source "
+                        "https://example.invalid/cryptostreemz-skin-note"),
+            "raw": ("Observation from a public page about the "
+                    "CryptoStreemz challenge skin: the page still "
+                    "describes the skin in general terms, gives no "
+                    "composition details, states no price, and says "
+                    "nothing about availability. The observation is "
+                    "recorded here in full so the ecosystem holds "
+                    "what the page showed on the checked date: a "
+                    "skin name, a challenge framing, and marketing "
+                    "language aimed at crypto-interested readers. "
+                    "Nothing in the page changes any state on our "
+                    "record; it is a snapshot of what was publicly "
+                    "visible, kept for later comparison when a "
+                    "fresh check is made against the same source."),
+        }, "wf3", "cryptostreemz"),
+        ("non-blog-control", {
+            "id": None,
+            "title": "Idea: a quieter morning routine for the fleet room",
+            "context": "A passing thought, filed for the board to look at.",
+            "raw": "Short note.",
+        }, "board", None),
+    ]
+    contexts = load_blog_contexts()
+    failures = 0
+    for label, cap, expected_route, expected_slug in samples:
+        probe = dict(cap)
+        route, reasons = classify(probe, contexts=contexts)
+        ctx_slug = (probe.get("_blog_context") or {}).get("slug")
+        ok = route == expected_route and ctx_slug == expected_slug
+        failures += 0 if ok else 1
+        print(f"SAMPLE {label}: route={route} "
+              f"(expected {expected_route}) blog={ctx_slug} "
+              f"(expected {expected_slug}) "
+              f"{'PASS' if ok else 'FAIL'}")
+        for r in reasons:
+            print(f"  reason: {r}")
+    print("BLOG_AWARE_" + ("FAILED" if failures else "OK"))
+    return 1 if failures else 0
+
+
 def main(argv=None):
-    dry = "--dry-run" in (argv or sys.argv)
+    argv = argv or sys.argv
+    if "--blog-selftest" in argv:
+        return blog_selftest()
+    dry = "--dry-run" in argv
     run(dry_run=dry)
     return 0
 

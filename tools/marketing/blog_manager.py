@@ -467,6 +467,62 @@ def _media_node(stripped, media, ids):
     return None
 
 
+def _ricos_text(n):
+    out = []
+
+    def walk(x):
+        if isinstance(x, dict):
+            if x.get("type") == "TEXT":
+                out.append((x.get("textData") or {}).get("text") or "")
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+
+    walk(n)
+    return "".join(out)
+
+
+def _flow_spacers(nodes, ids):
+    """Breathing room in body flow (Brian 2026-10-30: paragraphs jammed
+    together, needs better visual flow; Wix post text styles expose no
+    paragraph-spacing control, so the empty-paragraph spacer -- the
+    media mechanism -- carries it). One spacer between consecutive
+    text paragraphs, above headings and quotes, and below quotes.
+    Never beside dividers or media (media gets its own spacers from
+    the media branch), never doubled."""
+    def is_empty(n):
+        return n.get("type") == "PARAGRAPH" \
+            and not _ricos_text(n).strip() and not (n.get("nodes") or [])
+
+    def is_text(n):
+        return n.get("type") in ("PARAGRAPH", "BLOCKQUOTE",
+                                 "BULLETED_LIST", "ORDERED_LIST") \
+            and bool(_ricos_text(n).strip())
+
+    out = []
+    for n in nodes:
+        t = n.get("type")
+        prev = out[-1] if out else None
+        need = False
+        if prev is not None and not is_empty(prev) \
+                and prev.get("type") != "DIVIDER" and t != "DIVIDER":
+            if t == "PARAGRAPH" and prev.get("type") == "PARAGRAPH" \
+                    and is_text(n) and is_text(prev):
+                need = True
+            elif t in ("HEADING", "BLOCKQUOTE") and is_text(prev):
+                need = True
+            elif t == "PARAGRAPH" and prev.get("type") == "BLOCKQUOTE" \
+                    and is_text(prev) and is_text(n):
+                need = True
+        if need:
+            out.append({"type": "PARAGRAPH", "id": ids.next(),
+                        "nodes": [], "paragraphData": {}})
+        out.append(n)
+    return out
+
+
 def md_to_ricos(md, media=None):
     """Convert markdown to a Wix Ricos document ({'nodes': [...]}).
 
@@ -561,7 +617,7 @@ def md_to_ricos(md, media=None):
             para.append(nxt)
             i += 1
         nodes.append(_para(" ".join(para), ids))
-    return {"nodes": nodes}
+    return {"nodes": _flow_spacers(nodes, ids)}
 
 
 # ------------------------------------------------------------- registry
@@ -828,6 +884,11 @@ def selftest(live=False):
     footed = with_post_footer(md)
     check("substack footer appended", TRACKED_SUBSTACK_URL in footed)
     check("substack footer idempotent", with_post_footer(footed) == footed)
+    sdoc = md_to_ricos("One.\n\nTwo.\n\n## Head\n\nThree.\n")
+    sempties = [n for n in sdoc["nodes"] if n["type"] == "PARAGRAPH"
+                and not _ricos_text(n).strip()]
+    check("flow spacers: para-para + above heading", len(sempties) == 2,
+          "empties=%d" % len(sempties))
 
     # Registry round trip inside a rolled-back transaction.
     conn = pm_core.conn()

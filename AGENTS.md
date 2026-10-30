@@ -79,6 +79,10 @@ packaged sub-project; `specs/` holds design documents.
 
 ## Read in this order
 
+0. `tools/guardrails/state/AGENT_BRIEF.md` — the rendered agent
+   context pack (agent_brief.py, every 15 min): operating model,
+   live capacity, open gates, and Brian's newest decisions.
+   Read this FIRST, before everything below.
 1. This file.
 2. `docs/AGENT_CONTRACT.md` — how agents behave here.
 3. `board/CHARTER.md` — Brian first, then the ecosystem.

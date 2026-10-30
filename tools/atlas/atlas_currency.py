@@ -103,7 +103,10 @@ def ensure_assets(conn, dry_run=False):
     with conn.cursor() as cur:
         for a in allm_workspaces.MARKETING_ASSETS:
             key = a["node"]
-            program = "allm:" + a["markets"]
+            program = "allm:" + a["markets"]  # canonical target;
+            # resolution below also accepts the bare slug and the
+            # proj: node (blog-fleet batches wired edges to proj:
+            # nodes; code ASSET_EDGES carry registry slugs).
             cur.execute("SELECT 1 FROM atlas.nodes WHERE "
                         "node_key = %s", (key,))
             if not cur.fetchone():
@@ -118,13 +121,27 @@ def ensure_assets(conn, dry_run=False):
                          "Marketing asset (R38): %s. It markets "
                          "%s; it is NOT %s — an asset is not "
                          "the program."
-                         % (a["url"], a["markets"],
-                            a["markets"])))
+                         % (a.get("url") or a["name"],
+                            a["markets"], a["markets"])))
             for edge in allm_workspaces.ASSET_EDGES:
                 src, dst, etype = edge[0], edge[1], edge[2]
                 if src != key:
                     continue
-                target = program if dst == a["markets"] else dst
+                target = None
+                for cand in (program if dst == a["markets"]
+                             else "allm:" + dst, dst,
+                             "proj:" + dst):
+                    cur.execute(
+                        "SELECT 1 FROM atlas.nodes WHERE "
+                        "node_key = %s", (cand,))
+                    if cur.fetchone():
+                        target = cand
+                        break
+                if target is None:
+                    fixed.append(
+                        "SKIP edge %s -%s-> %s (no Atlas node "
+                        "for %s)" % (src, etype, dst, dst))
+                    continue
                 cur.execute(
                     "SELECT 1 FROM atlas.edges WHERE "
                     "from_node = %s AND to_node = %s AND "

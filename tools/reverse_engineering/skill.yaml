@@ -1,0 +1,5 @@
+name: "reverse_engineering"
+title: "Reverse Engineer Everything"
+description: "Take any artifact apart on evidence (a binary, file format, protocol, API, web page or funnel, device, listing or model file) and return a verified map of what it is, how it works and what remains unknown."
+category: "Work and knowledge"
+include_in_prompt: true

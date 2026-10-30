@@ -2,7 +2,7 @@
 # Atlas sweep seed: deduped candidates from 5 reviewers
 # (Altair 2nd brain, Altair chats, Spencer memory, Meghan heartbeats, AnythingLLM)
 cd /home/successbrian/successbrian-os/tools/atlas
-export PGPASSWORD=postgres
+# DB auth via ~/.pgpass (through atlas.py) — no password in this script.
 A="python3 atlas.py"
 N() { $A add-node "$1" "$2" "$3" --status "$4" --details "$5"; }
 E() { if [ -n "$4" ]; then $A add-edge "$1" "$2" "$3" --notes "$4"; else $A add-edge "$1" "$2" "$3"; fi; }

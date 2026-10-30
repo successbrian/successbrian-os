@@ -72,6 +72,12 @@ import sys
 
 import psycopg2
 
+# SBOS common routines — Batch B migration (2026-10-27): the DB
+# helpers below delegate to sbos_common (tools/), the one shared
+# module. sys.path gets the tools/ dir (this file lives in tools/atlas/).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sbos_common  # noqa: E402
+
 DBNAME = "ecosystem_central"
 BRIEF_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -151,8 +157,9 @@ OUTCOMES = ("worked", "failed", "mixed")
 
 
 def pg():
-    return psycopg2.connect(dbname=DBNAME, host="localhost",
-                            user="postgres", password="postgres")
+    # Batch B migration (2026-10-27): the connection comes from the one
+    # shared factory — same database, host, and 'postgres' role as before.
+    return sbos_common.connect(user="postgres")
 
 
 def ensure(conn):

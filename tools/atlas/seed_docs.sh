@@ -1,7 +1,7 @@
 #!/bin/bash
 # Atlas doc-source seed: all documentation mapped to the projects/items it tracks.
 cd /home/successbrian/successbrian-os/tools/atlas
-export PGPASSWORD=postgres
+# DB auth via ~/.pgpass (through atlas.py) — no password in this script.
 A="python3 atlas.py"
 
 # ---- Project nodes for the docs to map to ----

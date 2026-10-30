@@ -36,24 +36,32 @@ import socket
 import subprocess
 import sys
 
+# SBOS common routines — Batch B migration (2026-10-27): the DB
+# helpers below delegate to sbos_common (tools/), the one shared
+# module. sys.path gets the tools/ dir (this file lives in tools/atlas/).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sbos_common  # noqa: E402
 
-# psql/q/route_model mirror tools/atlas/atlas.py exactly. They are
-# copied, not imported: atlas.py parses its CLI at module level, so
-# importing it would run the CLI. Keep these in step with atlas.py.
+
+# route_model mirrors tools/atlas/atlas.py (kept in step manually:
+# atlas.py parses its CLI at module level, so it cannot be imported).
+# psql/q no longer mirror anything — since Batch B (2026-10-27) both
+# files delegate to the one shared module, sbos_common.
 def psql(sql):
-    p = subprocess.run(
-        ['psql', '-h', 'localhost', '-U', 'postgres', '-d', 'ecosystem_central',
-         '-t', '-A', '-F', '\t', '-v', 'ON_ERROR_STOP=1'],
-        input=sql, capture_output=True, text=True,
-        env={'PATH': '/usr/bin:/bin', 'HOME': os.path.expanduser('~')})
-    if p.returncode != 0:
-        print(p.stderr.strip(), file=sys.stderr)
+    # Batch B migration (2026-10-27): delegates to sbos_common.pg_lines —
+    # tab-separated psql-style text, 'postgres' role, strict errors
+    # (print + exit 1, exactly the old shape).
+    try:
+        return sbos_common.pg_lines(sql, sep="\t", user="postgres",
+                                    strict=True)
+    except Exception as e:
+        print(str(e), file=sys.stderr)
         sys.exit(1)
-    return [ln for ln in p.stdout.split('\n') if ln]
 
 
 def q(s):
-    return "'" + s.replace("'", "''") + "'"
+    # Batch B migration (2026-10-27): escaping delegates to sbos_common.esc.
+    return "'" + sbos_common.esc(s) + "'"
 
 
 def route_model():

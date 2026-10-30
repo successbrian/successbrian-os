@@ -8,20 +8,29 @@ Graphs, not trees. Usage:
   atlas.py depends <key>       # what does this need? (upstream)
   atlas.py edges <key>         # all edges touching a node
 """
-import json, subprocess, sys, argparse
+import json, os, subprocess, sys, argparse
 
+# SBOS common routines — Batch B migration (2026-10-27): the DB
+# helpers below delegate to sbos_common (tools/), the one shared
+# module. sys.path gets the tools/ dir (this file lives in tools/atlas/).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sbos_common  # noqa: E402
+
+# DB auth: ~/.pgpass via libpq — no password literal in this file.
 def psql(sql):
-    p = subprocess.run(
-        ['psql', '-h', 'localhost', '-U', 'postgres', '-d', 'ecosystem_central',
-         '-t', '-A', '-F', '\t', '-v', 'ON_ERROR_STOP=1'],
-        input=sql, capture_output=True, text=True,
-        env={'PGPASSWORD': 'postgres', 'PATH': '/usr/bin:/bin'})
-    if p.returncode != 0:
-        print(p.stderr.strip(), file=sys.stderr); sys.exit(1)
-    return [l for l in p.stdout.split('\n') if l]
+    # Batch B migration (2026-10-27): delegates to sbos_common.pg_lines —
+    # tab-separated psql-style text, 'postgres' role, strict errors
+    # (print + exit 1, exactly the old shape).
+    try:
+        return sbos_common.pg_lines(sql, sep="\t", user="postgres",
+                                    strict=True)
+    except Exception as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
 
 def q(s):
-    return "'" + s.replace("'", "''") + "'"
+    # Batch B migration (2026-10-27): escaping delegates to sbos_common.esc.
+    return "'" + sbos_common.esc(s) + "'"
 
 def add_node(a):
     ref_kind, ref_id = None, None

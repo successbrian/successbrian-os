@@ -1,7 +1,7 @@
 #!/bin/bash
 # Atlas inventory seed: everything that maps to a project.
 cd /home/successbrian/successbrian-os/tools/atlas
-export PGPASSWORD=postgres
+# DB auth via ~/.pgpass (through atlas.py) — no password in this script.
 A="python3 atlas.py"
 
 # ---- AnythingLLM workspaces (15, doc counts 2026-10-17) ----

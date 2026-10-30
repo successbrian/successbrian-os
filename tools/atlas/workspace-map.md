@@ -27,6 +27,7 @@ Vibe-coded products and projects — SaaS, plugins, tools, and platform business
 
 - **contactflowcrm** — ContactFlowCRM product material (Atlas proj:contactflowcrm).
 - **systeme-io** — All systeme.io material: Brian's platform business — the affiliate-scale line (email services as the core pitch, vertical tools as sales vehicles), platform know-how, his reselling practice, and the catalog of his systeme.io plugins.
+- **civitasmarket** — CivitasMarket product material (Atlas proj:civitasmarket): Brian's planned anti-scam marketplace - a competitor to Shopify / eBay / Etsy - and the ecommerce competitor + affiliate-program landscape it competes in.
 
 ## Segment: crypto
 Time-sensitive trading and yield work. Latency matters; the segment keeps its own resource budget so batch work elsewhere can never starve it.

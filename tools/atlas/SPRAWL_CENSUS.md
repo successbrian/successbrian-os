@@ -2,24 +2,24 @@
 
 Repos detected (CODE, sanctioned): /home/successbrian/successbrian-os, /home/successbrian/campaignsdesk, /home/successbrian/tradesdesk, /home/successbrian/vera-repo, /home/successbrian/anything-llm, /home/agents/workspace, /home/dealsdesk
 
-- home (top level): 20001 files — data 1153, doc 949, fragment 411, in-repo 36, other 14411, script 3040 (CAPPED)
+- home (top level): 20001 files — data 1169, doc 965, fragment 436, in-repo 41, other 14347, script 3042 (CAPPED)
 - ~/scripts: 5218 files — data 91, doc 27, fragment 15, other 4064, script 1021
-- ~/bin: 66 files — data 10, doc 1, other 10, script 45
-- ~/night_work: 35 files — doc 22, other 7, script 6
+- ~/bin: 71 files — data 10, doc 1, other 14, script 46
+- ~/night_work: 42 files — doc 27, other 9, script 6
 - ~/dashboard-fragments: 6 files — fragment 6
 - /home/agents/workspace/scripts: 3179 files — in-repo 3179
-- ~/successbrian-os/tools: 462 files — in-repo 462
+- ~/successbrian-os/tools: 807 files — in-repo 807
 
 ## Loose totals (outside any repo)
-- doc: 999
-- script: 4112
-- fragment: 432
-- data: 1254
-- other: 18492
-- in-repo (sanctioned CODE): 3677
+- doc: 1020
+- script: 4115
+- fragment: 457
+- data: 1270
+- other: 18434
+- in-repo (sanctioned CODE): 4027
 
 ## Automation sprawl (crontab)
-- script invocations in crontab: 88; on LOOSE scripts: 21 (13 distinct scripts)
+- script invocations in crontab: 125; on LOOSE scripts: 23 (15 distinct scripts)
 
 ## Biggest loose documents (AnythingLLM candidates)
 -   497476 bytes  /home/successbrian/gotbackup-agent-output/leads-found.md

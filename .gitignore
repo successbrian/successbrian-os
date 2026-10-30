@@ -46,3 +46,9 @@ board/state/
 frontdesk/
 knowledge_bridge/
 *.bak
+
+# WS4 hygiene (2026-10-29): timestamped editor backups + runtime state dirs
+*.bak-*
+tools/atlas/state/
+tools/guardrails/state/
+tools/personal_os_watch/state.json

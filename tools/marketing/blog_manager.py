@@ -736,12 +736,23 @@ def cmd_sync(conn):
         seen += 1
     for p in list_posts(cfg):
         with conn.cursor() as cur:
+            # Guard (WS1, 2026-10-29): the table's only unique
+            # constraint is (site_id, draft_id) and this insert
+            # carries draft_id NULL, so ON CONFLICT never fired
+            # and every sync duplicated every published post
+            # (26 rows for the real posts, url NULL). Skip a post
+            # whose post_id is already registered for the site.
             cur.execute(
                 """INSERT INTO successbrian_os.marketing_blog_posts
                      (site_id, post_id, title, status, source)
-                   VALUES (%s, %s, %s, 'published', 'sync')
-                   ON CONFLICT DO NOTHING""",
-                (cfg["site_id"], p.get("id"), p.get("title", "(untitled)")))
+                   SELECT %s, %s, %s, 'published', 'sync'
+                   WHERE NOT EXISTS (
+                     SELECT 1 FROM
+                       successbrian_os.marketing_blog_posts
+                     WHERE site_id = %s AND post_id = %s)""",
+                (cfg["site_id"], p.get("id"),
+                 p.get("title", "(untitled)"),
+                 cfg["site_id"], p.get("id")))
         conn.commit()
         seen += 1
     return "sync complete: %d remote item(s) reconciled" % seen

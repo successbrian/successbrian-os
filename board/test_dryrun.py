@@ -7,7 +7,7 @@ WHY:
     nothing. This runs Chief MLM Officer (wave 1) then CFO (wave 2, fed the
     MLM output as context) with a canned test brief, and prints latencies,
     parsed calls, and gate verdicts. If this passes, the session machinery
-    is sound; the 3:30 AM cron runs the full 9 seats.
+    is sound; the 3:30 AM cron runs the full 14 seats.
 
 CALLED BY:
     Humans, manually: python3 board/test_dryrun.py [--config board/config/brian.yaml]
@@ -32,7 +32,7 @@ TEST_BRIEF = """[night_shift]
 No night-shift report found in the inbox (test brief).
 
 [recent_decisions]
-- Board harness built; 9 seats configured (high, 2026-09-27)
+- Board harness built; 14 seats configured (high, 2026-09-27)
 
 [mlm]
 GotBackup signups flat 3 days at ~4/day. Oliabo volume up 12% this week.

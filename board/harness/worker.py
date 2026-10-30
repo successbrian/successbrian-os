@@ -60,6 +60,7 @@ class SeatResult:
     note: str = ""
     last_raw: str = ""      # last model output seen, kept even on failure
     timed_out: bool = False  # True when the item budget (3x rule) stopped us
+    returned: str = ""  # SBOS PATCH 2026-10-25: seat sent the packet back; this is its needs statement
 
 
 @dataclass
@@ -150,15 +151,36 @@ class ModelWorker:
         )
         result = self._run_blocking(
             seat, seat.system_prompt(agenda_item=True), user, min_calls=1,
-            deadline_s=deadline_s,
+            deadline_s=deadline_s, allow_return=True,
         )
         if result.ok and len(result.calls) > 1:
             result.calls = result.calls[:1]
         return result
 
+    def run_first_read(
+        self, seat: Seat, item, brief_text: str,
+        deadline_s: float | None = None,
+    ) -> SeatResult:
+        """First read (Brian 2026-10-25, adopted flow): the seat reads
+        ONE agenda item and returns QUESTIONS ONLY — no ruling. The
+        questions ride SeatResult.calls as (question, '') tuples."""
+        user = (
+            f"BRIEF:\n{brief_text}\n\n"
+            f"AGENDA ITEM [{item.kind}: {item.key}]\n"
+            f"Title: {item.title}\n"
+            + (f"Theme: {item.theme}\n" if getattr(item, "theme", "") else "")
+            + f"Item: {item.text}\n\n"
+            "Your questions (ASK: lines only):"
+        )
+        return self._run_blocking(
+            seat, seat.system_prompt(first_read=True), user, min_calls=1,
+            deadline_s=deadline_s,
+            parse=lambda raw: [(q, "") for q in parse_questions(raw)])
+
     def _run_blocking(
         self, seat: Seat, system: str, user: str, min_calls: int = 1,
-        deadline_s: float | None = None,
+        deadline_s: float | None = None, allow_return: bool = False,
+        parse=None,  # flowv2
     ) -> SeatResult:
         """Blocking retry loop. With deadline_s=None this is the 2026-10-08
         discipline: wait forever, a seat never fails because the API was
@@ -198,7 +220,14 @@ class ModelWorker:
                 time.sleep(wait)
                 backoff = min(backoff * 2, self.retry_cap_s)
                 continue
-            calls = parse_calls(raw)
+            if allow_return:
+                needs = parse_return(raw)
+                if needs:
+                    return SeatResult(
+                        seat.title, [], raw, True, time.time() - start,
+                        attempt, note=f"RETURNED to clerk: {needs}",
+                        returned=needs)
+            calls = parse(raw) if parse else parse_calls(raw)
             if len(calls) >= min_calls:
                 return SeatResult(
                     seat.title, calls, raw, True, time.time() - start, attempt
@@ -226,6 +255,33 @@ class ModelWorker:
 BARE_CALL_RE = re.compile(
     r"^(.{12,}?)\s*/\s*Rationale:\s*(.+)$", re.IGNORECASE | re.MULTILINE
 )
+
+
+RETURN_RE = re.compile(r"^\s*RETURN\s*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+
+
+def parse_return(raw: str) -> str | None:
+    """SBOS PATCH 2026-10-25: a seat's send-back. The seat answers a
+    packet it cannot judge well with 'RETURN: <what it needs>' and the
+    packet goes back to the clerk instead of forcing a thin call."""
+    m = RETURN_RE.search(raw or "")
+    return m.group(1).strip() if m else None
+
+
+ASK_RE = re.compile(
+    r"^\s*(?:[-*]\s*|\d+[.)]\s*)?ASK\s*:\s*(.+?)\s*$",
+    re.IGNORECASE | re.MULTILINE)
+
+
+def parse_questions(raw: str) -> list[str]:
+    """SBOS PATCH 2026-10-25 (flowv2): first-read 'ASK: ...' lines."""
+    out, seen = [], set()
+    for m in ASK_RE.finditer(raw or ""):
+        q = m.group(1).strip()
+        if len(q) >= 8 and q.lower() not in seen:
+            seen.add(q.lower())
+            out.append(q)
+    return out
 
 
 def parse_calls(raw: str) -> list[tuple[str, str]]:

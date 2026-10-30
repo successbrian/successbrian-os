@@ -34,6 +34,7 @@ class Seat:
     depends_on: list[str] = field(default_factory=list)
     brief_keys: list[str] = field(default_factory=list)
     constraints: list[str] = field(default_factory=list)
+    profile: str = ""  # SBOS PATCH 2026-10-25: the seat's well-defined profile
 
     @classmethod
     def from_dict(cls, d: dict) -> "Seat":
@@ -45,9 +46,11 @@ class Seat:
             depends_on=list(d.get("depends_on", []) or []),
             brief_keys=list(d.get("brief_keys", []) or []),
             constraints=list(d.get("constraints", []) or []),
+            profile=str(d.get("profile", "") or ""),
         )
 
-    def system_prompt(self, agenda_item: bool = False) -> str:
+    def system_prompt(self, agenda_item: bool = False,
+                    first_read: bool = False) -> str:  # flowv2
         lines = [
             f"You are the {self.title} on a board of directors.",
             f"Your domain: {self.domain}.",
@@ -56,7 +59,23 @@ class Seat:
             "make big-picture calls (direction, priorities, start/stop), then dissolve.",
             "You do NOT do the domain's work — you govern it with fresh eyes.",
         ]
-        if agenda_item:
+        if self.profile:
+            lines += ["", "YOUR PROFILE — who you are as this officer:", self.profile]
+        if first_read:
+            # SBOS PATCH 2026-10-25 (adopted flow): a first read asks.
+            lines += [
+                "This is a FIRST READ: on a first read the board does NOT "
+                "rule, vote, or decide. Your only job is to read this "
+                "packet and ASK — say what you need to know more about "
+                "before it could be judged well.",
+                "Return ONLY your questions, one per line, each starting "
+                "'ASK: '. Ask about missing facts, data from your domain "
+                "that is not here, unclear framing, prior decisions, and "
+                "standing rules that might touch this. One to five "
+                "questions. If the packet belongs squarely to another "
+                "seat, ask that ('ASK: should this go to ...?').",
+            ]
+        elif agenda_item:
             # Agenda mode (Brian 2026-10-21): the board loops the agenda
             # queue; this seat rules on ONE queued item at a time.
             lines += [
@@ -65,6 +84,14 @@ class Seat:
                 "Format: 1. <call sentence> / Rationale: <one line>",
                 "Rule on the item itself — approve it, reject it, send it back with "
                 "conditions, or escalate it — do not drift into general advice.",
+                # SBOS PATCH 2026-10-25: the send-back (Brian's ruling).
+                "If you cannot make a good call on this packet — the facts "
+                "you need are missing, your domain data is not in the brief, "
+                "or the problem is not framed well enough to judge — do NOT "
+                "guess. Return the packet instead, as your WHOLE answer: "
+                "'RETURN: <what you need, in one or two lines>'. The clerk "
+                "takes it from there. A returned packet is a good outcome; "
+                "a confident bad call is not.",
             ]
         else:
             lines += [

@@ -60,3 +60,106 @@ The flow improves daily by the standing morning loop (Brian, 2026-10-23, through
 ## Why this can work
 
 Every piece has either already run in the live system or has a measured budget behind it: rulings at ~15s against a ~72s-per-topic pace at 100 topics; a full judge call under 1,000 tokens against an 8k sizing (packets have room to grow); heartbeats that already exist; a research layer that already takes orders. The flow's discipline — record everything, park items not nights, hold packets not decisions, one improvement every morning — is what keeps it from becoming chaos.
+
+---
+
+## Adopted revision — 2026-10-25: problems in, guidance out; read-and-ask; the fact check
+
+Adopted by Brian 2026-10-25 08:32 CDT ("let's go with this"), designed across
+that morning's session (Intel Bridge captures #61, #63–#65, #67–#73). This
+revision supersedes stage 3 above ("the judges rule" on first contact) and
+sharpens the board's product. The Oct 23 stages 1, 2, 4, 5, 6 stand except
+where this revision amends them.
+
+**The board's product (Brian, 2026-10-25 07:37):** problems are presented to
+the board; the board guides the course of the future, or gives suggestions
+on how to solve the problems. Approve/disapprove is not the product (R35
+holds: the board advises; Altair/Meghan decide; Brian owns above all).
+
+**Seats carry well-defined profiles (Brian, 2026-10-25 07:55).** Eight-part
+anatomy: problems owned / know-this-cold / standing questions /
+how-you-weigh / not-your-problem edges / guardrails / guidance shape /
+standing data needs. First citizen: Chief MLM Officer (template at
+~/workspace/builds/board-profiles/chief-mlm-profile-template.md, wired into
+both board configs). The other 13 seats roll out on the same anatomy.
+
+**The flow (Brian's consolidation, 2026-10-25 08:26):**
+1. **The clerk assembles a packet** and sends it to the board.
+2. **First read = read and ask.** No seat rules, votes, or decides on the
+   first read. The packet's 4–7 reader seats each send the clerk their
+   questions — what they need to know more about to judge this well.
+3. **The clerk works the questions.** It answers what it can from inside the
+   house — PostgreSQL, the brains, AnythingLLM are its own lookups — and
+   files **requests** to tool-holders for everything outside (web search
+   and the like). If the inside record shows Brian personally knows a
+   person the packet concerns, the clerk tells **Altair to ask Brian**
+   (the David Foesch example). The clerk files requests instead of doing
+   tool work *so it never blocks*: its pace is decoupled from the slowest
+   fetch, and it keeps every other packet moving.
+4. **Requests return; the packet is processed again** — deepened by the
+   combined asks, not generic enrichment. The packet is now essentially
+   ready.
+5. **The clerk fact-checks the packet** (Brian, 2026-10-25): a fidelity
+   check against sources — inside claims matched to the records, returned
+   answers matched to what sources actually said, numbers/dates exact,
+   check-dates stamped, stale facts flagged, unverifiable claims flagged
+   IN the packet (never silently dropped), source conflicts entered as
+   controversy. Only after the fact check does the packet go on.
+6. **Guidance read + deciders.** Seats guide on the checked packet; Altair
+   and Meghan work it in the decider loop to 100% agreement (stage 4/5
+   above, research branch included).
+
+**It is a flow, not a hold pile (Brian, 2026-10-25 08:09).** A packet
+between stages is in motion — stage, owner, next step — never parked.
+Language law for this pipeline: flow and stages, never pile/waiting.
+
+**Solved well over solved fast (Brian, 2026-10-25 08:14).** Days of
+back-and-forth pressing are the correct treatment for problems whose
+wrongness is expensive. Session clocks (2h cap, 3x budgets) end meetings;
+problem clocks may run for days. Never bam-bam.
+
+**Gap detection is layered.** The clerk catches form gaps (packet-law
+shapes — domain knowledge compiled into shapes at design time) and
+inventory gaps (the house holds it; the packet lacks it — the clerk's
+whole-house view). Seats catch domain gaps (profile checklists: standing
+questions, standing data needs). Deciders catch truth gaps (research
+branch). In-session, the send-back built 2026-10-25 (seat answers
+"RETURN: <needs>"; clerk intake board-sendbacks.jsonl; item stays unruled)
+is the ask mechanic's session-scale form.
+
+**Still open (not settled by the adoption):** who picks the 4–7 readers
+(working design: the clerk, by fit, extending the best-four rule); the
+always-ask pair ("has this been decided before?" / "what standing rules
+touch this?" on every packet); packet clock classes (hard-dated vs open —
+proposal only).
+
+**Build order for this revision:** (1) profiles for the remaining 13 seats;
+(2) first-read ask pass in the harness (seats return questions, not calls;
+clerk collects per packet); (3) clerk menu jobs: deepen (in-house answers +
+filed requests + merge on return) and fact-check; (4) brief pullers wired
+per the profiles' standing data needs; (5) the clerk's re-presentation step
+(needs met → packet flows on, sendback store resent-marking).
+
+---
+
+## Appendix (added 2026-10-25): THE SPLIT LADDER — resolving decider disagreement without Brian
+
+Direction (Brian, 2026-10-25): come up with a way to resolve Altair–Meghan splits that tries not to send issues to him. Built the same day from a two-sided study (the house record + deep research into multi-agent systems, organizational practice, and practitioner builders; full study: "Resolving Decider Splits Without Escalating", research notes 2026-10-25). Status: built as machinery + protocol; the ladder itself is presented to Brian as a proposal for ruling.
+
+WHEN IT FIRES: Altair and Meghan have the research back and still disagree. Before anything else, the split is NAMED — one of seven locus classes: weights (priorities weighed differently), research (soft/conflicting/stale), scope (research opened a new question), risk (act-now-vs-wait appetite), rules (two standing rules collide), misread (one side misread or anchored), framing (the packet was framed around the wrong problem). The class picks the route (harness/splitlog.py ROUTES).
+
+THE LADDER (in order; a step runs only if the split survives the ones before it):
+1. DECOMPOSE — break the split into sub-questions, load-bearing assumptions, and value weights; each decider answers each piece blind; re-litigate only the exact locus. Most whole-decision splits collapse here.
+2. PRECEDENT — search prior decisions (the R36 ledgers, now fed) and Brian's standing priority order; if a rule or a prior ruling covers it, apply it and cite it.
+3. MIND-CHANGING TEST — both deciders state in advance what evidence would flip them; the system runs exactly that check (tool, test, primary source, fresh pull); both abide by the outcome. One cycle.
+4. ONE BLIND EXCHANGE — each steelmans the other; both run a key-assumptions check and a short premortem on the leading course; justifications only are exchanged; then a blind re-vote. No open thread, no third round (measured: debate's benefit concentrates in the first exchange; more rounds buy sycophancy).
+5. JUDGE DIAGNOSTIC — a leftover FACTUAL point only: a small cross-family panel (families disjoint from both deciders, blind to who argued which side) issues an advisory finding; the deciders re-vote. Never a deciding vote; never on a value question.
+6. REVERSIBILITY FALLBACK — still split: reversible → proceed with the least-regret course as a bounded pilot (smallest step, monitoring trigger, expiry date; the R36 outcome record judges it). Irreversible → wait / no-act.
+
+ESCALATION TO BRIAN — only three doors: (a) irreversible and still split after the ladder; (b) two standing rules collide with no precedence covering them — his answer is recorded as a new standing rule so the class never escalates twice; (c) the mind-changing test cannot be run.
+
+THEATER — do not build: long open-ended debate, assigned devil's-advocate personas, confidence face-offs, a single tie-breaker judge, two-agent votes or "prediction markets" (category error at n=2), the full ACH matrix.
+
+RECORD: every split, locus, step, and resolution goes to board-splits.jsonl (harness/splitlog.py SplitLog). The morning loop reads locus counts: recurring loci are upstream faults (framing, research quality, missing standing rules), not decider faults.
+
+FEEDING THE ARBITER: since 2026-10-25 the harness logs every ruled call automatically — ≥0.98 to atlas.board_suggestions (releases), below to atlas.board_ideas (R37 routing, DB-enforced) — and the 113 historical rulings were backfilled, so precedent (step 2) and outcome-judging (step 6) have real data to work with.

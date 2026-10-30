@@ -342,3 +342,94 @@ def load_agenda(cfg: dict, ledger: AgendaLedger) -> list[AgendaItem]:
         source = AtlasAgenda(via=a.get("via", "kssh"))
     done = ledger.processed_keys()
     return [i for i in source.fetch() if i.key not in done]
+
+
+class SendbackStore:
+    """Returned packets (Brian 2026-10-25): a seat that cannot make a good
+    call on a packet sends it back to the clerk with a statement of what
+    it needs. The store is the clerk's intake: an append-only jsonl in the
+    minutes dir — the same place Altair's overnight routines already look
+    (the evening needs-pass precedent). Events: 'returned' (seat, item,
+    needs) and 'resent' (the clerk re-presented the packet with the need
+    met); the latest event per key wins, so open_needs() is the clerk's
+    live work list. A returned item is NOT ruled and NOT consumed: it
+    stays on the agenda until it is ruled or Brian drops it."""
+
+    def __init__(self, path: str):
+        self.path = os.path.expanduser(path)
+
+    def _append(self, event: dict) -> None:
+        os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+        with open(self.path, "a") as f:
+            f.write(json.dumps(event) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+
+    def record_return(self, event: dict) -> None:
+        self._append({"event": "returned", **event})
+
+    def mark_resent(self, item_key: str, session_tag: str) -> None:
+        self._append({"event": "resent", "item_key": item_key,
+                      "session_tag": session_tag})
+
+    def open_needs(self) -> dict:
+        latest: dict = {}
+        try:
+            with open(self.path) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    key = row.get("item_key")
+                    if not key:
+                        continue
+                    if row.get("event") == "returned":
+                        latest[key] = row
+                    elif row.get("event") == "resent":
+                        latest.pop(key, None)
+        except FileNotFoundError:
+            pass
+        return latest
+
+
+class QuestionsStore:
+    """First-read questions (Brian 2026-10-25, adopted flow): every
+    reader seat's ASK lines for a packet, appended the moment they are
+    asked. This file is the CLERK'S DEEPENING INTAKE: the clerk reads
+    the questions, answers what the house holds, files requests for the
+    rest, and the packet is processed again. Events carry the item key,
+    the seat, and its questions; by_item() groups the latest session's
+    questions per item for the clerk's pass."""
+
+    def __init__(self, path: str):
+        self.path = os.path.expanduser(path)
+
+    def record(self, event: dict) -> None:
+        os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+        with open(self.path, "a") as f:
+            f.write(json.dumps({"event": "questions", **event}) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+
+    def by_item(self) -> dict:
+        grouped: dict = {}
+        try:
+            with open(self.path) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    key = row.get("item_key")
+                    if key and row.get("event") == "questions":
+                        grouped.setdefault(key, []).append(row)
+        except FileNotFoundError:
+            pass
+        return grouped

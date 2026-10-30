@@ -6,7 +6,7 @@ WHY:
     still produce nothing (83% empty summaries, 440/441 tasks pending). This
     harness is the productized answer: a GENERIC session runner any
     entrepreneur configures with their own C-level seats (YAML), while Brian's
-    9-seat instance is just one bent config. Generic-at-first, bends-per-user.
+    14-seat instance is just one bent config. Generic-at-first, bends-per-user.
 
 CALLED BY:
     - board/test_dryrun.py (manual verification)

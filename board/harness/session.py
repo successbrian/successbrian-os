@@ -43,7 +43,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from .agenda import (
-    AgendaItem, AgendaLedger, RulingsLedger, StuckStore, load_agenda, route,
+    AgendaItem, AgendaLedger, QuestionsStore, RulingsLedger,
+    SendbackStore, StuckStore,
+    load_agenda, route,
 )
 from .brief import BriefBuilder
 from .enrich import enrich_items
@@ -74,6 +76,8 @@ class SessionResult:
     failed_seats: list[str] = field(default_factory=list)
     health_notes: list[str] = field(default_factory=list)
     minutes_path: str = ""
+    mode: str = "rule"  # flowv2: 'rule' | 'initial_read'
+    questions_total: int = 0  # flowv2
 
     @property
     def binding(self) -> list[GatedCall]:
@@ -178,6 +182,9 @@ class BoardSession:
         # the moment it exists.
         stuck_store = StuckStore(
             os.path.join(minutes_dir, "board-stuck-items.jsonl"))
+        # SBOS PATCH 2026-10-25: the clerk's send-back intake.
+        sendback_store = SendbackStore(
+            os.path.join(minutes_dir, "board-sendbacks.jsonl"))
         stuck_open = stuck_store.open_stuck() if queue else {}
         if queue:
             n_enriched = enrich_items(queue, via=agenda_cfg.get("via", "direct"))
@@ -214,6 +221,11 @@ class BoardSession:
                 avg = sum(latencies) / len(latencies)
                 return max(timeout_floor_s, timeout_multiple * avg)
             return timeout_floor_s
+
+        # SBOS PATCH 2026-10-25 (flowv2): initial-read mode branches here.
+        if str(self.cfg.get("session_mode", "rule") or "rule") == "initial_read":
+            return self._run_first_read(queue, brief, res, started,
+                                        deadline_s, minutes_dir, rulings)
 
         # -- the loop: every item, one call, until empty or deadline -----
         closers = [s for s in self.seats if s.wave >= 2 and s.depends_on]
@@ -270,6 +282,28 @@ class BoardSession:
                     "with this analysis attached.")
                 print(f"[agenda {idx + 1}/{len(queue)}] STUCK: "
                       f"{item.key} parked after {sr.latency_s:.0f}s",
+                      flush=True)
+                continue
+            if getattr(sr, "returned", ""):
+                # SBOS PATCH 2026-10-25 (Brian's ruling): the seat sent
+                # this packet back. It goes to the clerk with the seat's
+                # needs statement; the item is NOT ledgered as ruled and
+                # stays on the agenda for a better-equipped re-presentation.
+                sendback_event = {
+                    "item_key": item.key, "kind": item.kind,
+                    "title": item.title, "seat": seat.title,
+                    "session_tag": self.tag,
+                    "needs": sr.returned,
+                    "elapsed_s": round(sr.latency_s, 1),
+                }
+                rulings.append({"event": "returned", **sendback_event})
+                sendback_store.record_return(sendback_event)
+                res.health_notes.append(
+                    f"RETURNED TO CLERK: {item.key}: {seat.title} could "
+                    f"not make a good call — needs: {sr.returned[:200]} "
+                    "— item stays on the agenda, unruled.")
+                print(f"[agenda {idx + 1}/{len(queue)}] RETURNED: "
+                      f"{item.key} <- {seat.title}: {sr.returned[:120]}",
                       flush=True)
                 continue
             print(f"[agenda {idx + 1}/{len(queue)}] ruled: {seat.title} "
@@ -387,9 +421,47 @@ class BoardSession:
             if ar.gated is not None:
                 ledger.record(ar.item, ar.seat_result.seat_title,
                               ar.gated.verdict, self.tag)
+                # SBOS PATCH 2026-10-25 (R36 feed): every ruled suggestion
+                # also lands in atlas.board_suggestions so seats finally
+                # accumulate a graded track record (decide()/set_outcome()
+                # complete the row later). Best-effort by design.
+                self._log_suggestion(ar, res)
 
         res.minutes_path = self._write_minutes(res)
         return res
+
+    # SBOS PATCH 2026-10-25 (R36 feed)
+    def _log_suggestion(self, ar, res) -> None:
+        try:
+            conn = getattr(self, "_learning_conn", None)
+            if conn is None:
+                import importlib.util
+                path = os.path.expanduser(
+                    "~/successbrian-os/tools/atlas/board_learning.py")
+                spec = importlib.util.spec_from_file_location(
+                    "board_learning", path)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                self._learning_mod = mod
+                conn = mod.pg()
+                self._learning_conn = conn
+            g = ar.gated
+            text = f"{g.call} — {g.rationale}" if g.rationale else g.call
+            # Route by the release line (R37 as amended, DB-enforced):
+            # >=0.98 is a release (suggestions ledger); below is an idea.
+            if g.confidence is not None and g.confidence >= 0.98:
+                self._learning_mod.log_suggestion(
+                    conn, ar.item.key, g.seat_title, text,
+                    gate_score=g.confidence, session_ref=self.tag)
+            else:
+                self._learning_mod.log_idea(
+                    conn, g.seat_title, text,
+                    certainty=g.confidence or 0.0, item_key=ar.item.key)
+        except Exception as exc:  # never break a session on the ledger
+            if not getattr(self, "_learning_warned", False):
+                self._learning_warned = True
+                res.health_notes.append(
+                    f"R36 LEDGER FEED FAILED (suggestions not logged): {exc}")
 
     # -- helpers --------------------------------------------------------
     @staticmethod
@@ -458,6 +530,86 @@ class BoardSession:
         return path
 
 
+    # -- first read (SBOS PATCH 2026-10-25, adopted flow) ----------------
+    def _run_first_read(self, queue, brief, res, started, deadline_s,
+                        minutes_dir, rulings):
+        """Initial-read session: every item is read by its four best
+        wave-1 seats (panel picker); each returns QUESTIONS ONLY.
+        No gate, no sink, no ledger.record — items are never marked
+        processed and stay on the agenda for the guidance read that
+        follows clerk deepening + fact check. Questions land in
+        board-questions-<tag>.jsonl (the clerk's intake) and in the
+        rulings ledger as 'initial_read' events. Deadline-respecting:
+        unread items carry over and lead the next first read."""
+        import time as _time
+        from .panel import best_four
+        store = QuestionsStore(os.path.join(
+            minutes_dir, f"board-questions-{self.tag}.jsonl"))
+        res.mode = "initial_read"
+        res.health_notes.append(
+            "INITIAL READ SESSION (Brian 2026-10-25): the board reads "
+            "and asks only — no rulings, no decisions recorded; items "
+            "stay on the agenda.")
+        latencies: list[float] = []
+        read_count = 0
+        for idx, item in enumerate(queue):
+            if _time.monotonic() - started > deadline_s:
+                res.carried_over = queue[idx:]
+                res.health_notes.append(
+                    f"FIRST-READ CAP: {len(res.carried_over)} item(s) "
+                    "not read this session; they lead the next first "
+                    "read (flow, not a pile).")
+                break
+            readers = [s for s, _sc, _why in best_four(item, self.seats)]  # flowv2 fix: best_four yields (seat, score, reason)
+            item_questions = 0
+            for seat in readers:
+                if len(latencies) >= 3:
+                    budget = max(240.0, 3.0 * sum(latencies) / len(latencies))
+                else:
+                    budget = 240.0
+                sr = self.worker.run_first_read(
+                    seat, item, brief.for_seat(seat.brief_keys),
+                    deadline_s=budget)
+                res.seat_results.append(sr)
+                if getattr(sr, "timed_out", False) or not sr.calls:
+                    res.failed_seats.append(seat.title)
+                    res.health_notes.append(
+                        f"FIRST READ: {item.key}: {seat.title}: no "
+                        "questions captured; noted for the clerk.")
+                    continue
+                latencies.append(sr.latency_s)
+                questions = [q for q, _ in sr.calls]
+                item_questions += len(questions)
+                ev = {"item_key": item.key, "kind": item.kind,
+                      "title": item.title, "seat": seat.title,
+                      "session_tag": self.tag, "questions": questions,
+                      "readers_reason": "panel best-four"}
+                store.record(ev)
+                rulings.append({"event": "initial_read", **ev})
+            if item_questions:
+                read_count += 1
+                res.questions_total += item_questions
+            print(f"[first-read {idx + 1}/{len(queue)}] {item.key}: "
+                  f"{item_questions} question(s) from "
+                  f"{len(readers)} reader(s)", flush=True)
+        path = os.path.join(minutes_dir,
+                            f"board-first-read-{self.tag}.md")
+        lines = [f"# Board first read — {self.tag}", "",
+                 "Mode: INITIAL READ (adopted flow, Brian 2026-10-25). "
+                 "No rulings were made; no decisions were recorded.", "",
+                 f"Agenda queue: {res.agenda_total} item(s) | read: "
+                 f"{read_count} | questions captured: "
+                 f"{res.questions_total} | carried over (unread): "
+                 f"{len(res.carried_over)}", "", "## Health", ""]
+        lines += [f"- {n}" for n in res.health_notes] or ["- (none)"]
+        lines += ["", f"Questions intake for the clerk: "
+                  f"board-questions-{self.tag}.jsonl", ""]
+        with open(path, "w") as f:
+            f.write("\n".join(lines))
+        res.minutes_path = path
+        return res
+
+
 if __name__ == "__main__":
     import sys
 
@@ -474,4 +626,4 @@ if __name__ == "__main__":
     print(f"minutes: {result.minutes_path}")
     for note in result.health_notes:
         print(f"HEALTH: {note}")
-    sys.exit(0 if result.gated else 1)
+    sys.exit(0 if (result.gated or getattr(result, "mode", "rule") == "initial_read") else 1)  # flowv2

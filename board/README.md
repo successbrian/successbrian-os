@@ -43,7 +43,7 @@ board/
     sinks.py          # DecisionSink interface; SecondBrainSink + JsonlSink
     session.py        # BoardSession orchestration + minutes
   config/
-    brian.yaml        # BENT — Brian's 9-seat instance (Morpheus via kssh, second_brain sink)
+    brian.yaml        # BENT — Brian's 14-seat instance (Morpheus via kssh, second_brain sink)
     seats.example.yaml# TEMPLATE — copy and bend for a new entrepreneur
   specs/board-harness.md
   test_dryrun.py      # Real 2-seat dry-run against the model (no mocks)
@@ -60,11 +60,16 @@ board/
 
 ## Brian's instance
 
-- 9 seats: MLM, Affiliate Marketing, Marketing (systeme.io), People
-  Enrichment (leads), Blog Content (Shakespeare's direction, video, hiro.fm),
-  Trading Desk (strategy only, never signals), Hardware Flipping (public
-  pricing only), Ecosystem Build, and the CFO as wave-2 closer consolidating
-  the money picture.
+- 14 seats (source of truth: the `successbrian_os.board_seats` table in
+  PostgreSQL — this list mirrors it as of 2026-10-25): MLM, Affiliate
+  Marketing, Marketing (systeme.io), People Enrichment (leads), Blog Content
+  (Shakespeare's direction, video, hiro.fm), Trading Desk (strategy only,
+  never signals), Hardware Flipping (public pricing only), Ecosystem Build,
+  Audience (social/discovery, not email or funnels), Campaign (time-boxed
+  pushes only), Compliance (offer rulebooks, MLM gates, health-claim
+  guardrails), Knowledge (second brain, intake, competitive intel),
+  Relationship (relationship health, key people — not leads), and the CFO
+  as wave-2 closer consolidating the money picture.
 - Model: Morpheus (14B) at `127.0.0.1:11437` on k11-alpha, reached via kssh.
 - Agenda: **Atlas open gates + tasks** (atlas.nodes: pending gates, then
   open/queued atlas_tasks, oldest first). An item leaves the queue only

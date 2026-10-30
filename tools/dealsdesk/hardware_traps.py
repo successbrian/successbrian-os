@@ -100,6 +100,60 @@ def check_item(text, kind=None):
     return None
 
 
+# --- CPU class rules (sourcing classes - NOT traps) ----------------------------
+# The traps above ban parts for documented failure mechanisms. This section
+# is different: Brian's CPU CLASS rules say which silicon classes DealsDesk
+# sources at all. A class reject is not a defect claim - the part works; it
+# is simply not the class Brian buys. Class rules live in this module
+# because it is the one every sourcing/scoring path already consults, but
+# a class reject is never reported as a trap.
+#
+# XEON GOLD RULE (Brian 2026-10-21: "not gold 61** only gold 62**"; full
+# form Brian 2026-10-27: "we don't want 51** or 52** ; we want 62** and
+# 63**"): when text names a Xeon Gold CPU, ONLY the 62xx (2nd-gen
+# Scalable, Cascade Lake) and 63xx (3rd-gen Scalable, Ice Lake) series
+# pass. 61xx excluded 2026-10-21; 51xx/52xx excluded 2026-10-27. Reasons
+# on record: DDR4-2933 vs 2666, two AVX-512 FMA units per core vs one,
+# AVX-512 VNNI (62xx vs 61xx), higher clocks at the same core counts.
+
+GOLD_SERIES_ACCEPTED = (62, 63)
+GOLD_SERIES_REJECTED = (51, 52, 61)
+
+_GOLD_RE = re.compile(r"gold\D{0,4}?(\d{4})", re.IGNORECASE)
+
+
+def gold_series(text):
+    """The Xeon Gold series in text (62 for a 6230, 52 for a 5218R), or
+    None when no Gold CPU is named."""
+    if not text:
+        return None
+    m = _GOLD_RE.search(str(text))
+    if not m:
+        return None
+    return int(m.group(1)[:2])
+
+
+def check_cpu_class(text):
+    """Brian's CPU class verdict for text naming a Xeon Gold CPU.
+    Returns None when no Gold CPU is named or the series is outside the
+    rule (the rule does not judge), else a dict with 'series', 'verdict'
+    ('accept' or 'reject'), 'rule' and 'reason'."""
+    series = gold_series(text)
+    if series is None:
+        return None
+    if series in GOLD_SERIES_REJECTED:
+        return {"series": series, "verdict": "reject",
+                "rule": "xeon_gold_class",
+                "reason": ("Xeon Gold %dxx is not sourced - Brian's Gold "
+                           "rule: 62xx and 63xx only (2026-10-21; full "
+                           "form 2026-10-27)" % series)}
+    if series in GOLD_SERIES_ACCEPTED:
+        return {"series": series, "verdict": "accept",
+                "rule": "xeon_gold_class",
+                "reason": "Xeon Gold %dxx - Brian's Gold class" % series}
+    return None
+
+
 def is_trapped(text, kind=None):
     """True if text names any banned part."""
     return check_item(text, kind=kind) is not None
@@ -129,15 +183,33 @@ _SELFTEST = [
 ]
 
 
+_CLASS_SELFTEST = [
+    ("Dell R740 2x Xeon Gold 6230 32GB", "accept"),
+    ("Dell R750 2x Gold 6330 32GB", "accept"),
+    ("Dell R740 1x Gold 5218R 32GB", "reject"),
+    ("Dell R640 2x Gold 5218", "reject"),
+    ("Dell R740 2x Gold 6138", "reject"),
+    ("Dell R740 2x Gold 5120", "reject"),
+    ("Dell R730 2x E5-2680 v4", None),      # no Gold named - rule silent
+    ("Lenovo M920q i5-8500T", None),
+]
+
+
 def selftest():
     failures = 0
+    for text, want in _CLASS_SELFTEST:
+        hit = check_cpu_class(text)
+        got = hit["verdict"] if hit else None
+        ok = got == want
+        failures += 0 if ok else 1
+        print("%s %-38r -> class %s" % ("OK  " if ok else "FAIL", text, got))
     for text, want in _SELFTEST:
         hit = check_item(text)
         got = hit["id"] if hit else None
         ok = got == want
         failures += 0 if ok else 1
         print("%s %-38r -> %s" % ("OK  " if ok else "FAIL", text, got))
-    print("selftest: %d/%d passed" % (len(_SELFTEST) - failures, len(_SELFTEST)))
+    print("selftest: %d/%d passed" % (len(_SELFTEST) + len(_CLASS_SELFTEST) - failures, len(_SELFTEST) + len(_CLASS_SELFTEST)))
     return 1 if failures else 0
 
 

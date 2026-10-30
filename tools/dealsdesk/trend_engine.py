@@ -43,8 +43,16 @@ SPIKE_PCT = 15.0    # latest >= 15% above 30d median -> 'spike'
 MIN_OBS = 5         # need at least this many obs in last 60 days
 
 
+# SBOS common routines - Batch C migration (2026-10-27).
+import os as _os_c, sys as _sys_c
+_sys_c.path.insert(0, _os_c.path.join(_os_c.path.dirname(_os_c.path.abspath(__file__)), ".."))
+import sbos_common  # noqa: E402
+
+
 def esc(s):
-    return s.replace("'", "''")
+    # Batch C migration (2026-10-27): delegates to sbos_common.esc -
+    # the one SQL-escape definition for the ecosystem.
+    return sbos_common.esc(s)
 
 
 def psql(sql, write=False):

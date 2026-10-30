@@ -35,6 +35,7 @@ NOTES:   - Speed figures are estimates from the k11-alpha Colibri deployment
 import argparse
 import json
 import logging
+import os
 import sys
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [rack_scorer] %(message)s")
@@ -89,6 +90,60 @@ def cpu_floor_ok(c):
     return True, ""
 
 
+def _trap_reject(c):
+    """The hardware trap registry (hardware_traps): parts banned outright
+    for documented failure mechanisms (Tesla K80, Raptor Lake) are REJECT
+    in every class, at any price (Brian 2026-10-20; restated 2026-10-28:
+    DealsDesk does not seek out traps when looking for AI inference
+    systems). Same guarded import as the class check."""
+    text = " ".join(str(c.get(k) or "") for k in ("name", "cpu", "cpu_model"))
+    if not text.strip():
+        return None
+    try:
+        import hardware_traps as _traps
+    except ImportError:
+        for _p in (os.path.expanduser("~/dealsdesk/src"),
+                   os.path.expanduser("~/successbrian-os/tools/dealsdesk")):
+            if _p not in sys.path:
+                sys.path.insert(0, _p)
+        try:
+            import hardware_traps as _traps
+        except ImportError:
+            LOG.warning("hardware_traps unavailable - trap registry NOT applied")
+            return None
+    hit = _traps.check_item(text)
+    if hit is not None:
+        return "%s - %s" % (hit["name"], hit["mechanism"])
+    return None
+
+
+def _cpu_class_reject(c):
+    """Brian's CPU class rules via hardware_traps (the canonical registry).
+    Judges the candidate's name + cpu text. Returns the reject reason, or
+    None when the class passes or no ruled class is named. If the registry
+    module is genuinely unavailable the scorer logs loudly - a sourcing
+    rule must never fail silently."""
+    text = " ".join(str(c.get(k) or "") for k in ("name", "cpu", "cpu_model"))
+    if not text.strip():
+        return None
+    try:
+        import hardware_traps as _traps
+    except ImportError:
+        for _p in (os.path.expanduser("~/dealsdesk/src"),
+                   os.path.expanduser("~/successbrian-os/tools/dealsdesk")):
+            if _p not in sys.path:
+                sys.path.insert(0, _p)
+        try:
+            import hardware_traps as _traps
+        except ImportError:
+            LOG.warning("hardware_traps unavailable - CPU class rules NOT applied")
+            return None
+    hit = _traps.check_cpu_class(text)
+    if hit and hit["verdict"] == "reject":
+        return hit["reason"]
+    return None
+
+
 def score_candidate(c):
     """Score one candidate dict. Returns the dict with scoring fields added."""
     price = float(c.get("price", 0) or 0)
@@ -97,6 +152,26 @@ def score_candidate(c):
     ram_gen = str(c.get("ram_gen", "DDR3")).upper()
     nvme = bool(c.get("nvme", False))
     gen = int(c.get("generation", 0) or 0)
+
+    trap_reason = _trap_reject(c)
+    if trap_reason:
+        c["tier"] = "reject"
+        c["tier_note"] = "Hardware TRAP: " + trap_reason
+        c["score"] = -1.0
+        c["verdict"] = "REJECT"
+        c["dollar_per_gb_ram"] = round(price / ram_gb, 2) if ram_gb else None
+        c["dollar_per_core"] = round(price / cores, 2) if cores else None
+        return c
+
+    class_reason = _cpu_class_reject(c)
+    if class_reason:
+        c["tier"] = "reject"
+        c["tier_note"] = "CPU class rule: " + class_reason
+        c["score"] = -1.0
+        c["verdict"] = "REJECT"
+        c["dollar_per_gb_ram"] = round(price / ram_gb, 2) if ram_gb else None
+        c["dollar_per_core"] = round(price / cores, 2) if cores else None
+        return c
 
     cpu_ok, cpu_note = cpu_floor_ok(c)
     if not cpu_ok:

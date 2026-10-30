@@ -40,8 +40,16 @@ def scalar(sql, default="0"):
     rows = q(sql)
     return rows[0][0] if rows and rows[0][0] not in ("", None) else default
 
+# SBOS common routines - Batch C migration (2026-10-27).
+import os as _os_c, sys as _sys_c
+_sys_c.path.insert(0, _os_c.path.join(_os_c.path.dirname(_os_c.path.abspath(__file__)), ".."))
+import sbos_common  # noqa: E402
+
+
 def esc(s):
-    return str(s or "").replace("'", "''")
+    # Batch C migration (2026-10-27): delegates to sbos_common.esc -
+    # the one SQL-escape definition for the ecosystem.
+    return sbos_common.esc(s)
 
 def finding_open(kind, ref_ids):
     return bool(q(f"SELECT 1 FROM successbrian_os.janitor_findings "

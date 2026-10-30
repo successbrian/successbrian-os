@@ -42,8 +42,7 @@ mcp = FastMCP("ecosystem-data")
 
 def _psql(sql):
     """Run a read-only query. Returns (rows, error)."""
-    env = dict(os.environ, PGPASSWORD=os.environ.get("PGPASSWORD",
-                                                     "postgres"))
+    env = dict(os.environ)
     r = subprocess.run(
         ["psql", "-h", "localhost", "-U", "postgres",
          "-d", "ecosystem_central",

@@ -38,6 +38,10 @@ NOTES:
 import json, os, sys, glob, urllib.request, subprocess
 from datetime import datetime
 
+# SBOS common routines — Batch C migration (2026-10-27).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sbos_common  # noqa: E402
+
 MEM_DIR = "/home/successbrian/.hermes/profiles/altair/memory"
 QUEUE = "/home/successbrian/.hermes/profiles/altair/goal-queue/queue.jsonl"
 INBOX = "/home/successbrian/.hermes/profiles/altair/inbox"
@@ -253,22 +257,15 @@ def parse(text):
 
 
 def insert(urgency, subject, body):
+    # Batch C migration (2026-10-27): the primary path delegates to
+    # sbos_common.bridge_send (the shared bus accessor). ANY failure
+    # falls back to the original psql route below — previously that
+    # fallback only covered a missing psycopg2 — so delivery is never
+    # weaker than before.
     try:
-        import psycopg2
-        dsn = "host=%s dbname=%s user=%s password=%s" % (
-            PG["host"], PG["dbname"], PG["user"], PG["password"])
-        conn = psycopg2.connect(dsn, connect_timeout=10)
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO altair.knowledge_bridge (sender, target, subject, body, urgency)"
-            " VALUES ('altair','spencer',%s,%s,%s) RETURNING id",
-            (subject, body, urgency))
-        row_id = cur.fetchone()[0]
-        conn.commit()
-        cur.close()
-        conn.close()
-        return row_id
-    except ImportError:
+        return sbos_common.bridge_send("altair", "spencer", subject, body,
+                                       urgency)
+    except Exception:
         pass
     env = dict(os.environ, PGPASSWORD=PG["password"])
     q = ("INSERT INTO altair.knowledge_bridge (sender, target, subject, body, urgency) "

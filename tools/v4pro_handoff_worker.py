@@ -30,6 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from v4pro_router import get_availability, pq  # noqa: E402
+import sbos_common  # SBOS common routines — Batch C migration (2026-10-27)
 
 PSQL = ["psql", "-h", "localhost", "-U", "successbrian", "-d", "ecosystem_central",
         "-v", "ON_ERROR_STOP=1", "-t", "-A", "-F", "\t"]
@@ -56,27 +57,20 @@ def get_key():
 
 def claim_handoffs(limit=MAX_PER_RUN):
     """Atomic claim: one statement, FOR UPDATE SKIP LOCKED — parallel
-    workers each get different rows, never the same handoff twice."""
-    sql = ("UPDATE successbrian_os.v4pro_handoffs SET status = 'working' "
-           "WHERE id IN (SELECT id FROM successbrian_os.v4pro_handoffs "
-           "WHERE status = 'queued' ORDER BY created_at LIMIT %d "
-           "FOR UPDATE SKIP LOCKED) RETURNING id;" % limit)
-    r = subprocess.run(PSQL + ["-c", sql], capture_output=True, text=True, timeout=30)
-    if r.returncode != 0:
-        print("claim failed: %s" % (r.stderr or "")[:150])
+    workers each get different rows, never the same handoff twice.
+    Batch C migration (2026-10-27): delegates to sbos_common.handoff_claim."""
+    try:
+        return sbos_common.handoff_claim(limit)
+    except Exception as e:
+        print("claim failed: %s" % str(e)[:150])
         return []
-    # psql -t still prints the "UPDATE n" command tag — drop it, take ids only
-    lines = [ln.strip() for ln in r.stdout.split("\n") if ln.strip()]
-    lines = [ln for ln in lines if not ln.upper().startswith("UPDATE")]
-    return [int(x) for x in lines if x.isdigit()]
 
 
 def load_handoff(hid):
-    sql = ("SELECT task_kind, task_summary, context, sonic_draft, ask, constraints "
-           "FROM successbrian_os.v4pro_handoffs WHERE id = %d;" % hid)
-    r = subprocess.run(PSQL + ["-c", sql], capture_output=True, text=True, timeout=30)
-    parts = (r.stdout.strip().split("\t") + [""] * 6)[:6]
-    return dict(zip(["kind", "summary", "context", "draft", "ask", "constraints"], parts))
+    # Batch C migration (2026-10-27): delegates to sbos_common.handoff_get
+    # (true column values instead of tab-split text — strictly cleaner
+    # for fields containing tabs/newlines; same dict shape).
+    return sbos_common.handoff_get(hid)
 
 
 def build_prompt(h):
@@ -650,16 +644,14 @@ def run_research_loop(key, h, hid):
 
 
 def mark(hid, status, result="", error=""):
-    sql = ("UPDATE successbrian_os.v4pro_handoffs SET status = %s, "
-           "v4pro_result = %s, error = %s, completed_at = now() WHERE id = %d;"
-           % (pq(status), pq(result[:20000]), pq(error[:1000]), hid))
-    subprocess.run(PSQL + ["-c", sql], capture_output=True, text=True, timeout=30)
+    # Batch C migration (2026-10-27): delegates to sbos_common.handoff_mark
+    # (parameterized; same 20000/1000 truncation caps).
+    sbos_common.handoff_mark(hid, status, result, error)
 
 
 def release(hid):
-    sql = ("UPDATE successbrian_os.v4pro_handoffs SET status = 'queued' "
-           "WHERE id = %d;" % hid)
-    subprocess.run(PSQL + ["-c", sql], capture_output=True, text=True, timeout=30)
+    # Batch C migration (2026-10-27): delegates to sbos_common.handoff_release.
+    sbos_common.handoff_release(hid)
 
 
 FLEET_WORKERS = 4  # Brian 2026-10-17: 4 parallel workers

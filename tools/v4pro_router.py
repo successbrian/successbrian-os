@@ -36,6 +36,12 @@ import json
 import subprocess
 import sys
 
+# SBOS common routines — Batch C migration (2026-10-27).
+import os as _os_r
+_sys_r = sys
+_sys_r.path.insert(0, _os_r.path.dirname(_os_r.path.abspath(__file__)))
+import sbos_common  # noqa: E402
+
 PSQL = ["psql", "-h", "localhost", "-U", "successbrian", "-d", "ecosystem_central",
         "-v", "ON_ERROR_STOP=1", "-t", "-A", "-F", "\t"]
 
@@ -125,17 +131,16 @@ def cmd_queue(args):
     if not args.ask or not args.ask.strip():
         print("error: --ask is required (what should V4 Pro do?)", file=sys.stderr)
         sys.exit(2)
-    sql = ("INSERT INTO successbrian_os.v4pro_handoffs "
-           "(requested_by, task_kind, task_summary, context, sonic_draft, ask, constraints) "
-           "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id;"
-           % (pq(args.requested_by), pq(args.kind or "general"),
-              pq(args.summary), pq(args.context), pq(args.sonic_draft),
-              pq(args.ask), pq(args.constraints)))
-    r = subprocess.run(PSQL + ["-c", sql], capture_output=True, text=True, timeout=30)
-    if r.returncode != 0:
-        print("queue failed: %s" % r.stderr.strip()[:300], file=sys.stderr)
+    # Batch C migration (2026-10-27): the insert delegates to
+    # sbos_common.handoff_enqueue (parameterized — no more pq-built SQL).
+    try:
+        hid = sbos_common.handoff_enqueue(
+            args.requested_by, args.kind or "general", args.summary,
+            context=args.context, sonic_draft=args.sonic_draft,
+            ask=args.ask, constraints=args.constraints)
+    except Exception as e:
+        print("queue failed: %s" % str(e)[:300], file=sys.stderr)
         sys.exit(1)
-    hid = r.stdout.strip().splitlines()[0].strip()
     print("queued handoff id=%s (worker picks it up within ~15 min)" % hid)
     print(json.dumps({"handoff_id": int(hid), "status": "queued"}))
 

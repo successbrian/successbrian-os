@@ -124,8 +124,16 @@ SKIN_NOTE = {
 
 # ---------------------------------------------------------------- DB layer
 
-def esc(s: str) -> str:
-    return s.replace("'", "''")
+# SBOS common routines - Batch C migration (2026-10-27).
+import os as _os_c, sys as _sys_c
+_sys_c.path.insert(0, _os_c.path.dirname(_os_c.path.abspath(__file__)))
+import sbos_common  # noqa: E402
+
+
+def esc(s):
+    # Batch C migration (2026-10-27): delegates to sbos_common.esc -
+    # the one SQL-escape definition for the ecosystem.
+    return sbos_common.esc(s)
 
 
 def _pg_psycopg2_rows(sql: str):

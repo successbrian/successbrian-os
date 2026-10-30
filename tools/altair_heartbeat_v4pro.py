@@ -49,6 +49,7 @@ FIXES 2026-10-12: the unsure-tasks query referenced a nonexistent `notes`
   pass never saw those tasks. Fixed here.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -58,6 +59,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from v4pro_router import get_availability, classify, pq  # noqa: E402
+import sbos_common  # SBOS common routines — Batch A migration (2026-10-27)
 
 PSQL = ["psql", "-h", "localhost", "-U", "successbrian", "-d", "ecosystem_central",
         "-v", "ON_ERROR_STOP=1", "-t", "-A", "-F", "\t"]
@@ -88,13 +90,15 @@ PARENT_TASK_RE = re.compile(r"Task #(\d+):")
 
 
 def query(sql):
-    r = subprocess.run(PSQL + ["-c", sql], capture_output=True, text=True, timeout=30)
-    return r.stdout.strip() if r.returncode == 0 else ""
+    # Batch A migration (2026-10-27): delegates to sbos_common.pg_text
+    # (tab separator, psql-exact formatting, equivalence-tested against
+    # the psql CLI; '' on error, as before).
+    return sbos_common.pg_text(sql, sep="\t").strip()
 
 
 def exec_sql(sql):
-    r = subprocess.run(PSQL + ["-c", sql], capture_output=True, text=True, timeout=30)
-    return r.returncode == 0
+    # Batch A migration (2026-10-27): delegates to sbos_common.
+    return sbos_common.pg_exec_bool(sql)
 
 
 def load_consume_state():
@@ -321,39 +325,35 @@ def create_harness_job(parent_id, parent_summary, step, dry_run=False,
 
 
 def sonic_available():
-    """Is the local Sonic model up? Free, so no balance check needed."""
-    try:
-        req = urllib.request.Request(SONIC_HEALTH_URL)
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.status == 200
-    except Exception:
-        return False
+    """Is the local Sonic model up? Free, so no balance check needed.
+    Batch A migration (2026-10-27): delegates to sbos_common.http_ok."""
+    return sbos_common.http_ok(SONIC_HEALTH_URL)
 
 
 def call_sonic(prompt):
-    """Ask Sonic (local, free) for a decomposition. OpenAI-compatible API."""
-    body = json.dumps({
-        "messages": [
+    """Ask Sonic (local, free) for a decomposition. OpenAI-compatible API.
+    Batch A migration (2026-10-27): delegates to sbos_common.llm_chat
+    (same messages, temperature, timeout; no model/max_tokens fields,
+    as before)."""
+    text, _usage = sbos_common.llm_chat(
+        messages=[
             {"role": "system",
              "content": "You are a task decomposer for Brian's agent fleet. "
                         "Be concrete, decisive, and brief."},
             {"role": "user", "content": prompt},
         ],
-        "temperature": 0.7,
-    }).encode()
-    req = urllib.request.Request(
-        SONIC_URL, data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=SONIC_TIMEOUT) as resp:
-        data = json.loads(resp.read().decode())
-    return data["choices"][0]["message"]["content"]
+        url=SONIC_URL, model=None, max_tokens=None,
+        temperature=0.7, timeout=SONIC_TIMEOUT)
+    return text
 
 
 def task_sonic_decomposed_recently(task_id):
     n = query(
         "SELECT count(*) FROM successbrian_os.harness_jobs "
-        "WHERE dedup_key = 'decompose-task-%d' "
+        "WHERE (dedup_key = 'decompose-task-%d' "
+        "OR dedup_key LIKE 'decompose-task-%d-%%') "
         "AND created_at > now() - interval '%d days'"
-        % (task_id, SONIC_DEDUPE_DAYS))
+        % (task_id, task_id, SONIC_DEDUPE_DAYS))
     return n.strip().isdigit() and int(n) > 0
 
 
@@ -398,7 +398,9 @@ def sonic_decompose_tasks(tasks, max_n, dry_run=False, skip_ids=None):
                     t["id"], summary, step, dry_run,
                     decomposer="Sonic (local, dry-mode)",
                     source="sonic-decomposition",
-                    dedup_key="decompose-task-%d" % t["id"]):
+                    dedup_key="decompose-task-%d-%s" % (
+                        t["id"], hashlib.md5(
+                            step["title"].encode()).hexdigest()[:10])):
                 made += 1
         print("task #%d: Sonic decomposed into %d harness job(s)" % (t["id"], made))
         if made:
@@ -898,15 +900,10 @@ def judge_full_board_worthy(question, context):
         "Reply EXACTLY: WORTHY: yes|no \n REASON: <one line>."
         % (question[:1500], (context or "")[:1500]))
     try:
-        req = urllib.request.Request(
-            "http://127.0.0.1:11439/v1/chat/completions",
-            data=json.dumps({
-                "model": "qwen3.6",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 150, "temperature": 0.3}).encode(),
-            headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=120) as r:
-            out = json.loads(r.read().decode())["choices"][0]["message"]["content"]
+        # Batch A migration (2026-10-27): delegates to sbos_common.llm_chat.
+        out, _usage = sbos_common.llm_chat(
+            prompt, url=SONIC_URL, model="qwen3.6",
+            max_tokens=150, temperature=0.3, timeout=120)
         worthy = "WORTHY: YES" in out.upper()
         reason = ""
         for ln in out.split("\n"):
@@ -1014,9 +1011,9 @@ def queue_monthly_eval(dry_run=False):
     for scope_key, brief, _sql, extra in load_scopes("atlas-research"):
         if not scope_key.startswith("eval-"):
             continue
-        if scope_recently_queued(scope_key, days=28):
-            continue
         node_key = extra.replace("EVAL ITEM:", "").strip() if extra else scope_key
+        if scope_recently_queued("Atlas research: " + node_key, days=28):
+            continue
         det = query(
             "SELECT left(details::text, 800), left(coalesce(summary,''), 300) "
             "FROM atlas.nodes WHERE node_key = %s" % pq(node_key))
@@ -1029,8 +1026,10 @@ def queue_monthly_eval(dry_run=False):
             n += 1
     if n and not dry_run:
         exec_sql(
-            "UPDATE successbrian_os.chain_controls SET value = '%s', "
-            "updated_at = now() WHERE key = 'lyra_eval_month';" % this_month)
+            "INSERT INTO successbrian_os.chain_controls "
+            "(key, value, updated_at) VALUES ('lyra_eval_month', '%s', now()) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, "
+            "updated_at = now();" % this_month)
     if n:
         print("queued %d monthly eval handoff(s)" % n)
     return n
@@ -1057,7 +1056,7 @@ def rethink_answered(dry_run=False):
         # Storm guard: max 2 re-thinks per escalation per 7 days
         rc = query(
             "SELECT count(*) FROM successbrian_os.v4pro_handoffs "
-            "WHERE task_summary LIKE '%re-think #' || %s || '%%' "
+            "WHERE task_summary LIKE '%%re-think #' || %s || '%%' "
             "AND created_at > NOW() - INTERVAL '7 days'" % pq(eid))
         if rc.strip().isdigit() and int(rc.strip()) >= 2:
             print("re-think cap hit for escalation #%s — skip" % eid)
@@ -1089,6 +1088,34 @@ def rethink_answered(dry_run=False):
     return n
 
 
+def file_lyra_pulse(dry_run=False, metrics=None):
+    """One small row per completed tick into Lyra's common table
+    (successbrian_os.clerk_checkins, source='altair-heartbeat').
+    Filed at the end of the tick, so presence = the tick finished,
+    and absence = a tick that died mid-run (the crash signature this
+    replaces filed nothing and said nothing)."""
+    metrics = dict(metrics or {})
+    if dry_run:
+        print("DRY-RUN would file Lyra pulse: %s" % metrics)
+        return False
+    qd = query("SELECT count(*) FROM successbrian_os.v4pro_handoffs "
+               "WHERE status = 'queued'")
+    metrics["queued_handoffs"] = int(qd) if qd.strip().isdigit() else None
+    msg = "hi lyra, altair heartbeat checking in. see ya next tick"
+    ok = exec_sql(
+        "INSERT INTO successbrian_os.clerk_checkins "
+        "(source, message, tasks_created, queue_depth, metrics, "
+        "captures_in, board_filed, sent_altair, bounced, filed_kept, "
+        "rechecks_sent) VALUES (%s, %s, %d, %d, %s, 0, 0, 0, 0, 0, 0)"
+        % (pq("altair-heartbeat"), pq(msg),
+           int(metrics.get("routed_hard", 0))
+           + int(metrics.get("sonic_decomposed", 0)),
+           metrics["queued_handoffs"] or 0,
+           pq(json.dumps(metrics))))
+    print("lyra pulse filed" if ok else "lyra pulse FAILED")
+    return ok
+
+
 def main():
     dry_run = "--dry-run" in sys.argv
     prev_digest = consume_completed(dry_run)
@@ -1104,6 +1131,7 @@ def main():
               % avail.get("reason"))
         n = sonic_decompose_tasks(tasks, DRY_SONIC_DECOMPOSE_PER_TICK, dry_run)
         print("dry mode: Sonic decomposed %d task(s) into harness jobs" % n)
+        file_lyra_pulse(dry_run, {"mode": "dry", "sonic_decomposed": n})
         return 0
     n, v4_ids = route_hard_tasks(tasks, dry_run)
     print("routed %d hard task(s) to v4pro" % n)
@@ -1119,6 +1147,8 @@ def main():
     queue_full_boards(dry_run)
     queue_monthly_eval(dry_run)
     rethink_answered(dry_run)
+    file_lyra_pulse(dry_run, {"mode": "v4", "routed_hard": n,
+                              "sonic_decomposed": b})
     return 0
 
 

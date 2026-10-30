@@ -111,43 +111,40 @@ def lyra_desk_step(cur, step):
         pm_core.finish(cur, step["step_key"], "failed",
                        {"why": f"signal {sid} not found"})
         return f"lyra: desk step {step['step_key']} signal missing — failed"
+    if payload.get("packet") and payload.get("position"):
+        return (f"lyra: desk signal {sid} already packeted, gate "
+                f"undetermined — left queued for judgment "
+                f"(no re-assembly)")
     packet = {"signal_id": sid, "kind": sig["kind"], "title": sig["title"],
               "body": (sig["body"] or "")[:1500]}
     outcome = None
     try:
         sys.path.insert(0, DESK_CODE)
         from article_ideas import position
-        outcome = position({"title": sig["title"], "body": sig["body"],
-                            "kind": sig["kind"]})
+        outcome = position("%s %s" % (sig["title"], sig["body"] or ""))
     except Exception as e:
         outcome = {"_error": f"{type(e).__name__}: {e}"}
-    if isinstance(outcome, dict) and "_error" not in outcome:
-        status = str(outcome.get("status") or outcome.get("positioning")
-                     or "").lower()
-        if "hold" in status or "held" in status:
-            pm_core.finish(cur, step["step_key"], "done",
-                           {"packet": packet, "position": outcome,
-                            "gate": "held"})
-            return f"lyra: desk signal {sid} held by the gate — step done"
-        if status:
-            pm_core.finish(cur, step["step_key"], "done",
-                           {"packet": packet, "position": outcome,
-                            "gate": "positioned"})
-            pm_core.add_step(
-                cur, f"desk-idea-{sid}",
-                f"Angle/brief judgment for positioned signal {sid}: "
-                f"{sig['title']}"[:300],
-                kind="judgment", origin="system", priority=40,
-                payload={"instruction":
-                         "Given this positioned CampaignsDesk signal, "
-                         "propose the article angle and a one-paragraph "
-                         "brief. Return JSON only.",
-                         "context": json.dumps(
-                             {"signal": packet, "position": outcome})[:6000],
-                         "output_keys": ["angle", "brief", "confidence"]})
-            return (f"lyra: desk signal {sid} positioned ({status}) — "
-                    f"step done, Morpheus follow-up filed")
-    release(cur, step["step_key"], {"packet": packet,
+    if isinstance(outcome, dict) and "_error" not in outcome \
+            and outcome.get("serves_ref"):
+        pm_core.finish(cur, step["step_key"], "done",
+                       {"packet": packet, "position": outcome,
+                        "gate": "positioned"})
+        pm_core.add_step(
+            cur, f"desk-idea-{sid}",
+            f"Angle/brief judgment for positioned signal {sid}: "
+            f"{sig['title']}"[:300],
+            kind="judgment", origin="system", priority=40,
+            payload={"instruction":
+                     "Given this positioned CampaignsDesk signal, "
+                     "propose the article angle and a one-paragraph "
+                     "brief. Return JSON only.",
+                     "context": json.dumps(
+                         {"signal": packet, "position": outcome})[:6000],
+                     "output_keys": ["angle", "brief", "confidence"]})
+        return (f"lyra: desk signal {sid} positioned "
+                f"({outcome.get('serves_ref')}) — step done, "
+                f"Morpheus follow-up filed")
+    release(cur, step["step_key"], {"packet": packet, "position": outcome,
                                     "prepared_by": "lyra"})
     return (f"lyra: desk signal {sid} packet assembled — left queued "
             f"for judgment")
@@ -234,18 +231,44 @@ def altair_pass():
         print("altair: Sonic fully busy — chat keeps priority, skipping")
         return []
     c, cur = dict_cur()
-    rows = pm_core.claim(cur, "altair-heartbeat", limit=1,
+    rows = pm_core.claim(cur, "altair-heartbeat", limit=3,
                          kinds=["repair", "build", "review", "desk"])
     c.commit()
     if not rows:
         c.close()
         print("altair: nothing to claim")
         return []
-    row = rows[0]
-    step = {"step_key": row["step_key"] if isinstance(row, dict) else row[1],
-            "title": row["title"] if isinstance(row, dict) else row[2],
-            "kind": row["kind"] if isinstance(row, dict) else row[3]}
-    payload = step_payload(cur, step["step_key"])
+    # Plan-once guard (2026-10-26 workflow fix): a step Altair already
+    # planned carries altair_plan in its payload (release merges it
+    # there). Re-planning it burns a Sonic call every pass and the
+    # follow-up it re-files is deduped by add_step anyway — release
+    # planned steps untouched and judge the first unplanned one.
+    pre_lines = []
+    step = None
+    payload = None
+    for row in rows:
+        cand = {"step_key": row["step_key"] if isinstance(row, dict)
+                else row[1],
+                "title": row["title"] if isinstance(row, dict) else row[2],
+                "kind": row["kind"] if isinstance(row, dict) else row[3]}
+        cand_payload = step_payload(cur, cand["step_key"])
+        if cand_payload.get("altair_plan"):
+            release(cur, cand["step_key"])
+            pre_lines.append(
+                f"altair: {cand['step_key']} already planned — "
+                f"skipping re-plan (no Sonic call)")
+            continue
+        if step is None:
+            step, payload = cand, cand_payload
+        else:
+            release(cur, cand["step_key"])
+    c.commit()
+    if step is None:
+        c.close()
+        for line in pre_lines:
+            print(line)
+        print("altair: all claimed steps already planned — no Sonic call")
+        return pre_lines
     c.close()  # NEVER hold a DB connection across a model call (fleet law)
     try:
         raw = sonic_judge(step, payload)
@@ -305,9 +328,9 @@ def altair_pass():
                      f"(certainty {certainty})")
     c.commit()
     c.close()
-    for line in lines:
+    for line in pre_lines + lines:
         print(line)
-    return lines
+    return pre_lines + lines
 
 
 # ---------------------------------------------------------------- MEGHAN

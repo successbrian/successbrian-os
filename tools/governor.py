@@ -6,12 +6,13 @@ Model-aware: V4 Pro when funded, Sonic keeps sonic-capable work moving
 when V4 is dry. The machine never idles; it degrades gracefully.
 """
 import json
+import os
 import subprocess
 import urllib.request
 
 PSQL = ["psql", "-h", "localhost", "-U", "postgres", "-d", "ecosystem_central",
         "-v", "ON_ERROR_STOP=1", "-t", "-A", "-F", "\t"]
-ENV = {"PATH": "/usr/bin:/bin", "PGPASSWORD": "postgres"}
+ENV = {"PATH": "/usr/bin:/bin", "HOME": os.path.expanduser("~")}
 SONIC_URL = "http://127.0.0.1:11439/v1/chat/completions"
 
 

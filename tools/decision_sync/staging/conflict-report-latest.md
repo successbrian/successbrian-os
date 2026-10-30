@@ -1,6 +1,6 @@
 # Decision Conflict Report
 
-**Generated:** 2026-10-23 04:13 UTC
+**Generated:** 2026-10-29 19:55 UTC
 **Conflicts/gaps found:** 4
 
 These are flags for Brian's review — nothing is auto-changed. Quarantine, never delete.
@@ -11,7 +11,7 @@ These are flags for Brian's review — nothing is auto-changed. Quarantine, neve
 
 Plan specs 1200W PSU but decisions power-limit M40s to 150W each (~300W GPUs + ~190W CPUs + overhead ~= 600W). 1200W is oversized; consider 750-850W to save cost.
 
-_Checked: 2026-10-23T04:13:41.580676+00:00_
+_Checked: 2026-10-29T19:55:01.786304+00:00_
 
 ---
 
@@ -19,7 +19,7 @@ _Checked: 2026-10-23T04:13:41.580676+00:00_
 
 Decisions add 2x PCIe NVMe adapters per node (8 total) for the striped Gen 2 model volume, but no adapter line exists in the build plan.
 
-_Checked: 2026-10-23T04:13:41.580772+00:00_
+_Checked: 2026-10-29T19:55:01.786375+00:00_
 
 ---
 
@@ -27,7 +27,7 @@ _Checked: 2026-10-23T04:13:41.580772+00:00_
 
 Decisions add SATA SSD + HDD tiering per node, but no SATA drives exist in the build plan.
 
-_Checked: 2026-10-23T04:13:41.580780+00:00_
+_Checked: 2026-10-29T19:55:01.786381+00:00_
 
 ---
 
@@ -35,6 +35,6 @@ _Checked: 2026-10-23T04:13:41.580780+00:00_
 
 Decisions killed the Phase 1/Phase 2 split (dual-role from day one). Check plan notes/source_type fields for stale phase language.
 
-_Checked: 2026-10-23T04:13:41.580881+00:00_
+_Checked: 2026-10-29T19:55:01.786405+00:00_
 
 ---

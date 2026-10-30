@@ -40,12 +40,13 @@ def build(cur, conn):
     def schedule():
         cur.execute(
             """SELECT table_name FROM information_schema.tables
-                WHERE table_schema='altair' AND table_name='calendar'""")
+                WHERE table_schema='calendar' AND table_name='effective_day'""")
         if not cur.fetchone():
-            return "Schedule: no calendar source wired yet (altair.calendar absent)"
+            return "Schedule: no calendar source wired yet (calendar.effective_day absent)"
         cur.execute(
-            """SELECT title, starts_at FROM altair.calendar
-                WHERE starts_at::date = CURRENT_DATE ORDER BY starts_at LIMIT 6""")
+            """SELECT label AS title, start_time AS starts_at
+                   FROM calendar.effective_day
+                  WHERE date::date = CURRENT_DATE ORDER BY start_time LIMIT 6""")
         rows = cur.fetchall()
         if not rows:
             return "Schedule: nothing on today's calendar"
@@ -93,6 +94,125 @@ def build(cur, conn):
         return (f"DeepSeek: ${float(r['usd']):.2f} ({state}, "
                 f"checked {r['checked_at']:%H:%M})")
     lines.append("- " + section(deepseek, conn))
+
+    def route():
+        cur.execute(
+            """SELECT usd, available, checked_at,
+                      EXTRACT(EPOCH FROM now() - checked_at)/60 AS age_min
+                 FROM successbrian_os.v4pro_balance_history
+                ORDER BY checked_at DESC LIMIT 1""")
+        r = cur.fetchone()
+        rule = ("Do not deliberate routing - this line IS the decision. "
+                "For WORK (not a question): write the plan (max 7 steps, "
+                "one line each; prefix a step DEEP: only if it needs deep "
+                "reasoning), then run ONE command: python3 "
+                "~/successbrian-os/tools/chat_work_launch.py "
+                "--summary '<one line>' --plan '<steps, one per line>'; "
+                "then tell Brian the plan + the launch receipt, "
+                "immediately, and stop. Never do the work in chat, never "
+                "wait on the background. A question you can answer "
+                "directly: just answer - no plan, no launch.")
+        if not r:
+            return ("ROUTE: DeepSeek NO READING - the launcher sends "
+                    "plans to the Sonic background queue. " + rule)
+        usd = float(r["usd"])
+        fresh = float(r["age_min"]) < 60
+        if fresh and r["available"] and usd > 0:
+            head = (f"ROUTE: DeepSeek V4 Pro FUNDED (${usd:.2f}) - the "
+                    "launcher sends plans to DeepSeek V4 Pro in the "
+                    "background. ")
+        else:
+            head = (f"ROUTE: DeepSeek NOT usable (${usd:.2f}) - the "
+                    "launcher sends plans to the Sonic background queue; "
+                    "DEEP: steps park for DeepSeek until funded. ")
+        return head + rule
+    lines.append("- " + section(route, conn))
+
+    def capacity():
+        # Brian 2026-10-29: need is judged on MEASURED production.
+        # Demonstrated ceiling = busiest measured hour x 24.
+        # ADD at >=70% of ceiling on the last full day, or slots
+        # saturated >=50% of samples AND utilization >=50%.
+        # WATCH at >=50% utilization or >=25% saturation.
+        # IDLE WASTE: slots <50% busy over the last hour while
+        # >=10 open ends wait - that is a feeder failure (demand in
+        # this ecosystem is effectively unlimited; Sonic must never
+        # sit idle while work exists).
+        cur.execute(
+            """SELECT count(*) AS n,
+                      avg(CASE WHEN slots_total > 0
+                                AND slots_busy >= slots_total
+                               THEN 1.0 ELSE 0.0 END) * 100 AS pct_full
+                 FROM successbrian_os.sonic_capacity_samples
+                WHERE sampled_at > now() - interval '24 hours'""")
+        s = cur.fetchone()
+        cur.execute(
+            """SELECT slots_total, slots_busy, queue_pending,
+                      oldest_pending_age_min
+                 FROM successbrian_os.sonic_capacity_samples
+                ORDER BY sampled_at DESC LIMIT 1""")
+        last = cur.fetchone()
+        cur.execute(
+            """SELECT COALESCE(sum(prompt_tokens + generated_tokens), 0)
+                      AS tot,
+                      COALESCE(sum(requests), 0) AS req
+                 FROM successbrian_os.sonic_token_hourly
+                WHERE (hour AT TIME ZONE 'America/Chicago')::date
+                      = current_date - 1""")
+        y = cur.fetchone()
+        cur.execute(
+            """SELECT COALESCE(max(prompt_tokens + generated_tokens), 0)
+                      AS bh FROM successbrian_os.sonic_token_hourly""")
+        bh = float(cur.fetchone()["bh"] or 0)
+        cur.execute(
+            """SELECT count(DISTINCT
+                      (hour AT TIME ZONE 'America/Chicago')::date) AS d
+                 FROM successbrian_os.sonic_token_hourly""")
+        days = cur.fetchone()["d"]
+        cur.execute(
+            """SELECT count(*) AS q FROM successbrian_os.pm_steps
+                WHERE status = 'queued'""")
+        open_q = cur.fetchone()["q"]
+        cur.execute(
+            """SELECT avg(slots_busy::numeric
+                          / NULLIF(slots_total, 0)) AS share
+                 FROM successbrian_os.sonic_capacity_samples
+                WHERE sampled_at > now() - interval '1 hour'""")
+        share = cur.fetchone()["share"]
+        if not last:
+            return "CAPACITY: no Sonic samples on record yet"
+        ceiling = bh * 24
+        util = (float(y["tot"]) / ceiling * 100) if ceiling else 0.0
+        pct_full = float(s["pct_full"] or 0)
+        nums = (f"yesterday {float(y['tot']) / 1e6:.2f}M tokens "
+                f"({y['req']} requests) = {util:.0f}% of demonstrated "
+                f"ceiling ~{ceiling / 1e6:.1f}M/day (busiest hour "
+                f"{bh / 1000:.0f}K); slots fully busy in "
+                f"{pct_full:.0f}% of 24h samples; queue "
+                f"{last['queue_pending']} pending")
+        idle = ""
+        if share is not None and float(share) < 0.5 and open_q >= 10:
+            idle = (f"IDLE WASTE: Sonic averaged "
+                    f"{float(share) * 100:.0f}% busy last hour while "
+                    f"{open_q} open ends wait - feeder problem, not "
+                    f"capacity. Standing work always exists (Brian "
+                    f"2026-10-29): intel to review, income "
+                    f"opportunities to find, relationships to crunch, "
+                    f"sales angles per person, needs/pains matched "
+                    f"to solves, and goal analysis - are goals being "
+                    f"met, what is working, what is not, how does it "
+                    f"work better. ")
+        if days < 2:
+            return ("CAPACITY: baseline building "
+                    f"({days} days measured) - " + idle + nums)
+        if util >= 70 or (pct_full >= 50 and util >= 50):
+            return ("CAPACITY: ADD SONIC - Altair, tell Brian in this "
+                    "chat: measured production says the flow needs "
+                    "another Sonic. Evidence: " + idle + nums)
+        if util >= 50 or pct_full >= 25:
+            return "CAPACITY: WATCH - " + idle + nums
+        return "CAPACITY: OK - " + idle + nums
+    lines.append("- " + section(capacity, conn))
 
     def gates():
         cur.execute(

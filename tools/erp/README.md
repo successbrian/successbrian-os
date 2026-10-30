@@ -28,11 +28,18 @@ The ERP replaces the relay with code both sides own.
 2. `need_from_task.py` (cron): stages new needs. Idempotent via UNIQUE(task_id, item).
 3. `needs_intake.py` (cron, 15 min): promotes staged rows into
    `dealsdesk.ecosystem_needs` (source=`sbos_task:<id>`). Marks rows promoted.
-4. `sourcing_worker.py` (cron, hourly max): for each open task-raised need —
+4. `sourcing_worker.py` (DISPATCHED FROM A PLANNING SESSION ONLY —
+   the daily cron was removed 2026-10-28; Brian: no unattended
+   shopping. A plain run refuses; --dry-run prints gate decisions
+   without searching): for each open task-raised need —
    PicClick scrape -> seller blocklist filter -> rack scorer (server needs) ->
    writes `dealsdesk.solution_options`, marks need `planned`.
+   BUILD-PLAN GATE (Brian 2026-10-27): the worker searches ONLY for needs
+   with a plan in dealsdesk.builds (builds.need_id); no plan -> logged skip,
+   zero web searching ("no random searching"). Options stamped with the
+   build plan number.
 5. Budget gate (inside sourcing_worker): `recommended` only if `est_cost` is
-   within the task's `max_cost` (or no cap). Cheapest recommended option wins;
+   within a real cap: the task's `max_cost`, else the need's `target_buy_price`. NO cap on record -> nothing is `recommended` (Brian 2026-10-27: SBOS accounts for his budget; no cap is not no limit). Cheapest recommended option wins;
    the rest stay `candidate`. **Never buys anything.**
 6. `need_status_sync.py` (cron): satisfied needs -> request satisfied; all of a
    task's requests satisfied -> task done. Never moves a task backwards.

@@ -1375,7 +1375,7 @@ SEGMENTS = {
                    "deepseek-reap-150b-inference", "colibri",
                    "strata", "epyc-builds",
                    "epyc-7002-builds", "epyc-7003-builds",
-                   "saturday-podcast", "career", "crew2",
+                   "saturday-podcast", "career", "crew2", "water-heaters",
                    "gina-immigration",
                    "mountain-north-rural-network", "unsorted",
                    "quarantine", "things-brian-doesnt-like",
@@ -2773,6 +2773,32 @@ REGISTRY = [
      "Ordered by Brian 2026-10-29 23:35 CDT: 'Build the "
      "Crew2 workspace now.' Created in AnythingLLM "
      "2026-10-29 via the API."),
+    ("water-heaters", "domain",
+     "Brian (own venture - water heaters)", None,
+     "Brian's water-heater venture knowledge body: helping "
+     "customers who live 50 miles or further from a Home "
+     "Depot store get quoted for same/similar water-heater "
+     "replacements by phone, and get on-site estimates "
+     "with local plumbers for changes that require 'ose' "
+     "and can't be quoted over the phone (Brian's concept, "
+     "2026-10-30). Holds the concept, quoting know-how "
+     "from Brian's own trade experience, coverage and "
+     "geography thinking, and local-plumber network "
+     "material. NOT Crew2 day-job material (that is "
+     "'crew2') and NOT Crew2-proprietary data.",
+     "Brian's own water-heater venture material lands "
+     "here: concept notes, quote playbooks, coverage and "
+     "geography research, plumber-network notes. Crew2 "
+     "day-job observations stay in 'crew2'; job search "
+     "stays in 'career'.",
+     "live",
+     "Ordered by Brian 2026-10-30 11:00 CDT: 'we need a "
+     "water heaters anythingllm workspace.' Purpose "
+     "drafted by Muse from Brian's 2026-10-30 statement "
+     "- Brian to confirm or refine. 'ose' kept verbatim "
+     "from Brian's message; its expansion is unconfirmed. "
+     "Created in AnythingLLM 2026-10-30 via the API "
+     "(workspace id 147)."),
     ("systeme-io", "domain",
      "Brian — systeme.io platform business", None,
      "All systeme.io material: Brian's platform business "

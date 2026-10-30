@@ -1375,7 +1375,7 @@ SEGMENTS = {
                    "deepseek-reap-150b-inference", "colibri",
                    "strata", "epyc-builds",
                    "epyc-7002-builds", "epyc-7003-builds",
-                   "saturday-podcast", "career",
+                   "saturday-podcast", "career", "crew2",
                    "gina-immigration",
                    "mountain-north-rural-network", "unsorted",
                    "quarantine", "things-brian-doesnt-like",
@@ -2754,6 +2754,25 @@ REGISTRY = [
      "Brian's career and job-search material.",
      "Career material.", "live",
      "Purpose drafted from workspace name — Brian to confirm."),
+    ("crew2", "domain", "Brian (day job — Crew2 Inc.)", None,
+     "Brian's Crew2 day-job knowledge body: his own notes, "
+     "observations and proposals from working as a "
+     "water-heater closer at Crew2 Inc.; the people (Erik "
+     "Larson, Benson Vue, Maliq) and the platform (IX, "
+     "Dialpad, Aptean); lead-flow analysis; public "
+     "Aptean/vendor intel including Aptean UNITE. NOT "
+     "job-search material (that is 'career'). NOT "
+     "Crew2-proprietary data — Brian's own observations "
+     "and public intel only.",
+     "Brian's day-job material at Crew2: his own notes, "
+     "observations, proposals and drafts, plus public "
+     "Aptean/vendor intel (UNITE included). Job search "
+     "goes to 'career'; his own businesses' material "
+     "stays in their own workspaces (R2/R3).",
+     "live",
+     "Ordered by Brian 2026-10-29 23:35 CDT: 'Build the "
+     "Crew2 workspace now.' Created in AnythingLLM "
+     "2026-10-29 via the API."),
     ("systeme-io", "domain",
      "Brian — systeme.io platform business", None,
      "All systeme.io material: Brian's platform business "

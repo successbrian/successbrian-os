@@ -201,6 +201,15 @@ def cmd_outlook(_):
                   f" of new recurring at full pace ({kind})")
     print("  Streams marked UNKNOWN have no verified dollar rate on record —"
           " the outlook names the gap instead of filling it.")
+    layers = pg_rows(
+        "SELECT g.product, l.layer, l.grows, l.rate_note FROM successbrian_os.goal_income_layers l "
+        "JOIN successbrian_os.monthly_goals g ON g.goal_key = l.goal_key ORDER BY g.product, l.layer"
+    )
+    if layers:
+        print("  Income layers (Brian: initial commissions, downline commissions that grow, ...):")
+        for product, layer, grows, note in layers:
+            g = " [grows]" if grows else ""
+            print(f"    {product:12s} {layer}{g}: {note if note else 'UNKNOWN — rate not on record'}")
     return 0
 
 

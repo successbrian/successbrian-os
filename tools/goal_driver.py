@@ -136,6 +136,38 @@ def cmd_check(_):
     return 0
 
 
+def cmd_needs(_):
+    """Derive build requirements from the goals (Brian, 2026-11-01: the
+    ecosystem should know what it needs to build — how much content, how
+    many inference machines). All rates are labeled planning assumptions
+    from successbrian_os.planning_rates; the math is shown, never hidden."""
+    import math
+    rates = dict(pg_rows("SELECT rate_key, value FROM successbrian_os.planning_rates"))
+    captures = pg_one("SELECT target FROM successbrian_os.monthly_goals WHERE goal_key='captures-3000'")
+    views_needed = captures / float(rates["reader_capture_rate"])
+    live_articles = math.ceil(views_needed / float(rates["article_views_per_month"]))
+    # Content production to REACH and HOLD the live-article base: assume the
+    # base is built over 6 months and refreshed on a 12-month cycle.
+    build_per_month = math.ceil(live_articles / 6)
+    refresh_per_month = math.ceil(live_articles / 12)
+    pieces_per_month = build_per_month + refresh_per_month
+    gen_tokens_month = pieces_per_month * float(rates["article_output_tokens"])
+    nodes = math.ceil(gen_tokens_month / (float(rates["node_tokens_per_day"]) * 30))
+    print("What the ecosystem must build — derived from the goals")
+    print(f"  Goal: {captures} captured contacts / month")
+    print(f"  At a {float(rates['reader_capture_rate']):.0%} reader capture rate (planning assumption),"
+          f" articles must draw {views_needed:,.0f} reader-views / month")
+    print(f"  At {float(rates['article_views_per_month']):,.0f} views per live article per month (planning assumption),"
+          f" that needs ~{live_articles} live, drawing articles across the fleet")
+    print(f"  Content production: ~{pieces_per_month} finished pieces / month"
+          f" (build-out {build_per_month} + refresh {refresh_per_month})")
+    print(f"  Inference: ~{gen_tokens_month:,.0f} generated tokens / month for content"
+          f" -> ~{max(nodes,1)} inference node(s) on content duty at the stored planning rate")
+    print("  Every rate above is a labeled planning assumption in planning_rates —"
+          " replace them with measured numbers as real months close.")
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="verb", required=True)
@@ -164,6 +196,7 @@ def main():
     bp = sub.add_parser("board")
     bp.add_argument("--month")
     bp.set_defaults(fn=cmd_board)
+    sub.add_parser("needs").set_defaults(fn=cmd_needs)
     sub.add_parser("check").set_defaults(fn=cmd_check)
     a = p.parse_args()
     return a.fn(a)

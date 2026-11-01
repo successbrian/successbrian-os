@@ -179,6 +179,31 @@ def cmd_needs(_):
     return 0
 
 
+def cmd_outlook(_):
+    """Weekly income outlook — a COMPUTED number, not a goal (Brian,
+    2026-11-01: it 'changes week to week based on the income pipelines
+    and goals we've set'). Targets x verified value rates; streams with
+    no verified rate print UNKNOWN. Run it any week; it moves when the
+    goals or the pipelines move."""
+    rows = pg_rows(
+        "SELECT g.product, g.target, g.unit, v.value_low_cents, v.value_high_cents, "
+        "v.value_kind, v.notes "
+        "FROM successbrian_os.monthly_goals g "
+        "LEFT JOIN successbrian_os.goal_value_rates v ON v.goal_key = g.goal_key "
+        "WHERE g.kind = 'paid_conversion' ORDER BY g.target DESC"
+    )
+    print("Income outlook — computed from the current goals (this week):")
+    for product, target, unit, lo, hi, kind, notes in rows:
+        if lo is None:
+            print(f"  {product:12s} {target}/mo {unit} -> $ UNKNOWN ({kind or 'no rate on record'})")
+        else:
+            print(f"  {product:12s} {target}/mo {unit} -> ${lo*target/100:,.0f}–${hi*target/100:,.0f}/mo"
+                  f" of new recurring at full pace ({kind})")
+    print("  Streams marked UNKNOWN have no verified dollar rate on record —"
+          " the outlook names the gap instead of filling it.")
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="verb", required=True)
@@ -208,6 +233,7 @@ def main():
     bp.add_argument("--month")
     bp.set_defaults(fn=cmd_board)
     sub.add_parser("needs").set_defaults(fn=cmd_needs)
+    sub.add_parser("outlook").set_defaults(fn=cmd_outlook)
     sub.add_parser("check").set_defaults(fn=cmd_check)
     a = p.parse_args()
     return a.fn(a)

@@ -174,6 +174,13 @@ def cmd_needs(_):
           f" + {double_blogs} ruled at 2/week — the larger governs)")
     print(f"  Inference: ~{gen_tokens_month:,.0f} generated tokens / month for content"
           f" -> ~{max(nodes,1)} inference node(s) on content duty at the stored planning rate")
+    per_blog_uniques = 50000  # Brian's ruled per-blog goal, 2026-11-01
+    fleet_uniques = per_blog_uniques * blog_count
+    articles_for_visitors = math.ceil(fleet_uniques / float(rates["article_views_per_month"]))
+    print(f"  Visitor goal (Brian, ruled): {per_blog_uniques:,} monthly unique visitors PER blog,"
+          f" sustained -> {fleet_uniques:,} across {blog_count} blogs")
+    print(f"  At the same per-article planning rate that implies ~{articles_for_visitors:,} live drawing articles"
+          f" fleet-wide — the visitor goal, not the capture goal, is the long-horizon build.")
     print("  Every rate above is a labeled planning assumption in planning_rates —"
           " replace them with measured numbers as real months close.")
     return 0

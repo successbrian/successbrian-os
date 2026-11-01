@@ -150,7 +150,13 @@ def cmd_needs(_):
     # base is built over 6 months and refreshed on a 12-month cycle.
     build_per_month = math.ceil(live_articles / 6)
     refresh_per_month = math.ceil(live_articles / 12)
-    pieces_per_month = build_per_month + refresh_per_month
+    derived_per_month = build_per_month + refresh_per_month
+    # Brian's floor (2026-11-01): EVERY blog publishes a MINIMUM of one
+    # article per week; some blogs need more. The floor is a ruling, not an
+    # assumption, and production is the LARGER of floor vs goal-derived.
+    blog_count = pg_one("SELECT count(*) FROM campaignsdesk.blogs")
+    floor_per_month = math.ceil(blog_count * 52 / 12)
+    pieces_per_month = max(derived_per_month, floor_per_month)
     gen_tokens_month = pieces_per_month * float(rates["article_output_tokens"])
     nodes = math.ceil(gen_tokens_month / (float(rates["node_tokens_per_day"]) * 30))
     print("What the ecosystem must build — derived from the goals")
@@ -160,7 +166,8 @@ def cmd_needs(_):
     print(f"  At {float(rates['article_views_per_month']):,.0f} views per live article per month (planning assumption),"
           f" that needs ~{live_articles} live, drawing articles across the fleet")
     print(f"  Content production: ~{pieces_per_month} finished pieces / month"
-          f" (build-out {build_per_month} + refresh {refresh_per_month})")
+          f" (goal-derived {derived_per_month}: build-out {build_per_month} + refresh {refresh_per_month};"
+          f" Brian's floor {floor_per_month}: {blog_count} blogs x 1 article/week minimum — the larger governs)")
     print(f"  Inference: ~{gen_tokens_month:,.0f} generated tokens / month for content"
           f" -> ~{max(nodes,1)} inference node(s) on content duty at the stored planning rate")
     print("  Every rate above is a labeled planning assumption in planning_rates —"

@@ -29,20 +29,52 @@ Open to full-time roles in applied AI and AI operations.
 
 ## Who is this for
 
-- **One person, multiple businesses** — a solo operator running
-  several ventures who needs one system to carry the back office of
-  all of them: the follow-ups, the content, the records, the
+**Anyone building something of their own** — often from home, usually
+working solo, and often doing more than one kind of work over the
+course of a business life.
+
+The work itself varies endlessly. The shape underneath it doesn't:
+people you need to remember, conversations you can't afford to lose,
+documents you'll need again, decisions you shouldn't have to make
+twice, and follow-through that has to happen even on the days you
+can't be there. If your business currently lives in your head, your
+inbox, and a stack of spreadsheets — and it stops when you stop —
+this was built for you.
+
+People put it to work on things like:
+
+- **Several ventures at once** — one system carrying the back office
+  of all of them: the follow-ups, the content, the records, the
   remembering.
-- **Network marketers** — running a relationship business on it:
-  who to talk to, what was said, what happens next, across a whole
-  downline-shaped graph instead of a spreadsheet.
-- **Blogging & social media operators** — running a content
-  operation on it: ideas captured, campaigns planned, posts and
-  follow-through tracked until they are done.
-- **AI system builders** — building an agentic system of their own
-  and looking for a working reference: a deterministic spine, small
-  local models only at defined judgment points, every decision on
-  the record, and an owner who stays the boss of the machine.
+- **A relationship business** — who to talk to, what was said, what
+  happens next, kept as a living record of real relationships instead
+  of rows in a spreadsheet.
+- **A content operation** — ideas captured, campaigns planned, posts
+  and follow-through tracked until they are done.
+- **A service practice** — clients, appointments, renewals, and the
+  documents and rules of the trade, including the ones that change
+  every year and expire if nobody is watching.
+- **An online business** — offers, partners, campaigns, and an
+  audience, with every commitment and result on the record.
+- **Building an AI system of their own** — a working reference: a
+  deterministic spine, small local models only at defined judgment
+  points, every decision on the record, and an owner who stays the
+  boss of the machine.
+
+## One core, shaped to your work
+
+SuccessBrian OS does not assume what your business is, and it is not
+tied to any one trade. The core — people, memory, documents,
+decisions, follow-through — is the same for everyone who uses it.
+
+On top of that core, the system can be shaped to a specific way of
+working: your words for things, your stages, your deadlines, the
+documents your work runs on, and the rules your work has to follow.
+For one person the pipeline is prospects and conversations. For
+another it is clients, appointments, and renewals. For another it is
+ideas, drafts, and publishing. Specialized tools for specific
+workflows are built on the shared core, not instead of it — the
+trade changes, but the remembering doesn't have to.
 
 ## The systems
 

@@ -98,24 +98,29 @@ def cmd_board(a):
     if not month:
         month = pg_one("SELECT to_char(current_date, 'YYYY-MM')")
     rows = pg_rows(
-        "SELECT g.goal_key, g.product, g.target, s.achieved "
+        "SELECT g.goal_key, g.product, g.target, s.achieved, g.kind "
         "FROM successbrian_os.monthly_goals g "
         "LEFT JOIN successbrian_os.goal_month_scores s "
         "  ON s.goal_key = g.goal_key AND s.month = (%s || '-01')::date "
-        "ORDER BY g.target DESC",
+        "ORDER BY (g.kind = 'capture') DESC, g.target DESC",
         (month,),
     )
     print(f"Monthly goal board — {month}")
-    for key, product, target, achieved in rows:
+    for key, product, target, achieved, kind in rows:
         state = "NOT REPORTED" if achieved is None else f"{achieved} / {target}"
-        print(f"  {product:12s} target {target:>3d}   {state}")
+        tag = " [supply]" if kind == "capture" else ""
+        print(f"  {product:18s} target {target:>5d}   {state}{tag}")
     return 0
 
 
 def cmd_check(_):
-    n = pg_one("SELECT count(*) FROM successbrian_os.monthly_goals")
+    n = pg_one("SELECT count(*) FROM successbrian_os.monthly_goals WHERE kind='paid_conversion'")
     if n != 3:
-        print(f"DEFECT: monthly_goals holds {n} goals, expected exactly 3")
+        print(f"DEFECT: monthly_goals holds {n} paid-conversion goals, expected exactly 3")
+        return 1
+    cap = pg_one("SELECT target FROM successbrian_os.monthly_goals WHERE goal_key='captures-3000'")
+    if cap != 3000:
+        print(f"DEFECT: capture goal target is {cap}, expected 3000 (Brian, 2026-11-01)")
         return 1
     bad = pg_one(
         "SELECT count(*) FROM successbrian_os.goal_asset_links "
@@ -123,9 +128,9 @@ def cmd_check(_):
     if bad:
         print(f"DEFECT: {bad} active link(s) without a real fit reason")
         return 1
-    targets = dict(pg_rows("SELECT goal_key, target FROM successbrian_os.monthly_goals"))
+    targets = dict(pg_rows("SELECT goal_key, target FROM successbrian_os.monthly_goals WHERE kind='paid_conversion'"))
     if targets != {"gotbackup-40": 40, "oliabo-30": 30, "systeme-50": 50}:
-        print(f"DEFECT: targets drifted: {targets}")
+        print(f"DEFECT: paid targets drifted: {targets}")
         return 1
     print("GOAL_DRIVER_OK")
     return 0

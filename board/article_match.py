@@ -126,6 +126,94 @@ def assess(cap, record=True):
     return line
 
 
+PROPOSALS_DDL = """
+CREATE TABLE IF NOT EXISTS successbrian_os.clerk_article_proposals (
+  id          bigserial PRIMARY KEY,
+  blog_slug   text NOT NULL,
+  title       text NOT NULL,
+  outline     text NOT NULL,
+  capture_ids bigint[] NOT NULL,
+  status      text NOT NULL DEFAULT 'proposed',
+  created_at  timestamptz NOT NULL DEFAULT now()
+)"""
+
+
+def _sentences(text, topic_words, limit=2):
+    out = []
+    for s in re.split(r"(?<=[.!?])\s+", (text or "").replace("\n", " ")):
+        s = s.strip()
+        if 40 <= len(s) <= 220 and (_sig_words(s) & topic_words):
+            out.append(s)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def propose():
+    """Merge NEW_ARTICLE verdicts into article proposals (Brian, 2026-11-01
+    20:17 CST): related intel MERGES into one article — the clerk must not
+    suggest two bubble articles — and each proposal carries a rough outline
+    drafted from the merged captures."""
+    pg_exec(PROPOSALS_DDL)
+    pg_exec(DDL)
+    done = set()
+    for (ids,) in pg_rows("SELECT capture_ids FROM successbrian_os.clerk_article_proposals"):
+        done.update(ids or [])
+    rows = pg_rows(
+        "SELECT m.capture_id, m.blog_slug, sc.title, sc.context, sc.raw_text "
+        "FROM successbrian_os.clerk_article_matches m "
+        "JOIN atlas.scattered_captures sc ON sc.id = m.capture_id "
+        "WHERE m.verdict = 'NEW_ARTICLE' ORDER BY m.capture_id")
+    caps = [{"id": i, "blog": b, "title": t, "context": c, "raw": r}
+            for i, b, t, c, r in rows if i not in done]
+    # Cluster: same blog + shared distinctive topic words (greedy, in order).
+    clusters = []
+    for cap in caps:
+        words = (_sig_words(cap["title"]) | _sig_words(cap["context"])) - GENERIC
+        placed = False
+        for cl in clusters:
+            if cl["blog"] == cap["blog"] and len(words & cl["words"]) >= 2:
+                cl["caps"].append(cap)
+                cl["words"] |= words
+                placed = True
+                break
+        if not placed:
+            clusters.append({"blog": cap["blog"], "caps": [cap], "words": words})
+    made = 0
+    for cl in clusters:
+        topic = cl["words"]
+        lead = cl["caps"][0]
+        title = re.sub(r"^(BUILT|RULING|Intel|INTEL)[:\s—-]+", "", lead["title"] or "Untitled").strip()
+        lines = [f"PROPOSED ARTICLE for {cl['blog']}: {title}", ""]
+        if len(cl["caps"]) > 1:
+            lines.append(f"Merges {len(cl['caps'])} pieces of intel into ONE article "
+                         f"(captures {', '.join(str(c['id']) for c in cl['caps'])}):")
+        else:
+            lines.append(f"From capture {lead['id']}:")
+        lines.append("")
+        lines.append("ROUGH OUTLINE")
+        lines.append("1. Opening — the newest development, in plain words, dated.")
+        n = 2
+        for cap in cl["caps"]:
+            head = re.sub(r"^(BUILT|RULING|Intel|INTEL)[:\s—-]+", "", cap["title"] or "").strip()
+            lines.append(f"{n}. {head}")
+            for s in _sentences(cap["raw"], topic):
+                lines.append(f"   - {s}")
+            n += 1
+        lines.append(f"{n}. What this means for readers of {cl['blog']} — the so-what, in their terms.")
+        lines.append(f"{n + 1}. Sources & checked-date line (every claim dated, per blog standard).")
+        outline = "\n".join(lines)
+        pg_exec(
+            "INSERT INTO successbrian_os.clerk_article_proposals (blog_slug, title, outline, capture_ids) "
+            "VALUES (%s,%s,%s,%s)",
+            (cl["blog"], title, outline, [c["id"] for c in cl["caps"]]))
+        print(outline)
+        print("=" * 60)
+        made += 1
+    print(f"proposals created: {made}")
+    return 0
+
+
 def _load_capture(cid):
     rows = pg_rows("SELECT id, title, context, raw_text FROM atlas.scattered_captures WHERE id=%s", (cid,))
     if not rows:
@@ -171,6 +259,8 @@ if __name__ == "__main__":
         raise SystemExit(0)
     if len(sys.argv) >= 2 and sys.argv[1] == "scan":
         raise SystemExit(scan())
+    if len(sys.argv) >= 2 and sys.argv[1] == "propose":
+        raise SystemExit(propose())
     if len(sys.argv) >= 2 and sys.argv[1] == "check":
         raise SystemExit(check())
     print(__doc__)

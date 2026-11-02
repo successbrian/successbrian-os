@@ -150,14 +150,16 @@ def _sentences(text, topic_words, limit=2):
 
 
 def propose():
-    """Merge NEW_ARTICLE verdicts into article proposals (Brian, 2026-11-01
-    20:17 CST): related intel MERGES into one article — the clerk must not
-    suggest two bubble articles — and each proposal carries a rough outline
-    drafted from the merged captures."""
+    """One proposal per SOURCE (Brian, 2026-11-01 20:19 CST): an article is
+    never built from intel of two different sources — each source carries
+    its own verification state and shelf life. Related captures (same blog,
+    shared topic) are LINKED to the proposal as relatives: they sequence
+    and cross-link as a series, they do not merge into the article."""
     pg_exec(PROPOSALS_DDL)
     pg_exec(DDL)
     done = set()
-    for (ids,) in pg_rows("SELECT capture_ids FROM successbrian_os.clerk_article_proposals"):
+    for (ids,) in pg_rows("SELECT capture_ids FROM successbrian_os.clerk_article_proposals "
+                          "WHERE status = 'proposed'"):
         done.update(ids or [])
     rows = pg_rows(
         "SELECT m.capture_id, m.blog_slug, sc.title, sc.context, sc.raw_text "
@@ -165,48 +167,43 @@ def propose():
         "JOIN atlas.scattered_captures sc ON sc.id = m.capture_id "
         "WHERE m.verdict = 'NEW_ARTICLE' ORDER BY m.capture_id")
     caps = [{"id": i, "blog": b, "title": t, "context": c, "raw": r}
-            for i, b, t, c, r in rows if i not in done]
-    # Cluster: same blog + shared distinctive topic words (greedy, in order).
-    clusters = []
-    for cap in caps:
-        words = (_sig_words(cap["title"]) | _sig_words(cap["context"])) - GENERIC
-        placed = False
-        for cl in clusters:
-            if cl["blog"] == cap["blog"] and len(words & cl["words"]) >= 2:
-                cl["caps"].append(cap)
-                cl["words"] |= words
-                placed = True
-                break
-        if not placed:
-            clusters.append({"blog": cap["blog"], "caps": [cap], "words": words})
+            for i, b, t, c, r in rows]
+    words_of = {c["id"]: (_sig_words(c["title"]) | _sig_words(c["context"])) - GENERIC
+                for c in caps}
     made = 0
-    for cl in clusters:
-        topic = cl["words"]
-        lead = cl["caps"][0]
-        title = re.sub(r"^(BUILT|RULING|Intel|INTEL)[:\s—-]+", "", lead["title"] or "Untitled").strip()
-        lines = [f"PROPOSED ARTICLE for {cl['blog']}: {title}", ""]
-        if len(cl["caps"]) > 1:
-            lines.append(f"Merges {len(cl['caps'])} pieces of intel into ONE article "
-                         f"(captures {', '.join(str(c['id']) for c in cl['caps'])}):")
+    for cap in caps:
+        if cap["id"] in done:
+            continue
+        relatives = [o for o in caps
+                     if o["id"] != cap["id"] and o["blog"] == cap["blog"]
+                     and len(words_of[cap["id"]] & words_of[o["id"]]) >= 2]
+        topic = words_of[cap["id"]]
+        title = re.sub(r"^(BUILT|RULING|Intel|INTEL)[:\s—-]+", "",
+                       cap["title"] or "Untitled").strip()
+        lines = [f"PROPOSED ARTICLE for {cap['blog']}: {title}", "",
+                 f"Single source: capture {cap['id']} (an article is built on ONE "
+                 "source — its verification state and shelf life are its own)."]
+        if relatives:
+            lines.append("Related intel (NOT merged — publish as a linked series, "
+                         "in order, each from its own source):")
+            for o in relatives:
+                lines.append(f"   - capture {o['id']}: {o['title']}")
+        lines += ["", "ROUGH OUTLINE",
+                  "1. Opening — the newest development, in plain words, dated.",
+                  f"2. {title}"]
+        for s in _sentences(cap["raw"], topic):
+            lines.append(f"   - {s}")
+        lines.append(f"3. What this means for readers of {cap['blog']} — the so-what, in their terms.")
+        if relatives:
+            lines.append("4. Link onward to the related piece(s) in this series.")
+            lines.append("5. Sources & checked-date line (every claim dated, per blog standard).")
         else:
-            lines.append(f"From capture {lead['id']}:")
-        lines.append("")
-        lines.append("ROUGH OUTLINE")
-        lines.append("1. Opening — the newest development, in plain words, dated.")
-        n = 2
-        for cap in cl["caps"]:
-            head = re.sub(r"^(BUILT|RULING|Intel|INTEL)[:\s—-]+", "", cap["title"] or "").strip()
-            lines.append(f"{n}. {head}")
-            for s in _sentences(cap["raw"], topic):
-                lines.append(f"   - {s}")
-            n += 1
-        lines.append(f"{n}. What this means for readers of {cl['blog']} — the so-what, in their terms.")
-        lines.append(f"{n + 1}. Sources & checked-date line (every claim dated, per blog standard).")
+            lines.append("4. Sources & checked-date line (every claim dated, per blog standard).")
         outline = "\n".join(lines)
         pg_exec(
             "INSERT INTO successbrian_os.clerk_article_proposals (blog_slug, title, outline, capture_ids) "
             "VALUES (%s,%s,%s,%s)",
-            (cl["blog"], title, outline, [c["id"] for c in cl["caps"]]))
+            (cap["blog"], title, outline, [cap["id"]]))
         print(outline)
         print("=" * 60)
         made += 1

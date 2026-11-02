@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""article_match.py — the clerk's article job (Brian, 2026-11-01 20:12 CST).
+"""article_match.py — the clerk's article ASSIST (Brian, 2026-11-01 20:25 CST: CampaignsDesk controls what becomes an article; the clerk only assists when it finds new intel).
 
 Brian's specification, in his order of operations: when new intel arrives,
 ask "is this possibly related to an article we need on a blog?" — and look
@@ -102,7 +102,7 @@ def assess(cap, record=True):
         verdict, blog, article = "EXISTING_ARTICLE", None, best_title
         reason = (f"shares topic words ({', '.join(sorted(best_shared))}) "
                   f"with existing article '{best_title}'")
-        line = f"article job: EXISTING article may need this intel — {reason}"
+        line = f"article assist (CampaignsDesk decides): EXISTING article may relate — {reason}"
     else:
         # 2) NEW ARTICLE via boundaries
         routed = _boundary_route(text)
@@ -110,12 +110,12 @@ def assess(cap, record=True):
             verdict, blog, article = "NEW_ARTICLE", routed[0], None
             reason = (f"no existing article covers it; boundary of {blog} "
                       f"matches on: {', '.join(routed[1])}")
-            line = f"article job: NEW article needed on {blog} — {reason}"
+            line = f"article assist (CampaignsDesk decides): possible NEW article for {blog} — {reason}"
         else:
             verdict, blog, article = "NO_FIT", None, None
             reason = ("no existing article covers it and no blog boundary "
                       "claims the topic")
-            line = f"article job: no article fit — {reason}"
+            line = f"article assist: no article relation seen — {reason}"
     if record and cap.get("id"):
         pg_exec(DDL)
         pg_exec(
@@ -124,91 +124,6 @@ def assess(cap, record=True):
             "ON CONFLICT (capture_id) DO NOTHING",
             (cap["id"], verdict, blog, article, reason))
     return line
-
-
-PROPOSALS_DDL = """
-CREATE TABLE IF NOT EXISTS successbrian_os.clerk_article_proposals (
-  id          bigserial PRIMARY KEY,
-  blog_slug   text NOT NULL,
-  title       text NOT NULL,
-  outline     text NOT NULL,
-  capture_ids bigint[] NOT NULL,
-  status      text NOT NULL DEFAULT 'proposed',
-  created_at  timestamptz NOT NULL DEFAULT now()
-)"""
-
-
-def _sentences(text, topic_words, limit=2):
-    out = []
-    for s in re.split(r"(?<=[.!?])\s+", (text or "").replace("\n", " ")):
-        s = s.strip()
-        if 40 <= len(s) <= 220 and (_sig_words(s) & topic_words):
-            out.append(s)
-        if len(out) >= limit:
-            break
-    return out
-
-
-def propose():
-    """One proposal per SOURCE (Brian, 2026-11-01 20:19 CST): an article is
-    never built from intel of two different sources — each source carries
-    its own verification state and shelf life. Related captures (same blog,
-    shared topic) are LINKED to the proposal as relatives: they sequence
-    and cross-link as a series, they do not merge into the article."""
-    pg_exec(PROPOSALS_DDL)
-    pg_exec(DDL)
-    done = set()
-    for (ids,) in pg_rows("SELECT capture_ids FROM successbrian_os.clerk_article_proposals "
-                          "WHERE status = 'proposed'"):
-        done.update(ids or [])
-    rows = pg_rows(
-        "SELECT m.capture_id, m.blog_slug, sc.title, sc.context, sc.raw_text "
-        "FROM successbrian_os.clerk_article_matches m "
-        "JOIN atlas.scattered_captures sc ON sc.id = m.capture_id "
-        "WHERE m.verdict = 'NEW_ARTICLE' ORDER BY m.capture_id")
-    caps = [{"id": i, "blog": b, "title": t, "context": c, "raw": r}
-            for i, b, t, c, r in rows]
-    words_of = {c["id"]: (_sig_words(c["title"]) | _sig_words(c["context"])) - GENERIC
-                for c in caps}
-    made = 0
-    for cap in caps:
-        if cap["id"] in done:
-            continue
-        relatives = [o for o in caps
-                     if o["id"] != cap["id"] and o["blog"] == cap["blog"]
-                     and len(words_of[cap["id"]] & words_of[o["id"]]) >= 2]
-        topic = words_of[cap["id"]]
-        title = re.sub(r"^(BUILT|RULING|Intel|INTEL)[:\s—-]+", "",
-                       cap["title"] or "Untitled").strip()
-        lines = [f"PROPOSED ARTICLE for {cap['blog']}: {title}", "",
-                 f"Single source: capture {cap['id']} (an article is built on ONE "
-                 "source — its verification state and shelf life are its own)."]
-        if relatives:
-            lines.append("Related intel (NOT merged — publish as a linked series, "
-                         "in order, each from its own source):")
-            for o in relatives:
-                lines.append(f"   - capture {o['id']}: {o['title']}")
-        lines += ["", "ROUGH OUTLINE",
-                  "1. Opening — the newest development, in plain words, dated.",
-                  f"2. {title}"]
-        for s in _sentences(cap["raw"], topic):
-            lines.append(f"   - {s}")
-        lines.append(f"3. What this means for readers of {cap['blog']} — the so-what, in their terms.")
-        if relatives:
-            lines.append("4. Link onward to the related piece(s) in this series.")
-            lines.append("5. Sources & checked-date line (every claim dated, per blog standard).")
-        else:
-            lines.append("4. Sources & checked-date line (every claim dated, per blog standard).")
-        outline = "\n".join(lines)
-        pg_exec(
-            "INSERT INTO successbrian_os.clerk_article_proposals (blog_slug, title, outline, capture_ids) "
-            "VALUES (%s,%s,%s,%s)",
-            (cap["blog"], title, outline, [cap["id"]]))
-        print(outline)
-        print("=" * 60)
-        made += 1
-    print(f"proposals created: {made}")
-    return 0
 
 
 def _load_capture(cid):
@@ -256,8 +171,6 @@ if __name__ == "__main__":
         raise SystemExit(0)
     if len(sys.argv) >= 2 and sys.argv[1] == "scan":
         raise SystemExit(scan())
-    if len(sys.argv) >= 2 and sys.argv[1] == "propose":
-        raise SystemExit(propose())
     if len(sys.argv) >= 2 and sys.argv[1] == "check":
         raise SystemExit(check())
     print(__doc__)

@@ -32,6 +32,10 @@ CONTENTS:
     add_queue_task(...)     — qwen_task_queue add WITH the 2026-10-27
                               dedupe fix (title+description, any status
                               except 'cancelled')
+    request_intel(...)      — file a new-intel request with the
+                              CampaignsDesk Intel Division (the ONE
+                              door; shells to intel_request.py so its
+                              dedupe stays the single code path)
 
 NOTES:
     DB access uses psycopg2 with a fresh connection per call — the same
@@ -459,6 +463,42 @@ def bridge_mark_read(ids) -> int:
         "UPDATE altair.knowledge_bridge SET read_at = now() "
         "WHERE id = ANY(%s) AND read_at IS NULL",
         (ids,))
+
+
+# ------------------------------------------------------- intel requests
+# campaignsdesk.intel_requests is the ONE queue for new-intel needs
+# (CampaignsDesk Intel Division; Brian 2026-11-02 19:24: "one way for
+# all plugins/desks to request new intel"). Borrower code files needs
+# through request_intel() below — and only through it.
+
+def request_intel(requester: str, topic: str, question: str,
+                  purpose: str = None, category: str = None) -> dict:
+    """File a new-intel request with the CampaignsDesk Intel Division.
+
+    The ONE function borrower code calls. It shells to the division's
+    CLI (~/campaignsdesk/code/intel_request.py) so the CLI's
+    dedupe-before-filing stays the single dedupe code path -- this
+    helper never writes the table directly. Returns the CLI's parsed
+    JSON: {"id": N, "status": "requested", ...} on filing, or
+    {"refused": True, "existing_id": N, ...} when dedupe joins the
+    borrower to an already-open request instead."""
+    import subprocess
+    cmd = ["python3",
+           "/home/successbrian/campaignsdesk/code/intel_request.py",
+           "new", "--requester", requester, "--topic", topic,
+           "--question", question, "--json"]
+    if purpose:
+        cmd += ["--purpose", purpose]
+    if category:
+        cmd += ["--category", category]
+    proc = subprocess.run(cmd, capture_output=True, text=True,
+                          timeout=120)
+    try:
+        return json.loads(proc.stdout.strip().splitlines()[-1])
+    except Exception:
+        raise RuntimeError(
+            f"intel_request.py failed (rc={proc.returncode}): "
+            f"{proc.stdout} {proc.stderr}")
 
 
 # ---------------------------------------------------------------- selftest

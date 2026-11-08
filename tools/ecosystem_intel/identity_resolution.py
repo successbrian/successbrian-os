@@ -2361,6 +2361,94 @@ def render_card_text(card):
     return "\n".join(lines)
 
 
+def export_snapshot(path=None):
+    """Write the compact people snapshot for road-dark lookup.
+
+    RoadChat's People room falls back to this file when the alpha
+    endpoint is unreachable: one compact entry per identity anchor —
+    canonical name, breadth, every profile with its URL, and a
+    one-line intel summary. Unknown intel stays labeled unknown.
+    Default path: ~/sbos-road/people-snapshot.json (the staged
+    snapshot the road sync carries)."""
+    import datetime as _dt
+    if not path:
+        path = os.path.join(os.path.expanduser("~"), "sbos-road",
+                            "people-snapshot.json")
+    conn = _dict_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM people.identity_people "
+                    "ORDER BY display_name")
+        people = cur.fetchall()
+        cur.execute("SELECT id, person_id, platform, handle, "
+                    "profile_url FROM people.identity_profiles "
+                    "ORDER BY platform, id")
+        profiles = cur.fetchall()
+        intel_by_profile = {}
+        cur.execute("SELECT to_regclass('people.comm_profile_intel')")
+        if list(cur.fetchone().values())[0]:
+            cur.execute("SELECT * FROM people.comm_profile_intel")
+            for row in cur.fetchall():
+                intel_by_profile[row["profile_id"]] = row
+    finally:
+        conn.close()
+    by_person = defaultdict(list)
+    unlinked = 0
+    for pf in profiles:
+        if pf.get("person_id"):
+            by_person[pf["person_id"]].append(pf)
+        else:
+            unlinked += 1
+    out_people = []
+    for person in people:
+        lines = []
+        for pf in by_person.get(person["id"], []):
+            row = intel_by_profile.get(pf["id"])
+            if row is None:
+                continue
+            sig = row.get("interest_signals") or {}
+            lines.append(
+                "%s: b. %s · %s · crypto %s · health %s" % (
+                    pf["platform"],
+                    row.get("birthday") or "unknown",
+                    row.get("country") or "unknown",
+                    (sig.get("crypto") or {}).get("status", "unknown"),
+                    (sig.get("health") or {}).get("status", "unknown")))
+        out_people.append({
+            "person_id": person["id"],
+            "name": person["display_name"],
+            "brian_confirmed": bool(person.get("brian_confirmed")),
+            "profile_count": person.get("profile_count"),
+            "platform_count": person.get("platform_count"),
+            "profiles": [{
+                "platform": pf["platform"],
+                "handle": pf.get("handle"),
+                "profile_url": pf.get("profile_url"),
+            } for pf in by_person.get(person["id"], [])],
+            "intel_line": ("; ".join(lines) if lines else
+                           "intel: unknown (no profile-intel scan "
+                           "on record)"),
+        })
+    data = {
+        "generated_at": _dt.datetime.now(
+            _dt.timezone.utc).isoformat(),
+        "generated_by": "identity_resolution.py --export-snapshot "
+                        "on alpha",
+        "people": out_people,
+        "unlinked_profile_count": unlinked,
+    }
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=1, default=str)
+    os.replace(tmp, path)
+    print("snapshot: %d people, %d unlinked profiles -> %s"
+          % (len(out_people), unlinked, path))
+    return path
+
+
 def road_note(target, text):
     """File Brian's road observation as an Intel Bridge capture.
 
@@ -2937,6 +3025,11 @@ def main():
                              "Intel Bridge capture (needs --text)")
     parser.add_argument("--text", metavar="TEXT",
                         help="observation text for --road-note")
+    parser.add_argument("--export-snapshot", nargs="?", const="",
+                        metavar="PATH",
+                        help="write the compact road-dark people "
+                             "snapshot JSON (default "
+                             "~/sbos-road/people-snapshot.json)")
     parser.add_argument("--rule-different", nargs=2, type=int,
                         metavar=("PROFILE_A", "PROFILE_B"),
                         help="write back Brian's ruled_different "
@@ -2975,6 +3068,8 @@ def main():
             print(render_card_text(card))
         if card.get("error"):
             raise SystemExit(1)
+    elif args.export_snapshot is not None:
+        export_snapshot(args.export_snapshot or None)
     elif args.road_note:
         if not args.text:
             parser.error("--road-note requires --text")

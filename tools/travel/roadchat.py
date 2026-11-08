@@ -37,6 +37,7 @@ import os
 import sys
 import urllib.request
 import urllib.error
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -49,6 +50,19 @@ ENGINES = {
 }
 DEFAULT_ENGINE = "morpheus"
 PORT = 8799
+
+# The People room (Brian 2026-11-08): the identity layer, reached
+# the way everything else here is reached — a localhost mouth. On
+# alpha the people-api shim (tools/travel/people_api.py) listens on
+# 127.0.0.1:8011; on the road that port is a link_up tunnel mouth to
+# the same shim. The laptop holds no DB credentials, ever. When the
+# endpoint is down, the room falls back to the staged snapshot the
+# road sync carries (~/sbos-road/people-snapshot.json), labeled
+# with its date.
+PEOPLE_API = "http://127.0.0.1:8011"
+ROAD_DIR = os.path.join(os.path.expanduser("~"), "sbos-road")
+PEOPLE_SNAPSHOT = os.path.join(ROAD_DIR, "people-snapshot.json")
+OUTBOX_DIR = os.path.join(ROAD_DIR, "outbox")
 
 
 def engine_chat(payload, engine):
@@ -177,6 +191,174 @@ def run_brain(q):
     return {"hits": hits}
 
 
+def _people_api(path, payload=None, timeout=15):
+    """One call to the alpha people endpoint (localhost mouth)."""
+    if payload is None:
+        req = urllib.request.Request(PEOPLE_API + path)
+    else:
+        req = urllib.request.Request(
+            PEOPLE_API + path, data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode())
+
+
+def _load_snapshot():
+    try:
+        with open(PEOPLE_SNAPSHOT, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _snapshot_search(snap, q):
+    """Name/handle search over the staged snapshot — same result
+    shape as the live endpoint, visibly snapshot-sourced."""
+    ql = q.strip().lower()
+    qt = set(ql.split())
+    out = []
+    for p in snap.get("people", []):
+        name = p.get("name") or ""
+        nl = name.lower()
+        score, reasons = 0.0, []
+        if nl == ql:
+            score = 1.0
+            reasons.append("exact name match (snapshot)")
+        elif qt and qt <= set(nl.split()):
+            score = 0.92
+            reasons.append("all query tokens in name (snapshot)")
+        elif ql and ql in nl:
+            score = 0.6
+            reasons.append("name contains query (snapshot)")
+        for pf in p.get("profiles", []):
+            h = (pf.get("handle") or "").lower()
+            if h and h == ql.lstrip("@"):
+                if 0.97 > score:
+                    score = 0.97
+                reasons.append("handle exact match (snapshot)")
+            elif h and len(ql) >= 4 and h.startswith(ql):
+                if 0.80 > score:
+                    score = 0.80
+                reasons.append("handle prefix match (snapshot)")
+        if score >= 0.45:
+            out.append({
+                "kind": "person", "person_id": p["person_id"],
+                "profile_id": None, "display_name": name,
+                "score": round(score, 4), "reasons": reasons,
+                "profile_count": p.get("profile_count"),
+                "platform_count": p.get("platform_count"),
+                "platforms": sorted({pf["platform"] for pf
+                                     in p.get("profiles", [])})})
+    out.sort(key=lambda e: (-e["score"],
+                            -(e.get("profile_count") or 0)))
+    return out[:20]
+
+
+def run_people(q):
+    """Search the identity layer. Live via the endpoint when it
+    answers; the staged snapshot (labeled) when it does not."""
+    q = (q or "").strip()
+    if len(q) < 2:
+        return {"source": "none", "results": [],
+                "note": "type at least 2 characters"}
+    try:
+        r = _people_api("/people?q=" + urllib.parse.quote(q))
+        return {"source": "live", "results": r.get("results", [])}
+    except Exception:
+        snap = _load_snapshot()
+        if snap:
+            return {"source": "snapshot",
+                    "snapshot_date": snap.get("generated_at"),
+                    "results": _snapshot_search(snap, q)}
+        return {"source": "none", "results": [],
+                "note": "identity layer unreachable (is link_up "
+                        "running?) and no people snapshot on this "
+                        "machine — UNKNOWN"}
+
+
+def run_person(ref):
+    """One person card: live from the endpoint, else the snapshot
+    entry (labeled). Unknowns stay unknown."""
+    try:
+        ref = int(ref)
+    except (TypeError, ValueError):
+        return {"error": "person id must be a number"}
+    try:
+        card = _people_api("/person?id=%d" % ref)
+        if isinstance(card, dict) and not card.get("error"):
+            card = dict(card)
+            card.setdefault("source", "live")
+            return card
+    except Exception:
+        pass
+    snap = _load_snapshot()
+    if snap:
+        for p in snap.get("people", []):
+            if p.get("person_id") == ref:
+                return {
+                    "person_id": p["person_id"],
+                    "canonical_name": p.get("name"),
+                    "brian_confirmed": p.get("brian_confirmed"),
+                    "breadth": {
+                        "profile_count": p.get("profile_count"),
+                        "platform_count": p.get("platform_count")},
+                    "profiles": [{
+                        "platform": pf.get("platform"),
+                        "handle": pf.get("handle"),
+                        "profile_url": pf.get("profile_url")}
+                        for pf in p.get("profiles", [])],
+                    "intel_line": p.get("intel_line"),
+                    "comms": "unknown",
+                    "source": "snapshot",
+                    "snapshot_date": snap.get("generated_at")}
+    return {"error": "person %s not found — live layer unreachable "
+                     "or unknown id" % ref}
+
+
+def run_people_note(person_id, name, text):
+    """Send data to the ecosystem: one people_note envelope into
+    the road outbox (~/sbos-road/outbox/) — road_sync carries it
+    home and alpha's road_inbox_drain files it into
+    atlas.scattered_captures for the clerk. The envelope is the
+    single path, dark or linked. When alpha IS linked, the note is
+    ALSO filed immediately through the endpoint and the capture id
+    is stamped into the envelope, so the drain retires it without
+    ever filing twice."""
+    import socket
+    import uuid
+    from datetime import datetime, timezone
+    text = (text or "").strip()
+    if not text:
+        return {"error": "note text is empty"}
+    try:
+        pid = None if person_id is None else int(person_id)
+    except (TypeError, ValueError):
+        return {"error": "person_id must be a number or null"}
+    env = {"id": uuid.uuid4().hex, "kind": "people_note",
+           "person_id": pid, "new_person": pid is None,
+           "canonical_name": name or None, "text": text,
+           "created_at": datetime.now(timezone.utc).isoformat(),
+           "origin_host": socket.gethostname(),
+           "origin": "roadchat people room"}
+    filed = None
+    try:
+        r = _people_api("/people/note",
+                        {"person_id": pid if pid is not None
+                         else "new", "text": text}, timeout=60)
+        if r and r.get("capture_id"):
+            filed = r["capture_id"]
+            env["filed_capture_id"] = filed
+    except Exception:
+        filed = None
+    os.makedirs(OUTBOX_DIR, exist_ok=True)
+    fn = "people-note-%s.json" % env["id"][:12]
+    with open(os.path.join(OUTBOX_DIR, fn), "w",
+              encoding="utf-8") as f:
+        json.dump(env, f, indent=1)
+    return {"ok": True, "envelope": fn, "filed_capture_id": filed}
+
+
 PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -249,6 +431,7 @@ PAGE = r"""<!doctype html>
   <button data-view="fleet">🛰 Fleet</button>
   <button data-view="code">🛠 Code</button>
   <button data-view="brain">🧠 Brain</button>
+  <button data-view="people">👥 People</button>
   <button data-view="more">🏠 More rooms</button>
 </nav>
 <div class="view active" id="view-chat">
@@ -286,9 +469,25 @@ PAGE = r"""<!doctype html>
   </form>
   <div id="brainResults"></div>
 </div></section>
+<section class="view" id="view-people"><div class="roomwrap">
+  <form id="peopleForm" style="display:flex;gap:.5rem">
+    <input id="peopleQ" style="flex:1" placeholder="Look someone up — name or handle (e.g. loescher, zloescher1)">
+    <button type="submit">look up</button>
+  </form>
+  <p class="sub" id="peopleSource"></p>
+  <div id="peopleResults"></div>
+  <div id="personCard"></div>
+  <div class="card"><h3>✉️ Send to the ecosystem</h3>
+    <p class="sub" id="noteContext">Open a person card above and the note attaches to them — or tick "new person" for someone not in the layer yet.</p>
+    <label style="flex-direction:row;align-items:center;gap:.35rem"><input type="checkbox" id="noteNew"> new person (not in the identity layer)</label>
+    <textarea id="noteText" rows="3" style="width:100%;margin:.4rem 0" placeholder="What did you learn? It files to the ecosystem as a capture for the clerk."></textarea>
+    <button id="noteSend">send to ecosystem</button>
+    <p class="sub" id="noteResult"></p>
+  </div>
+</div></section>
 <section class="view" id="view-more"><div class="roomwrap">
-  <div class="card planned"><h3>👥 People — the contact list</h3>
-    <p>Planned. Wiring: Google Contacts import + the train-card inbox (photograph a card, it becomes a contact with a follow-up clock).</p></div>
+  <div class="card"><h3>👥 People — the contact list</h3>
+    <p>Live: the SBOS identity layer — every profile URL, the intel and comms on record, and notes filed back to the ecosystem. <button onclick="setView('people')">open the People room</button></p></div>
   <div class="card planned"><h3>✉️ Comms — WhatsApp + email</h3>
     <p>Planned. Wiring: Gmail for email; WhatsApp as a Muse side channel. One river of messages, answered from here.</p></div>
   <div class="card planned"><h3>📈 Content — SEO strategy → blogging</h3>
@@ -436,11 +635,101 @@ async function loadCode(){
     room.appendChild(th);
   }catch(e){ room.innerHTML='<p class="sub">code room failed to load: '+e.message+'</p>'; }
 }
+let currentPerson=null;
+function evText(ev){ return typeof ev==='string' ? ev : JSON.stringify(ev); }
+async function peopleSearch(q){
+  const out=document.getElementById('peopleResults'), src=document.getElementById('peopleSource');
+  out.innerHTML='<p class="sub">looking up…</p>'; document.getElementById('personCard').innerHTML='';
+  try{ const s=await (await fetch('/api/people?q='+encodeURIComponent(q))).json();
+    src.textContent = s.source==='live' ? 'live from the identity layer (via alpha)'
+      : s.source==='snapshot' ? ('road-dark: showing the staged snapshot dated '+(s.snapshot_date||'unknown'))
+      : (s.note||'identity layer unreachable');
+    out.innerHTML='';
+    if(s.error){ out.innerHTML='<p class="sub">⚠ '+s.error.replace(/</g,'&lt;')+'</p>'; return; }
+    if(!s.results || !s.results.length){ out.innerHTML='<p class="sub">no candidates — UNKNOWN: not in the identity layer under that name or handle.</p>'; return; }
+    s.results.forEach(r=>{ const c=document.createElement('div'); c.className='card';
+      const h=document.createElement('h3'); h.textContent=r.display_name||'(unnamed)'; c.appendChild(h);
+      const p=document.createElement('p'); p.className='sub';
+      p.textContent=(r.kind==='person' ? ('person '+r.person_id+' · '+r.profile_count+' profiles / '+r.platform_count+' platforms · '+(r.platforms||[]).join(', '))
+                                       : ('unlinked profile '+r.profile_id+' · '+(r.platforms||[]).join(', ')))+' · score '+r.score;
+      c.appendChild(p);
+      (r.reasons||[]).forEach(rr=>{ const rp=document.createElement('p'); rp.className='sub'; rp.textContent='· '+rr; c.appendChild(rp); });
+      const b=document.createElement('button'); b.textContent='open card';
+      b.onclick=()=>openPerson(r.person_id||r.profile_id); c.appendChild(b);
+      out.appendChild(c); });
+  }catch(e){ out.innerHTML='<p class="sub">people lookup failed</p>'; }
+}
+function renderCard(card){
+  currentPerson = card.person_id ? {person_id: card.person_id, name: card.canonical_name} : null;
+  const out=document.getElementById('personCard'); out.innerHTML='';
+  const c=document.createElement('div'); c.className='card';
+  const h=document.createElement('h3'); h.textContent='👤 '+(card.canonical_name||card.display_name||'profile-only card'); c.appendChild(h);
+  const meta=document.createElement('p'); meta.className='sub'; const mt=[];
+  if(card.person_id) mt.push('person '+card.person_id);
+  if(card.brian_confirmed) mt.push('Brian-confirmed');
+  if(card.breadth) mt.push((card.breadth.profile_count==null?'unknown':card.breadth.profile_count)+' profiles / '+(card.breadth.platform_count==null?'unknown':card.breadth.platform_count)+' platforms');
+  if(card.source==='snapshot') mt.push('SNAPSHOT data as of '+(card.snapshot_date||'unknown'));
+  meta.textContent=mt.join(' · '); c.appendChild(meta);
+  (card.profiles||[]).forEach(pf=>{ const p=document.createElement('p');
+    if(pf.profile_url && pf.profile_url!=='unknown'){ const a=document.createElement('a');
+      a.href=pf.profile_url; a.target='_blank'; a.rel='noopener'; a.style.color='#58a6ff';
+      a.textContent=pf.platform+' @'+(pf.handle||'unknown'); p.appendChild(a); }
+    else { const s0=document.createElement('span'); s0.textContent=pf.platform+' @'+(pf.handle||'unknown')+' (url unknown)'; p.appendChild(s0); }
+    const s=document.createElement('span'); s.className='sub'; const bits=[];
+    if(pf.link_grade) bits.push('link '+pf.link_grade+(pf.link_status?('/'+pf.link_status):''));
+    if(pf.url_source) bits.push('url: '+pf.url_source);
+    s.textContent=bits.length?(' — '+bits.join(' · ')):''; p.appendChild(s); c.appendChild(p);
+    if(pf.intel){ const it=pf.intel; const ip=document.createElement('p'); ip.className='sub';
+      const ib=['birthday: '+(it.birthday||'unknown'), 'country: '+(it.country||'unknown'),
+                'crypto: '+(it.crypto||'unknown'), 'health: '+(it.health||'unknown')];
+      if(it.direct_friend_of_brian!==undefined && it.direct_friend_of_brian!==null) ib.push('direct friend of Brian: '+it.direct_friend_of_brian);
+      ip.textContent='intel — '+ib.join(' · '); c.appendChild(ip);
+      (it.crypto_evidence||[]).forEach(ev=>{ const ep=document.createElement('p'); ep.className='sub'; ep.textContent='crypto evidence: '+evText(ev); c.appendChild(ep); });
+      (it.health_evidence||[]).forEach(ev=>{ const ep=document.createElement('p'); ep.className='sub'; ep.textContent='health evidence: '+evText(ev); c.appendChild(ep); });
+    } else if(card.source!=='snapshot'){ const ip=document.createElement('p'); ip.className='sub';
+      ip.textContent='intel: unknown (no profile-intel scan on record)'; c.appendChild(ip); }
+  });
+  if(card.intel_line){ const ip=document.createElement('p'); ip.className='sub'; ip.textContent='intel — '+card.intel_line; c.appendChild(ip); }
+  const cp=document.createElement('p'); cp.className='sub';
+  if(card.comms && typeof card.comms==='object' && card.comms.thread_count) cp.textContent='comms: '+card.comms.thread_count+' thread(s), last activity '+(card.comms.last_activity||'unknown');
+  else cp.textContent='comms: unknown (no ingested threads on record)';
+  c.appendChild(cp);
+  if(card.pending_pairs_count!==undefined && card.pending_pairs_count!==null){ const qp=document.createElement('p'); qp.className='sub';
+    qp.textContent='match queue: '+card.pending_pairs_count+' pair(s) pending Brian\'s review'; c.appendChild(qp); }
+  out.appendChild(c);
+  document.getElementById('noteContext').textContent = currentPerson
+    ? ('Note about '+currentPerson.name+' (person '+currentPerson.person_id+') — files to the ecosystem.')
+    : 'Open a person card above and the note attaches to them — or tick "new person".';
+}
+async function openPerson(ref){
+  const out=document.getElementById('personCard'); out.innerHTML='<p class="sub">loading card…</p>';
+  try{ const card=await (await fetch('/api/person?id='+encodeURIComponent(ref))).json();
+    if(card.error){ out.innerHTML='<p class="sub">⚠ '+card.error.replace(/</g,'&lt;')+'</p>'; return; }
+    renderCard(card);
+  }catch(e){ out.innerHTML='<p class="sub">card failed to load</p>'; }
+}
+document.getElementById('peopleForm').addEventListener('submit', e=>{
+  e.preventDefault(); const q=document.getElementById('peopleQ').value.trim(); if(q) peopleSearch(q); });
+document.getElementById('noteSend').onclick=async ()=>{
+  const txt=document.getElementById('noteText').value.trim(), res=document.getElementById('noteResult');
+  const isNew=document.getElementById('noteNew').checked;
+  if(!txt){ res.textContent='write the note first.'; return; }
+  if(!isNew && !currentPerson){ res.textContent='open a person card first, or tick "new person".'; return; }
+  res.textContent='sending…';
+  try{ const r=await (await fetch('/api/people/note',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({person_id: isNew? null : currentPerson.person_id, name: isNew? null : currentPerson.name, text: txt})})).json();
+    if(r.error){ res.textContent='⚠ '+r.error; return; }
+    res.textContent='✓ '+(r.filed_capture_id ? ('filed now as capture #'+r.filed_capture_id+' (envelope '+r.envelope+' also spooled for the record)')
+                                             : ('spooled to the road outbox ('+r.envelope+') — it files when the road next links and the drain runs'));
+    document.getElementById('noteText').value='';
+  }catch(e){ res.textContent='⚠ send failed'; }
+};
 function setView(name){
   document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active', v.id==='view-'+name));
   document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on', b.dataset.view===name));
   document.getElementById('bar').style.display = name==='chat' ? '' : 'none';
   if(name==='code') loadCode();
+  if(name==='people'){ const pq=document.getElementById('peopleQ'); if(pq) pq.focus(); }
 }
 document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>setView(b.dataset.view));
 document.getElementById('brainForm').addEventListener('submit', async e=>{
@@ -502,6 +791,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(run_code())
             except Exception as e:
                 self._json({"error": str(e)}, 500)
+        elif self.path.startswith("/api/people"):
+            try:
+                from urllib.parse import urlparse, parse_qs
+                q = parse_qs(urlparse(self.path).query).get("q", [""])[0]
+                self._json(run_people(q))
+            except Exception as e:
+                self._json({"error": str(e)}, 500)
+        elif self.path.startswith("/api/person"):
+            try:
+                from urllib.parse import urlparse, parse_qs
+                ref = parse_qs(urlparse(self.path).query).get("id", [""])[0]
+                self._json(run_person(ref))
+            except Exception as e:
+                self._json({"error": str(e)}, 500)
         elif self.path.startswith("/api/brain"):
             try:
                 from urllib.parse import urlparse, parse_qs
@@ -539,6 +842,14 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"error": str(e)}, 500)
                 except Exception:
                     pass
+        elif self.path == "/api/people/note":
+            try:
+                data = self._read_json()
+                self._json(run_people_note(data.get("person_id"),
+                                           data.get("name"),
+                                           data.get("text") or ""))
+            except Exception as e:
+                self._json({"error": str(e)}, 500)
         elif self.path == "/api/tools/score":
             try:
                 data = self._read_json()
@@ -552,6 +863,9 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     if "--selftest" in sys.argv:
         assert DEFAULT_ENGINE in ENGINES and "RoadChat" in PAGE
+        assert "view-people" in PAGE and "/api/people" in PAGE
+        assert callable(run_people) and callable(run_person)
+        assert callable(run_people_note)
         print("selftest: OK (engines %s, port %d)"
               % (", ".join(sorted(ENGINES)), PORT))
         return 0

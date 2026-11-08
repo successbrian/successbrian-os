@@ -711,12 +711,18 @@ def morpheus_stats() -> dict:
 
 # ------------------------------------------------- engine job queues
 # The Morpheus queue pattern, generalized (Brian, 2026-11-08):
-# Sonic creates jobs for the ecosystem's engines — Morpheus,
-# Penny, DeepSeek REAP 150B — and every engine's work queue
-# has the SAME shape, the SAME claim protocol (SKIP LOCKED),
-# and the SAME shared functions, so a producer learns one way
-# to create work for any engine. Tables:
-# successbrian_os.{morpheus,penny,reap}_queue.
+# engines create jobs for other engines, and every engine's
+# work queue has the SAME shape, the SAME claim protocol
+# (SKIP LOCKED), and the SAME shared functions, so a producer
+# learns one way to create work for any engine. Tables:
+# successbrian_os.{morpheus,penny,reap,sonic}_queue.
+#
+# SONIC'S CREATION SCOPE (Brian, 2026-11-08): Sonic only
+# MAKES jobs for Morpheus and Penny, when it is splitting
+# things up. A job too complicated for that split is PASSED
+# UP (escalation — the ladder's existing up-flow), never
+# turned into a Sonic-made REAP job. Enforced below in
+# engine_job_enqueue via CREATOR_SCOPE.
 
 # WHO CREATES: any utilized engine can create jobs for any
 # other engine through these queues (Brian, 2026-11-08: when
@@ -758,13 +764,30 @@ CREATE INDEX IF NOT EXISTS {name}_open_idx
 """
 
 
+CREATOR_SCOPE = {
+    # Brian, 2026-11-08: Sonic makes jobs ONLY for Morpheus
+    # and Penny (splitting work up); too complicated = pass
+    # up, never a Sonic-made job for another engine.
+    "sonic": {"morpheus", "penny"},
+}
+
+
 def engine_job_enqueue(engine: str, created_by: str,
                        kind: str, title: str, payload=None,
                        source_ref: str = "",
                        priority: int = 100) -> int:
-    """Queue one job for an engine (morpheus / penny / reap)
-    in that engine's common queue; returns the job id."""
+    """Queue one job for an engine (morpheus / penny / reap /
+    sonic) in that engine's common queue; returns the job id.
+    Raises ValueError when a scoped creator (CREATOR_SCOPE)
+    tries to create outside its scope."""
     import json as _json
+    scope = CREATOR_SCOPE.get((created_by or "").lower())
+    if scope is not None and engine not in scope:
+        raise ValueError(
+            f"creator scope: {created_by} only makes jobs "
+            f"for {sorted(scope)} (Brian, 2026-11-08) — a job "
+            f"for {engine} is outside that scope; pass it up "
+            f"instead")
     table = ENGINE_JOB_TABLES[engine]
     pg_exec(_engine_queue_ddl(table))
     return pg_one(

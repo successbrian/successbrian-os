@@ -699,6 +699,17 @@ RESEARCH_BODIES = ["ai-strategies-competitive-research"]
 # unique to them; audit() enforces presence + live status.
 CORE_REQUIRED_WORKSPACES = ["ecosystem-bible"]
 
+# R42 routing phrases (normalized): a subject naming the
+# operator's ecosystem-wide SOP body routes to the
+# core-required Ecosystem Bible. The clerk files SOP /
+# governance intel through determine(), so these phrases are
+# what let the clerk maintain the Bible (Brian, 2026-11-08:
+# "the clerk helps maintain 'Ecosystem Bible'").
+ECOSYSTEM_BIBLE_SUBJECTS = ["ecosystembible",
+                            "ecosystemwidesop",
+                            "ecosystemsop",
+                            "ecosystemgovernance"]
+
 # Audiences being built (R11). Each gets a SPACE (mandatory);
 # a competitive-research sibling is ruled per audience.
 # space=None records a known gap the audit reports until
@@ -3102,6 +3113,22 @@ def determine(conn, subject, category=None):
                            "while it is being planned (R30): "
                            "idea-dump material goes to the "
                            "planning body."}
+    # R42: a subject naming the ecosystem-wide SOP body
+    # routes to the core-required Ecosystem Bible workspace —
+    # checked before owner-text matching because compound
+    # subjects ("Ecosystem Bible SOP update") match no owner
+    # string and would otherwise fall to unsorted intake.
+    _bible_row = next((r for r in rows
+                       if r[0] == "ecosystem-bible"), None)
+    if _bible_row and any(ph in subj
+                          for ph in ECOSYSTEM_BIBLE_SUBJECTS):
+        return {"verdict": "existing",
+                "workspace": "ecosystem-bible",
+                "status": _bible_row[6],
+                "why": "R42: the subject names the "
+                       "ecosystem-wide SOP body — the "
+                       "core-required Ecosystem Bible "
+                       "workspace (Brian, 2026-11-08)."}
     # R1/R3: the subject's own workspace. An EXACT slug match
     # outranks every owner-text match, globally — otherwise a
     # subject named inside another workspace's owner string

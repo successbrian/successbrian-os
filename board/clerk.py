@@ -241,6 +241,141 @@ def job_blogqa(args=None):
     return filed
 
 
+# ECOSYSTEM BIBLE WATCH (Brian, 2026-11-08: "the clerk helps
+# maintain 'Ecosystem Bible' ... this workspace needs to be
+# fully integrated into SuccessBrian OS"). The Bible is a
+# core-required workspace (R42 in allm_workspaces). The
+# clerk's maintenance is the chartered kind: it FILES
+# ecosystem-wide SOP/governance intel into the Bible through
+# Workflow #3 (determine() R42 routing), and hourly in the
+# sweep it verifies the workspace is live and intact. Any
+# drift goes to Workflow #2 as a kick-aside for Altair.
+# Detect only, never fix.
+def _bible_problems():
+    """[problem strings] for the Ecosystem Bible workspace;
+    [] when healthy; None when a store is unavailable
+    (reported, never read as all-fine)."""
+    import sqlite3 as _sq
+    problems = []
+    rows = _pg_rows(
+        "SELECT status FROM atlas.allm_workspace_registry "
+        "WHERE slug = 'ecosystem-bible'")
+    if rows is None:
+        return None
+    if not rows:
+        problems.append("no registry row for ecosystem-bible "
+                        "(R42 core-required)")
+    elif rows[0][0] != "live":
+        problems.append("registry status for ecosystem-bible "
+                        "is '%s', not live" % rows[0][0])
+    try:
+        db = _sq.connect(
+            "file:%s?mode=ro" % scatter_clerk.allm.ALLM_DB,
+            uri=True)
+        try:
+            names = [r[0] for r in db.execute(
+                "SELECT wd.filename FROM workspace_documents "
+                "wd JOIN workspaces w ON w.id = wd.workspaceId "
+                "WHERE w.slug = 'ecosystem-bible'").fetchall()]
+            left = db.execute(
+                "SELECT count(*) FROM workspace_documents wd "
+                "JOIN workspaces w ON w.id = wd.workspaceId "
+                "WHERE w.slug = 'home-lab' AND ("
+                "lower(wd.filename) LIKE '%ecosystem_bible%' "
+                "OR lower(wd.filename) LIKE "
+                "'%ecosystem-bible%')").fetchone()[0]
+        finally:
+            db.close()
+    except Exception:
+        return None
+    if not names:
+        problems.append("ecosystem-bible workspace missing "
+                        "from AnythingLLM (R42 core-required)")
+        return problems
+    if len(names) < 10:
+        problems.append("ecosystem-bible holds %d documents, "
+                        "expected at least 10" % len(names))
+    bibles = [n for n in names if "ECOSYSTEM_BIBLE" in n
+              and "charter" not in n and "new-knowledge" not in n
+              and "r42" not in n]
+    if len(bibles) < 3:
+        problems.append("only %d Ecosystem Bible edition "
+                        "documents present, expected 3"
+                        % len(bibles))
+    for pat, label in (
+            ("ecosystem-bible-charter", "the charter"),
+            ("ecosystem-bible-new-knowledge", "the new-knowledge doc"),
+            ("ecosystem-bible-r42", "the R42 core-required doc")):
+        if not any(pat in n for n in names):
+            problems.append("%s (%s) is missing from "
+                            "ecosystem-bible" % (label, pat))
+    if left:
+        problems.append("home-lab still holds %d Bible-named "
+                        "documents — they belong in "
+                        "ecosystem-bible (moved 2026-11-08)"
+                        % left)
+    return problems
+
+
+def job_bible(args=None):
+    """Ecosystem Bible watch: verify the core-required Bible workspace is live and intact; file a WF2 kick-aside on drift. Detect only, never fix."""
+    import subprocess as _sp
+    problems = _bible_problems()
+    if problems is None:
+        print("bible: a knowledge store is unavailable — the "
+              "Bible workspace could not be verified (not read "
+              "as all-fine)")
+        return []
+    if not problems:
+        print("bible: Ecosystem Bible workspace live and "
+              "intact (registry live, 10+ docs incl. charter, "
+              "new-knowledge and R42 docs, Home Lab clear) — "
+              "no kick-aside filed")
+        return []
+    task_key = (f"task:clerk-bible-"
+                f"{date.today().isoformat()}")
+    existing = _pg_rows(
+        "SELECT node_key FROM atlas.nodes WHERE node_key = %s "
+        "AND status = 'queued'", (task_key,))
+    if existing:
+        print(f"bible: drift already kicked aside today as "
+              f"{task_key} — not duplicated")
+        return []
+    details = {
+        "question": (
+            "WORKFLOW #2 KICK-ASIDE from the clerk's Ecosystem "
+            "Bible watch: the core-required Ecosystem Bible "
+            "workspace (R42) shows drift. PROBLEMS: "
+            + "; ".join(problems)
+            + f". Source: atlas.allm_workspace_registry + "
+            f"AnythingLLM DB, read by clerk.py job_bible on "
+            f"{datetime.now().astimezone().isoformat(timespec='seconds')}. "
+            f"Altair: restore the Bible workspace through the "
+            f"owning machinery (allm_workspaces / allm_embed). "
+            f"The clerk detected this only — it does not fix "
+            f"workspaces."),
+        "theme": "wf2-ecosystem-bible-watch",
+        "found_by": "clerk-bible-watch",
+    }
+    if args and "--dry-run" in args:
+        print(f"[dry-run] would kick Bible drift -> "
+              f"{task_key} ({'; '.join(problems)})")
+        return [task_key]
+    r = _sp.run(
+        ["python3", scatter_clerk.ATLAS_PY, "add-node",
+         task_key, "atlas_task",
+         ("Ecosystem Bible workspace drift — clerk watch "
+          "kick-aside")[:180],
+         "--status", "queued", "--details", json.dumps(details)],
+        capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"bible: kick-aside failed: {r.stderr[:300]}")
+        return []
+    print(f"bible: drift ({'; '.join(problems)}) -> WF2 "
+          f"kick-aside {task_key}")
+    return [task_key]
+
+
 def job_sweep(_args=None):
     """The hourly look at the Intel Bridge: sort everything new."""
     state = scatter_clerk.load_state()
@@ -261,17 +396,24 @@ def job_sweep(_args=None):
     # Watched blog QA signals (WS3): failing/stale blog checks
     # 336/338/339/340 kick aside to WF2 from this hourly check.
     blogqa_kicks = job_blogqa()
+    # Ecosystem Bible watch (Brian, 2026-11-08): the clerk
+    # helps maintain the core-required Bible workspace;
+    # drift kicks aside to WF2 from this hourly check.
+    bible_kicks = job_bible()
     metrics = {
         "captures_in": captures_in,
         "board_filed": len(keys),
-        "sent_altair": len(kicked) + len(blogqa_kicks),
+        "sent_altair": len(kicked) + len(blogqa_kicks)
+                       + len(bible_kicks),
         "bounced": 0,
         "filed_kept": len(kept),
         "rechecks_sent": len(rechecks),
         "blog_qa_kickasides": len(blogqa_kicks),
+        "bible_kickasides": len(bible_kicks),
     }
     write_checkin(len(keys) + len(kicked) + len(rechecks)
-                  + len(blogqa_kicks), metrics)
+                  + len(blogqa_kicks) + len(bible_kicks),
+                  metrics)
 
 
 def job_file(args=None):
@@ -945,6 +1087,20 @@ def job_integrity(args=None):
     kindex.integrity(dry_run=bool(args and "--dry-run" in args))
 
 
+def job_package(args=None):
+    """Build board packages from the house record (the package
+    writer: research, three-engine drafting, resolve-in-house,
+    fitness check on desk items). Args pass through: --item KEY,
+    --gates, --thin N, --force, --dry-run."""
+    import package_builder
+    old = sys.argv
+    sys.argv = ["package_builder.py"] + list(args or [])
+    try:
+        package_builder.main()
+    finally:
+        sys.argv = old
+
+
 def job_jobs(_args=None):
     """Print this menu."""
     print("THE CLERK — job menu (if it's not on the menu, the clerk doesn't do it):")
@@ -963,6 +1119,8 @@ JOBS = {
     "reconcile": job_reconcile,
     "integrity": job_integrity,
     "blogqa": job_blogqa,
+    "bible": job_bible,
+    "package": job_package,
 }
 
 

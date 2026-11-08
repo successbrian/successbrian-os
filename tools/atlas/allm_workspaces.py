@@ -1382,7 +1382,7 @@ SEGMENTS = {
                    "people-brian-likes", "ai-bubble-crash",
                    "flat-earth",
                    "name-finding-and-enrichment",
-                   "business-goals", "scattered-second-brain"],
+                   "business-goals", "ecosystem-bible", "scattered-second-brain"],
     },
 }
 
@@ -2649,6 +2649,30 @@ REGISTRY = [
      "likely needs to be an anythingllm workspace'). "
      "Created in AnythingLLM 2026-10-23 via the API, "
      "seeded with the charter doc of his standing goals."),
+    ("ecosystem-bible", "domain",
+     "Brian / SuccessBrian OS (ecosystem-wide SOPs)", None,
+     "The Ecosystem Bible body: Brian's overall "
+     "ecosystem-wide SOPs, the Ecosystem Bible documents, "
+     "and ecosystem-wide governance and rules. In Brian's "
+     "words (2026-11-08): the 'ecosystem bible' workspace "
+     "should have his overall ecosystem wide SOPs.",
+     "Ecosystem-wide material lands here: Bible documents, "
+     "SOPs / governance / rules that apply across the whole "
+     "ecosystem. Procedure owned by one desk, one business, "
+     "one project, or one machine stays in its owning body "
+     "- Home Lab is the hardware/fleet body, not this one.",
+     "live",
+     "Designated by Brian 2026-11-08 ('create the Ecosystem "
+     "Bible workspace and move that related documents into "
+     "it; I don't think they really belong in the home lab "
+     "workspace'). Created in AnythingLLM 2026-11-08 via "
+     "the API (id 150); 7 documents moved from Home Lab "
+     "(3 Bible editions, the Bible governance/rules seed "
+     "v1, ecosystem-sop.md, ECOSYSTEM-SOP.md, "
+     "Business_Intelligence_Ecosystem_SOP.md) and verified "
+     "there before the Home Lab embeddings were removed "
+     "(Home Lab 1331 -> 1324 docs). Seeded with "
+     "ecosystem-bible-charter.md."),
     ("scattered-second-brain", "domain",
      "SuccessBrian OS (Brian's idea refinery)", None,
      "The Scattered Second Brain: Brian's idea-refinery. "

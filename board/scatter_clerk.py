@@ -51,6 +51,7 @@ rechecked").
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import urllib.request
@@ -105,11 +106,92 @@ CREATE TABLE IF NOT EXISTS successbrian_os.wf3_filings (
     kind TEXT NOT NULL,
     checked_on DATE,
     filed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    valid_until TIMESTAMPTZ NOT NULL,
+    valid_until TIMESTAMPTZ,
     recheck_requested_at TIMESTAMPTZ,
-    superseded_by INT
+    superseded_by INT,
+    attached_asset TEXT,
+    archived_at TIMESTAMPTZ
 )
 """
+
+# Forever-rule migration for the live table (idempotent).
+FILINGS_MIGRATION = [
+    "ALTER TABLE successbrian_os.wf3_filings "
+    "ALTER COLUMN valid_until DROP NOT NULL",
+    "ALTER TABLE successbrian_os.wf3_filings "
+    "ADD COLUMN IF NOT EXISTS attached_asset TEXT",
+    "ALTER TABLE successbrian_os.wf3_filings "
+    "ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ",
+]
+
+ALLM_DB = os.path.expanduser(
+    "~/anything-llm/server/storage/anythingllm.db")
+
+
+def _ensure_filings_schema(cur):
+    cur.execute(FILINGS_DDL)
+    for stmt in FILINGS_MIGRATION:
+        cur.execute(stmt)
+
+
+def _asset_slugs():
+    """Workspace slugs that count as living published assets
+    (Brian's generalized forever rule, 2026-10-28 16:25: a blog
+    article, a website, a SaaS project, a video, a lead magnet —
+    the marketing_asset class). Sourced from the allm_workspaces
+    registry where it names them; the '-blog' suffix covers the
+    blog fleet even where the registry lags."""
+    slugs = set()
+    for attr in ("BLOGS", "MARKETING_ASSETS"):
+        obj = getattr(allm, attr, None)
+        if isinstance(obj, dict):
+            slugs.update(str(k) for k in obj.keys())
+        elif isinstance(obj, (list, tuple, set)):
+            for item in obj:
+                if isinstance(item, dict):
+                    v = item.get("slug") or item.get("workspace")
+                    if v:
+                        slugs.add(str(v))
+                elif isinstance(item, str):
+                    slugs.add(item)
+    return slugs
+
+
+def attached_asset_for(cap_id):
+    """THE ATTACHMENT TEST (Brian, 2026-10-28; ticket #15):
+    a capture is attached to a living published asset when its
+    intel document (intel-capture-<id>.md) is embedded in one of
+    that asset's workspaces. Returns the anchor workspace slug,
+    or None. Price filings never take the exemption — prices
+    are database state with their own recheck design."""
+    try:
+        db = sqlite3.connect(f"file:{ALLM_DB}?mode=ro",
+                             uri=True)
+        rows = db.execute(
+            "SELECT w.slug FROM workspace_documents wd "
+            "JOIN workspaces w ON w.id = wd.workspaceId "
+            "WHERE wd.docpath LIKE ?",
+            (f"%intel-capture-{int(cap_id)}.md%",)).fetchall()
+        db.close()
+    except Exception:
+        return None
+    assets = _asset_slugs()
+    for (slug,) in rows:
+        if slug and (slug.endswith("-blog") or slug in assets):
+            return slug
+    return None
+
+
+def archive_superseded_attached(cur):
+    """Used-but-superseded = ARCHIVED (Brian, 2026-10-28
+    16:27): an attached filing that has been superseded is
+    stamped archived_at — out of the active serving layer,
+    still retrievable, NEVER deleted. Returns the count."""
+    cur.execute(
+        "UPDATE successbrian_os.wf3_filings SET "
+        "archived_at = now() WHERE attached_asset IS NOT NULL "
+        "AND superseded_by IS NOT NULL AND archived_at IS NULL")
+    return cur.rowcount
 
 
 # ------------------------------------------------------------------
@@ -346,6 +428,42 @@ def blog_context_line(ctx):
             + f" [source: {ctx['source']}; checked {ctx['checked_at']}]")
 
 
+_IMPROVEMENT_PHRASES = [
+    "i want the ecosystem", "i want the system", "want the ecosystem to",
+    "want the system to", "the ecosystem should", "ecosystem should",
+    "ecosystem needs to", "the system should", "system needs to",
+    "needs to tell me", "needs to tell brian", "tell me when",
+    "should be able to", "i want the clerk", "want the clerk to",
+    "can it be improved", "does it do what", "do it better",
+]
+
+_IMPROVEMENT_SUBJECTS = [
+    ("dealsdesk", "DealsDesk"), ("campaignsdesk", "CampaignsDesk"),
+    ("contactflowcrm", "ContactFlowCRM"),
+    ("trafficstreemz", "TrafficStreemz"), ("clerk", "the clerk"),
+    ("board", "the board"), ("altair", "Altair"), ("meghan", "Meghan"),
+    ("successbrian os", "SuccessBrian OS"), ("hiro", "Hiro.fm"),
+    ("ecosystem", "the ecosystem"),
+]
+
+
+def match_improvement_ask(cap):
+    """Brian's improvement watch (2026-10-31): does this capture carry
+    Brian asking for an ecosystem improvement? A word rule, answered in
+    words — returns {phrases, subjects} or None. Detection only; the
+    current-build and fitness answers are the package writer's job."""
+    text = " ".join([cap.get("title") or "", cap.get("context") or "",
+                     cap.get("raw") or ""]).lower()
+    hits = [p for p in _IMPROVEMENT_PHRASES if p in text]
+    if not hits:
+        return None
+    subjects = []
+    for needle, label in _IMPROVEMENT_SUBJECTS:
+        if needle in text and label not in subjects:
+            subjects.append(label)
+    return {"phrases": hits[:3], "subjects": subjects}
+
+
 def classify(cap, contexts=None):
     """The clerk's sort, stated in words. Returns (route, reasons)
     where route is 'wf3' (keep: Workflow #3) or 'board' (Workflow
@@ -390,6 +508,21 @@ def classify(cap, contexts=None):
     except Exception:
         ctx = None
     cap["_blog_context"] = ctx
+    # IMPROVEMENT WATCH overlay (Brian 2026-10-31): flag captures where
+    # Brian is asking for an ecosystem improvement, so the ask is never
+    # filed as mere prose. Detection rides along; routing unchanged.
+    try:
+        imp = match_improvement_ask(cap)
+    except Exception:
+        imp = None
+    cap["_improvement"] = imp
+    if imp:
+        reasons.append(
+            "reads as Brian asking for an ecosystem improvement "
+            f"('{imp['phrases'][0]}')"
+            + (f" — subject: {', '.join(imp['subjects'])}"
+               if imp["subjects"] else "")
+            + " — improvement watch: current build + fitness owed")
     if ctx:
         reasons.append(
             "names a registered blog — blog context attached: "
@@ -435,6 +568,17 @@ def classify(cap, contexts=None):
                     f"the text does not say an open item is resolved "
                     f"or advanced — routing unchanged, blog context "
                     f"attached")
+    # ARTICLE OVERLAY (Brian, 2026-11-01): for kept intel, the clerk also
+    # asks the article question — is this related to an article we need on
+    # a blog? Existing article FIRST, then new-article via blog boundaries
+    # (board/article_match.py). A matcher failure must never break the
+    # clerk, so this is best-effort and silent on error.
+    if route == "wf3":
+        try:
+            import article_match as _am
+            reasons.append(_am.assess(cap))
+        except Exception:
+            pass
     return route, reasons
 
 
@@ -892,10 +1036,12 @@ def packet_text(members):
                  "board's job is to look, judge the questions, and "
                  "bring back a recommendation.)")
     lines.append("")
-    lines.append("QUESTIONS FOR THE JUDGES:")
-    for i, q in enumerate(EASY_QUESTIONS, 1):
-        lines.append(f"{i}. {q}")
-    lines.append("")
+    # SPLIT PACKET (Brian 2026-10-31): the easy questions are the
+    # clerk's groundwork for the answer/decide stage. They live in
+    # details.easy_questions (file_packet below) and the harness
+    # delivers them at that stage only — they are NOT printed on
+    # the first-read page, where the board was handing them back
+    # as its own questions.
     blog_ctxs = [m.get("_blog_context") for m in members
                  if m.get("_blog_context")]
     if blog_ctxs:
@@ -906,6 +1052,25 @@ def packet_text(members):
             if ctx["slug"] not in seen:
                 seen.add(ctx["slug"])
                 lines.append("- " + blog_context_line(ctx))
+        lines.append("")
+    imps = [m.get("_improvement") for m in members
+            if m.get("_improvement")]
+    if imps:
+        lines.append("IMPROVEMENT WATCH (clerk — Brian's words in this "
+                     "packet read as an ecosystem improvement ask. Per "
+                     "Brian 2026-10-31 the clerk owes the answers: is "
+                     "Brian asking for an improvement, what is the "
+                     "current build of the desk/plugin named, does it "
+                     "do what Brian needs, is it doing it well, can it "
+                     "do better):")
+        seen = set()
+        for imp in imps:
+            subj = ", ".join(imp["subjects"]) or "the ecosystem"
+            line = (f"- improvement ask naming {subj} "
+                    f"('{imp['phrases'][0]}')")
+            if line not in seen:
+                seen.add(line)
+                lines.append(line)
         lines.append("")
     lines.append("SOURCE: atlas.scattered_captures "
                  + ", ".join(f"#{m['id']}" for m in members))
@@ -1124,20 +1289,30 @@ def _source_url(cap):
 
 def _record_filing(cap_id, home, doc_filename, kind, checked,
                    valid_until):
+    # Forever rule (Brian, 2026-10-28): a filing attached to a
+    # living published asset carries NO expiry. Prices exempt
+    # from the exemption (database state, own recheck design).
+    attached = (None if kind == "price"
+                else attached_asset_for(cap_id))
+    if attached:
+        valid_until = None
     c = pm_core.conn()
     cur = c.cursor()
-    cur.execute(FILINGS_DDL)
+    _ensure_filings_schema(cur)
     cur.execute(
         "INSERT INTO successbrian_os.wf3_filings "
         "(capture_id, workspace_slug, doc_filename, kind, "
-        "checked_on, valid_until) VALUES (%s, %s, %s, %s, %s, %s) "
+        "checked_on, valid_until, attached_asset) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s) "
         "ON CONFLICT (capture_id) DO UPDATE SET "
         "workspace_slug = EXCLUDED.workspace_slug, "
         "doc_filename = EXCLUDED.doc_filename, "
         "kind = EXCLUDED.kind, checked_on = EXCLUDED.checked_on, "
         "valid_until = EXCLUDED.valid_until, "
+        "attached_asset = EXCLUDED.attached_asset, "
         "recheck_requested_at = NULL",
-        (cap_id, home, doc_filename, kind, checked, valid_until))
+        (cap_id, home, doc_filename, kind, checked, valid_until,
+         attached))
     c.commit()
     c.close()
 
@@ -1417,13 +1592,18 @@ def send_due_rechecks(dry_run=False):
     (Workflow #2). Returns the list of task keys created."""
     c = pm_core.conn()
     cur = c.cursor()
-    cur.execute(FILINGS_DDL)
+    _ensure_filings_schema(cur)
+    archived = archive_superseded_attached(cur)
+    if archived:
+        print(f"forever rule: archived {archived} "
+              f"superseded attached filing(s)")
     c.commit()
     cur.execute(
         "SELECT f.capture_id, f.workspace_slug, f.kind, "
         "f.valid_until, sc.title FROM successbrian_os.wf3_filings f "
         "JOIN atlas.scattered_captures sc ON sc.id = f.capture_id "
         "WHERE f.valid_until < now() "
+        "AND f.attached_asset IS NULL "
         "AND f.recheck_requested_at IS NULL "
         "AND f.superseded_by IS NULL ORDER BY f.valid_until")
     rows = cur.fetchall()
@@ -1591,6 +1771,30 @@ def blog_selftest():
               f"{'PASS' if ok else 'FAIL'}")
         for r in reasons:
             print(f"  reason: {r}")
+    imp_probes = [
+        ("improvement-ask-detected", {
+            "id": None,
+            "title": "Brian: I want the ecosystem to tell me",
+            "context": ("Brian said the ecosystem needs to tell him "
+                        "what to purchase and when - that is "
+                        "DealsDesk's job to build."),
+            "raw": "Short note.",
+        }, True),
+        ("plain-note-not-an-ask", {
+            "id": None,
+            "title": "A quiet observation about the garden",
+            "context": "Nothing about the system at all.",
+            "raw": "Short note.",
+        }, False),
+    ]
+    for label, cap, expected in imp_probes:
+        probe = dict(cap)
+        classify(probe, contexts=contexts)
+        got = probe.get("_improvement") is not None
+        ok = got == expected
+        failures += 0 if ok else 1
+        print(f"SAMPLE {label}: improvement={got} "
+              f"(expected {expected}) {'PASS' if ok else 'FAIL'}")
     print("BLOG_AWARE_" + ("FAILED" if failures else "OK"))
     return 1 if failures else 0
 

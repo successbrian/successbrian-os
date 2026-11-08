@@ -634,6 +634,22 @@ Brian's determination rules, encoded:
       crew_interaction / knowledge_levels /
       memory_architecture, enforced by selftest.
 
+  R42. ECOSYSTEM BIBLE IS CORE REQUIRED (Brian,
+      2026-11-08: "Ecosystem Bible is a core required
+      'anythingllm' workspace of SuccessBrian OS. Each
+      user has their own 'ecosystem bible' unique to
+      them"). Every SBOS operator has an Ecosystem Bible
+      workspace holding THEIR overall ecosystem-wide
+      SOPs. The requirement and the machinery are core
+      (same code for every operator, per the 2026-10-29
+      generalization); the CONTENT is per-operator data,
+      unique to that operator and never shared or
+      hardcoded across operators. Brian's ecosystem-bible
+      workspace (id 150) is his instance — the reference
+      implementation, not a template whose contents ship
+      to other operators. Encoded below as
+      CORE_REQUIRED_WORKSPACES, enforced by audit.
+
 Registry: atlas.allm_workspace_registry (ecosystem_central), seeded
 idempotently from this file. Live truth (which workspaces exist and
 their document counts) is read from AnythingLLM's own database,
@@ -677,6 +693,11 @@ COACHING = [("network-marketers", "ai-strategies-network-marketers"),
 # each ruled by Brian individually. The ideas slate's other
 # research bodies stay undesignated until he rules them.
 RESEARCH_BODIES = ["ai-strategies-competitive-research"]
+
+# Core-required workspaces (R42, Brian 2026-11-08): every
+# SuccessBrian OS operator has their own Ecosystem Bible,
+# unique to them; audit() enforces presence + live status.
+CORE_REQUIRED_WORKSPACES = ["ecosystem-bible"]
 
 # Audiences being built (R11). Each gets a SPACE (mandatory);
 # a competitive-research sibling is ruled per audience.
@@ -2672,7 +2693,7 @@ REGISTRY = [
      "Business_Intelligence_Ecosystem_SOP.md) and verified "
      "there before the Home Lab embeddings were removed "
      "(Home Lab 1331 -> 1324 docs). Seeded with "
-     "ecosystem-bible-charter.md."),
+     "ecosystem-bible-charter.md. CORE REQUIRED workspace of SuccessBrian OS (R42, Brian 2026-11-08): every SBOS operator has their own Ecosystem Bible, unique to them; this workspace is Brian's instance — the requirement and machinery are core, the content is the operator's own."),
     ("scattered-second-brain", "domain",
      "SuccessBrian OS (Brian's idea refinery)", None,
      "The Scattered Second Brain: Brian's idea-refinery. "
@@ -3184,6 +3205,18 @@ def audit(conn):
                 "DRIFT competitive-research body '%s' has no "
                 "workspace — R10: research is its own body "
                 "(Brian, 2026-10-22)" % slug)
+    for slug in CORE_REQUIRED_WORKSPACES:
+        if slug not in reg:
+            lines.append(
+                "DRIFT core-required workspace '%s' has no "
+                "registry row — R42: every SBOS operator has "
+                "their own Ecosystem Bible, unique to them "
+                "(Brian, 2026-11-08)" % slug)
+        elif reg[slug][6] != "live" or slug not in live:
+            lines.append(
+                "DRIFT core-required workspace '%s' is not "
+                "live in AnythingLLM — R42 (Brian, 2026-11-08)"
+                % slug)
     for a in AUDIENCES:
         if a["space"] is None:
             lines.append(

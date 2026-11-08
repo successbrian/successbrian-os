@@ -707,3 +707,158 @@ def morpheus_stats() -> dict:
     return {r[0]: int(r[1]) for r in pg_rows(
         "SELECT status, count(*) FROM "
         "successbrian_os.morpheus_queue GROUP BY status")}
+
+
+# ------------------------------------------------- engine job queues
+# The Morpheus queue pattern, generalized (Brian, 2026-11-08):
+# Sonic creates jobs for the ecosystem's engines — Morpheus,
+# Penny, DeepSeek REAP 150B — and every engine's work queue
+# has the SAME shape, the SAME claim protocol (SKIP LOCKED),
+# and the SAME shared functions, so a producer learns one way
+# to create work for any engine. Tables:
+# successbrian_os.{morpheus,penny,reap}_queue.
+
+ENGINE_JOB_TABLES = {
+    "morpheus": "successbrian_os.morpheus_queue",
+    "penny": "successbrian_os.penny_queue",
+    "reap": "successbrian_os.reap_queue",
+}
+
+
+def _engine_queue_ddl(table: str) -> str:
+    name = table.split(".")[-1]
+    return f"""
+CREATE TABLE IF NOT EXISTS {table} (
+    id BIGSERIAL PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+    source_ref TEXT,
+    priority INT NOT NULL DEFAULT 100,
+    status TEXT NOT NULL DEFAULT 'queued'
+        CHECK (status IN ('queued', 'claimed', 'done',
+                          'failed', 'cancelled')),
+    claimed_by TEXT,
+    claimed_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    result TEXT
+);
+CREATE INDEX IF NOT EXISTS {name}_open_idx
+    ON {table} (status, priority, created_at);
+"""
+
+
+def engine_job_enqueue(engine: str, created_by: str,
+                       kind: str, title: str, payload=None,
+                       source_ref: str = "",
+                       priority: int = 100) -> int:
+    """Queue one job for an engine (morpheus / penny / reap)
+    in that engine's common queue; returns the job id."""
+    import json as _json
+    table = ENGINE_JOB_TABLES[engine]
+    pg_exec(_engine_queue_ddl(table))
+    return pg_one(
+        f"""INSERT INTO {table}
+              (created_by, kind, title, payload, source_ref,
+               priority, status)
+            VALUES (%s, %s, %s, %s::jsonb, %s, %s, 'queued')
+            RETURNING id""",
+        (created_by, kind, title,
+         _json.dumps(payload or {}), source_ref or None,
+         int(priority)))
+
+
+def engine_job_claim(engine: str, worker: str, kinds=None,
+                     limit: int = 1):
+    """Atomically claim queued jobs for one engine. Returns
+    job dicts, highest priority + oldest first."""
+    import json as _json
+    table = ENGINE_JOB_TABLES[engine]
+    pg_exec(_engine_queue_ddl(table))
+    sql = (f"UPDATE {table} SET status = 'claimed', "
+           f"claimed_by = %s, claimed_at = now() WHERE id IN "
+           f"(SELECT id FROM {table} WHERE status = 'queued'")
+    params = [worker]
+    if kinds:
+        sql += " AND kind = ANY(%s)"
+        params.append(list(kinds))
+    sql += (" ORDER BY priority, created_at LIMIT %s "
+            "FOR UPDATE SKIP LOCKED) RETURNING id, created_by, "
+            "kind, title, payload, source_ref, priority")
+    params.append(int(limit))
+    out = []
+    for r in pg_rows(sql, tuple(params)):
+        payload = r[4]
+        if isinstance(payload, str):
+            try:
+                payload = _json.loads(payload)
+            except Exception:
+                payload = {}
+        out.append({"id": int(r[0]), "created_by": r[1],
+                    "kind": r[2], "title": r[3],
+                    "payload": payload or {},
+                    "source_ref": r[5] or "",
+                    "priority": int(r[6])})
+    return out
+
+
+def engine_job_finish(engine: str, job_id: int,
+                      result: str = "", ok: bool = True) -> None:
+    """Finish a claimed engine job with its result recorded."""
+    table = ENGINE_JOB_TABLES[engine]
+    pg_exec(
+        f"""UPDATE {table}
+               SET status = %s, result = %s,
+                   finished_at = now()
+             WHERE id = %s""",
+        ("done" if ok else "failed", (result or "")[:20000],
+         int(job_id)))
+
+
+def engine_job_release(engine: str, job_id: int) -> None:
+    """Put a claimed engine job back to queued."""
+    table = ENGINE_JOB_TABLES[engine]
+    pg_exec(
+        f"UPDATE {table} SET status = 'queued', "
+        f"claimed_by = NULL, claimed_at = NULL WHERE id = %s",
+        (int(job_id),))
+
+
+def engine_job_stats(engine: str) -> dict:
+    """Open/done counts by status for one engine's queue."""
+    table = ENGINE_JOB_TABLES[engine]
+    pg_exec(_engine_queue_ddl(table))
+    return {r[0]: int(r[1]) for r in pg_rows(
+        f"SELECT status, count(*) FROM {table} "
+        f"GROUP BY status")}
+
+
+# Per-engine wrappers (call sites stay self-documenting).
+def penny_enqueue(created_by, kind, title, payload=None,
+                  source_ref="", priority=100):
+    return engine_job_enqueue("penny", created_by, kind, title,
+                              payload, source_ref, priority)
+
+
+def penny_claim(worker, kinds=None, limit=1):
+    return engine_job_claim("penny", worker, kinds, limit)
+
+
+def penny_finish(job_id, result="", ok=True):
+    return engine_job_finish("penny", job_id, result, ok)
+
+
+def reap_enqueue(created_by, kind, title, payload=None,
+                 source_ref="", priority=100):
+    return engine_job_enqueue("reap", created_by, kind, title,
+                              payload, source_ref, priority)
+
+
+def reap_claim(worker, kinds=None, limit=1):
+    return engine_job_claim("reap", worker, kinds, limit)
+
+
+def reap_finish(job_id, result="", ok=True):
+    return engine_job_finish("reap", job_id, result, ok)

@@ -459,9 +459,11 @@ def score_pair(a, b):
         return {"score": Decimal("1"), "grade": "CONFIRMED",
                 "status": "auto", "signals": signals}
     if id_a is not None and id_b is not None and str(id_a) == str(id_b) \
-            and {platform_a, platform_b} == {"instagram", "threads"}:
+            and {platform_a, platform_b} in ({"instagram", "threads"},
+                                             {"facebook", "messenger"}):
         signals["deterministic"] = \
-            "shared_meta_platform_id (instagram/threads id namespace)"
+            "shared_meta_platform_id (shared id namespace: " \
+            + "/".join(sorted((platform_a, platform_b))) + ")"
         return {"score": Decimal("1"), "grade": "CONFIRMED",
                 "status": "auto", "signals": signals}
     linked_a = a.get("linked_platform_ids") or {}

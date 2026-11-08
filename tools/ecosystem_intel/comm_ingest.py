@@ -29,7 +29,8 @@ CALLED BY: agents, from the repo tree:
     State lives in PostgreSQL database people_unified, schema people,
     tables comm_accounts / comm_threads / comm_thread_participants /
     comm_messages / comm_attachments / comm_ingest_runs /
-    comm_intel_queue (NEW tables only; no existing table is altered).
+    comm_intel_queue / comm_profile_intel (NEW tables only; no
+    existing table is altered).
     DB access goes through sbos_common with an explicit
     dbname="people_unified". Counterparty resolution reuses
     identity_resolution (same directory): platform+platform_id exact,
@@ -70,6 +71,15 @@ NOTES:
       anything. Export ZIPs extracted for ingest are KEPT (hashed in
       the run record) as the audit copy, per the RECON retention
       recommendation.
+    - Sender-profile intel scans are READ-ONLY against Facebook.
+      Brian's requested fields are never filled by inference: every
+      field carries a field_status of ok / not_exposed / not_public /
+      error, with the connector command that was used. The Facebook
+      connector's profile surface exposes birthdate and location when
+      listed, but no followers count, no target friends count, and no
+      common/mutual-friends list; those stay NULL + not_exposed.
+      Interest signals require deterministic term evidence in the
+      profile bio/hobbies or the person's own recent timeline posts.
 """
 
 import argparse
@@ -77,9 +87,10 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import zipfile
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -128,7 +139,7 @@ def init_schema():
     print("schema applied: people.comm_accounts, people.comm_threads, "
           "people.comm_thread_participants, people.comm_messages, "
           "people.comm_attachments, people.comm_ingest_runs, "
-          "people.comm_intel_queue")
+          "people.comm_intel_queue, people.comm_profile_intel")
 
 
 # ------------------------------------------------------- text repair
@@ -734,6 +745,868 @@ def ingest_export(path, account_ref, route="dyi_export",
     return {"run_id": run_id, **totals}
 
 
+# -------------------------------------------------- profile intel scan
+#
+# Brian's order (2026-11-08): when Messenger senders are ingested,
+# pull their Facebook profile into the CRM and scan it for followers,
+# friends, mutual friends, crypto/health interest signals, country,
+# and birthday. The scan is READ-ONLY and evidence-bound:
+#   - profile info exposes birthdate + current city/hometown when the
+#     profile lists them, plus bio/hobbies/work/education;
+#   - timeline fetch exposes recent posts (own posts are separated
+#     from wall posts by author_id == owner_id);
+#   - NO command exposes a personal profile's followers count, the
+#     profile's own friends count, or a common/mutual-friends list.
+#     Those fields are stored NULL with field_status=not_exposed.
+#   - me friends can establish whether the sender is Brian's direct
+#     Facebook friend; that is recorded as supplemental context, never
+#     dressed up as a mutual-friends list.
+
+FACEBOOK_CLI = os.environ.get("SBOS_FACEBOOK_CLI",
+                              "/opt/hatch/bin/facebook-cli")
+PROFILE_INFO_CMD = "facebook-cli profile info --profile-id <id-or-vanity>"
+TIMELINE_CMD = "facebook-cli timeline fetch --profile-id <id>"
+FRIENDS_CMD = "facebook-cli me friends --name <name>"
+
+INTEL_THEME_RULES = {
+    "crypto": {
+        "bitcoin": r"\bbitcoin\b",
+        "btc": r"\bbtc\b",
+        "ethereum": r"\bethereum\b",
+        "eth": r"\beth\b",
+        "crypto": r"\bcrypt(?:o|currency|currencies)?\b",
+        "blockchain": r"\bblockchain\b",
+        "web3": r"\bweb3\b",
+        "nft": r"\bnfts?\b",
+        "non-fungible token": r"\bnon[-\s]?fungible tokens?\b",
+        "solana": r"\bsolana\b",
+        "xrp": r"\bxrp\b",
+        "dogecoin": r"\bdogecoin\b",
+        "defi": r"\bdefi\b",
+        "altcoin": r"\baltcoins?\b",
+        "stablecoin": r"\bstablecoins?\b",
+        "crypto wallet": r"\bcrypto wallet\b",
+        "digital asset": r"\bdigital assets?\b",
+        "memecoin": r"\bmemecoins?\b",
+        "binance": r"\bbinance\b",
+        "coinbase": r"\bcoinbase\b",
+    },
+    "health": {
+        "health": r"\bhealth(?:y|care)?\b",
+        "wellness": r"\bwellness\b",
+        "fitness": r"\bfitness\b",
+        "workout": r"\bworkouts?\b",
+        "gym": r"\bgym\b",
+        "nutrition": r"\bnutrition(?:al)?\b",
+        "supplements": r"\bsupplements?\b",
+        "vitamins": r"\bvitamins?\b",
+        "weight loss": r"\bweight[-\s]?loss\b",
+        "diabetes": r"\bdiabet(?:es|ic)\b",
+        "gut health": r"\bgut health\b",
+        "mental health": r"\bmental health\b",
+        "longevity": r"\blongevity\b",
+        "biohacking": r"\bbiohacking\b",
+        "yoga": r"\byoga\b",
+        "meditation": r"\bmeditation\b",
+        "sleep apnea": r"\bsleep apnea\b",
+        "zepbound": r"\bzepbound\b",
+        "glp-1": r"\bglp[-\s]?1\b",
+        "keto": r"\bketo(?:genic)?\b",
+        "carnivore diet": r"\bcarnivore diet\b",
+        "protein": r"\bprotein\b",
+        "essential oils": r"\bessential oils?\b",
+        "holistic health": r"\bholistic health\b",
+    },
+}
+
+_US_STATES = {
+    "alabama", "alaska", "arizona", "arkansas", "california",
+    "colorado", "connecticut", "delaware", "florida", "georgia",
+    "hawaii", "idaho", "illinois", "indiana", "iowa", "kansas",
+    "kentucky", "louisiana", "maine", "maryland", "massachusetts",
+    "michigan", "minnesota", "mississippi", "missouri", "montana",
+    "nebraska", "nevada", "new hampshire", "new jersey",
+    "new mexico", "new york", "north carolina", "north dakota",
+    "ohio", "oklahoma", "oregon", "pennsylvania", "rhode island",
+    "south carolina", "south dakota", "tennessee", "texas", "utah",
+    "vermont", "virginia", "washington", "west virginia",
+    "wisconsin", "wyoming", "district of columbia",
+    "al", "ak", "az", "ar", "ca", "co", "ct", "de", "fl", "ga",
+    "hi", "id", "il", "in", "ia", "ks", "ky", "la", "me", "md",
+    "ma", "mi", "mn", "ms", "mo", "mt", "ne", "nv", "nh", "nj",
+    "nm", "ny", "nc", "nd", "oh", "ok", "or", "pa", "ri", "sc",
+    "sd", "tn", "tx", "ut", "vt", "va", "wa", "wv", "wi", "wy",
+    "dc",
+}
+_CA_REGIONS = {
+    "alberta", "british columbia", "manitoba", "new brunswick",
+    "newfoundland and labrador", "nova scotia", "ontario",
+    "prince edward island", "quebec", "saskatchewan",
+    "northwest territories", "nunavut", "yukon",
+    "ab", "bc", "mb", "nb", "nl", "ns", "on", "pe", "qc", "sk",
+    "nt", "nu", "yt",
+}
+_AU_REGIONS = {
+    "new south wales", "victoria", "queensland", "western australia",
+    "south australia", "tasmania", "australian capital territory",
+    "northern territory", "nsw", "vic", "qld", "wa", "sa", "tas",
+    "act", "nt",
+}
+# NOTE: no UK county/region inference. County names collide with
+# US place names (Suffolk, Norfolk, Essex, Kent are all US places
+# too), so a bare British county is NOT country evidence. Only the
+# explicit constituent-country aliases in _COUNTRY_ALIASES resolve
+# for the UK.
+_COUNTRY_ALIASES = {
+    "united states": "United States",
+    "united states of america": "United States",
+    "usa": "United States", "u.s.a.": "United States",
+    "u.s.": "United States", "us": "United States",
+    "united kingdom": "United Kingdom",
+    "uk": "United Kingdom", "u.k.": "United Kingdom",
+    "england": "United Kingdom", "scotland": "United Kingdom",
+    "wales": "United Kingdom", "northern ireland": "United Kingdom",
+    "canada": "Canada", "australia": "Australia",
+    "philippines": "Philippines", "nigeria": "Nigeria",
+    "ghana": "Ghana", "india": "India", "germany": "Germany",
+    "france": "France", "spain": "Spain", "italy": "Italy",
+    "netherlands": "Netherlands", "mexico": "Mexico",
+    "brazil": "Brazil", "south africa": "South Africa",
+    "kenya": "Kenya", "pakistan": "Pakistan",
+    "bangladesh": "Bangladesh", "indonesia": "Indonesia",
+    "malaysia": "Malaysia", "singapore": "Singapore",
+    "new zealand": "New Zealand", "ireland": "Ireland",
+}
+
+
+class FacebookConnectorError(Exception):
+    def __init__(self, message, status="error"):
+        super().__init__(message)
+        self.status = status
+
+
+class FacebookProfileClient:
+    """Thin read-only runner over the sanctioned facebook-cli.
+
+    Only the profile surface is used: profile info, timeline fetch,
+    and me friends (name search, to establish direct-friend context).
+    No write command exists in this class.
+    """
+
+    def __init__(self, executable=None):
+        self.executable = executable or FACEBOOK_CLI
+
+    def _run(self, args):
+        if not os.path.isfile(self.executable):
+            raise FacebookConnectorError(
+                f"facebook-cli not found at {self.executable}",
+                status="error")
+        try:
+            proc = subprocess.run(
+                [self.executable] + args, capture_output=True,
+                text=True, timeout=90)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise FacebookConnectorError(
+                f"facebook-cli invocation failed: {exc}",
+                status="error")
+        out = (proc.stdout or "").strip()
+        if proc.returncode != 0:
+            blob = (out + " " + (proc.stderr or "")).lower()
+            status = "not_public" if (
+                "not accessible" in blob or "403" in blob) else "error"
+            raise FacebookConnectorError(
+                (proc.stderr or out or "facebook-cli failed")[:300],
+                status=status)
+        try:
+            return json.loads(out)
+        except ValueError:
+            raise FacebookConnectorError(
+                "facebook-cli returned non-JSON output", status="error")
+
+    def profile_info(self, profile_ref):
+        return self._run(["profile", "info", "--profile-id",
+                          str(profile_ref)])
+
+    def timeline(self, profile_id, limit=20, after=None):
+        args = ["timeline", "fetch", "--profile-id", str(profile_id),
+                "--limit", str(limit)]
+        if after:
+            args += ["--after", after]
+        return self._run(args)
+
+    def friends_by_name(self, name, limit=20, after=None):
+        args = ["me", "friends", "--name", name, "--limit",
+                str(limit)]
+        if after:
+            args += ["--after", after]
+        return self._run(args)
+
+    def find_direct_friend(self, display_name, platform_id,
+                           max_pages=10):
+        """Exact-ID lookup inside Brian's friends by name search.
+
+        Returns yes only on an exact friend_id match in a fully-read
+        result set; no only when the name result set is exhausted
+        without the ID; unknown when paging is truncated or the
+        command fails. This establishes a DIRECT friendship only —
+        it is not a mutual/common-friends list.
+        """
+        if not display_name or not platform_id:
+            return {"value": None, "status": "unknown",
+                    "reason": "display name or platform id missing"}
+        after = None
+        pages = 0
+        try:
+            while pages < max_pages:
+                pages += 1
+                payload = self.friends_by_name(display_name,
+                                               after=after)
+                for row in payload.get("data") or []:
+                    if str(row.get("friend_id")) == str(platform_id):
+                        return {"value": True, "status": "ok",
+                                "pages_read": pages}
+                after = ((payload.get("paging") or {}).get("cursors")
+                         or {}).get("after")
+                if not after:
+                    return {"value": False, "status": "ok",
+                            "pages_read": pages}
+            return {"value": None, "status": "unknown",
+                    "reason": "name result set truncated by page cap",
+                    "pages_read": pages}
+        except FacebookConnectorError as exc:
+            return {"value": None, "status": exc.status,
+                    "reason": str(exc)[:300]}
+
+
+def _profile_ref(profile):
+    if profile.get("platform_id"):
+        return str(profile["platform_id"])
+    if profile.get("handle"):
+        return profile["handle"]
+    url = profile.get("profile_url") or ""
+    tail = url.rstrip("/").rsplit("/", 1)[-1]
+    if tail and "profile.php" not in tail:
+        return tail
+    return None
+
+
+def fetch_facebook_surface(profile, client=None):
+    """Collect the connector surface for one profile, capturing
+    per-command failures instead of raising: a scan must still write
+    an intel row that says WHY each field is empty."""
+    client = client or FacebookProfileClient()
+    surface = {"profile_info": None, "timeline": None,
+               "direct_friend": {"value": None, "status": "unknown",
+                                 "reason": "not attempted"},
+               "errors": {}}
+    ref = _profile_ref(profile)
+    if not ref:
+        surface["errors"]["profile_info"] = {
+            "status": "error",
+            "reason": "profile row has no platform_id, handle, or "
+                      "usable profile_url"}
+        return surface
+    try:
+        info = client.profile_info(ref)
+        surface["profile_info"] = info
+    except FacebookConnectorError as exc:
+        surface["errors"]["profile_info"] = {
+            "status": exc.status, "reason": str(exc)[:300]}
+        info = None
+    if info is not None:
+        canonical_id = info.get("id") or profile.get("platform_id")
+        posts = []
+        after = None
+        try:
+            for _page in range(2):
+                payload = client.timeline(canonical_id, limit=20,
+                                          after=after)
+                posts.extend(payload.get("posts") or [])
+                after = payload.get("next_cursor")
+                if not payload.get("has_next_page") or not after:
+                    break
+            surface["timeline"] = {"posts": posts}
+        except FacebookConnectorError as exc:
+            surface["errors"]["timeline"] = {
+                "status": exc.status, "reason": str(exc)[:300]}
+    else:
+        surface["errors"]["timeline"] = dict(
+            surface["errors"]["profile_info"])
+    canonical_id = (info or {}).get("id") or profile.get(
+        "platform_id")
+    display_name = (info or {}).get("name") or profile.get(
+        "display_name")
+    surface["direct_friend"] = client.find_direct_friend(
+        display_name, canonical_id)
+    return surface
+
+
+def _first_present(mapping, keys):
+    for key in keys:
+        value = (mapping or {}).get(key)
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _parse_birthday(raw):
+    """Normalize a Facebook birthdate to ISO where possible.
+
+    Full date -> YYYY-MM-DD; month+day -> MM-DD; year alone -> YYYY.
+    Unrecognized formats are returned as the raw string so nothing
+    the connector exposed is silently dropped.
+    """
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, datetime):
+        return raw.date().isoformat()
+    if isinstance(raw, date):
+        return raw.isoformat()
+    text = repair_text(str(raw)).strip()
+    # Manual parsing (no datetime.strptime): the repo tree contains
+    # a tools/calendar package that shadows the stdlib calendar
+    # module strptime depends on when this file runs from the tree.
+    months = {name: idx for idx, name in enumerate(
+        ["january", "february", "march", "april", "may", "june",
+         "july", "august", "september", "october", "november",
+         "december"], start=1)}
+    for full, num in list(months.items()):
+        months[full[:3]] = num
+    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", text)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)),
+                        int(m.group(3))).isoformat()
+        except ValueError:
+            return text
+    m = re.fullmatch(r"([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})", text)
+    if m and m.group(1).lower() in months:
+        try:
+            return date(int(m.group(3)), months[m.group(1).lower()],
+                        int(m.group(2))).isoformat()
+        except ValueError:
+            return text
+    m = re.fullmatch(r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})", text)
+    if m and m.group(2).lower() in months:
+        try:
+            return date(int(m.group(3)), months[m.group(2).lower()],
+                        int(m.group(1))).isoformat()
+        except ValueError:
+            return text
+    m = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", text)
+    if m:
+        try:
+            return date(int(m.group(3)), int(m.group(1)),
+                        int(m.group(2))).isoformat()
+        except ValueError:
+            return text
+    m = re.fullmatch(r"([A-Za-z]+)\s+(\d{1,2})", text)
+    if m and m.group(1).lower() in months:
+        month, day = months[m.group(1).lower()], int(m.group(2))
+        try:
+            date(2000, month, day)
+            return f"{month:02d}-{day:02d}"
+        except ValueError:
+            return text
+    if re.fullmatch(r"\d{4}", text):
+        return text
+    return text
+
+
+def _country_from_location(raw):
+    """Conservative country extraction from a Facebook locality.
+
+    Only an explicit country alias or a recognized state/province/
+    region segment resolves. A bare city name resolves NOTHING —
+    Suffolk alone is not evidence for any one country.
+    """
+    if not raw:
+        return None
+    text = repair_text(str(raw)).strip().lower()
+    parts = [p.strip(" .") for p in text.split(",") if p.strip()]
+    for part in reversed(parts):
+        if part in _COUNTRY_ALIASES:
+            return _COUNTRY_ALIASES[part]
+        if part in _US_STATES:
+            return "United States"
+        if part in _CA_REGIONS:
+            return "Canada"
+        if part in _AU_REGIONS:
+            return "Australia"
+    if text in _COUNTRY_ALIASES:
+        return _COUNTRY_ALIASES[text]
+    if text in _US_STATES:
+        return "United States"
+    if text in _CA_REGIONS:
+        return "Canada"
+    if text in _AU_REGIONS:
+        return "Australia"
+    return None
+
+
+def _match_theme(text, patterns):
+    found = []
+    low = (text or "").lower()
+    for label, pattern in patterns.items():
+        if re.search(pattern, low):
+            found.append(label)
+    return sorted(found)
+
+
+def classify_interest_signals(text_sources, own_posts_read):
+    """Deterministic theme classification.
+
+    text_sources: [{source, text, post_id?, url?}] from the profile
+    bio/hobbies and the person's OWN recent posts. A theme is:
+      yes     — at least one matched term, with evidence refs;
+      no      — sources were readable, at least one own post was
+                read, and no term matched (means: no signal in the
+                scanned surface, not a claim about the person);
+      unknown — no own posts were readable, so absence of terms is
+                not evidence of anything.
+    """
+    signals = {}
+    for theme, patterns in INTEL_THEME_RULES.items():
+        evidence = []
+        for src in text_sources:
+            terms = _match_theme(src.get("text"), patterns)
+            if terms:
+                entry = {"source": src["source"],
+                         "matched_terms": terms}
+                if src.get("post_id"):
+                    entry["post_id"] = src["post_id"]
+                if src.get("url"):
+                    entry["url"] = src["url"]
+                evidence.append(entry)
+        if evidence:
+            status = "yes"
+        elif own_posts_read > 0:
+            status = "no"
+        else:
+            status = "unknown"
+        signals[theme] = {"status": status, "evidence": evidence}
+    return signals
+
+
+def build_profile_intel(profile, surface):
+    """Pure builder: (identity profile row, connector surface) ->
+    the comm_profile_intel column values + field_status. No DB, no
+    subprocess — this is the selftestable core of the scan."""
+    info = surface.get("profile_info") or {}
+    errors = surface.get("errors") or {}
+    info_error = errors.get("profile_info")
+    field_status = {}
+
+    followers = _first_present(info, ("followers", "follower_count",
+                                      "followers_count"))
+    if followers is not None:
+        field_status["followers"] = {
+            "status": "ok", "source_command": PROFILE_INFO_CMD}
+    elif info_error:
+        field_status["followers"] = {
+            "status": info_error["status"],
+            "source_command": PROFILE_INFO_CMD,
+            "reason": info_error["reason"]}
+    else:
+        field_status["followers"] = {
+            "status": "not_exposed", "source_command": PROFILE_INFO_CMD,
+            "reason": "profile info returns no followers count for a "
+                      "personal profile"}
+
+    friends_count = _first_present(info, ("friends_count",
+                                          "friend_count",
+                                          "total_friends"))
+    if friends_count is not None:
+        field_status["friends_count"] = {
+            "status": "ok", "source_command": PROFILE_INFO_CMD}
+    elif info_error:
+        field_status["friends_count"] = {
+            "status": info_error["status"],
+            "source_command": PROFILE_INFO_CMD,
+            "reason": info_error["reason"]}
+    else:
+        field_status["friends_count"] = {
+            "status": "not_exposed", "source_command": PROFILE_INFO_CMD,
+            "reason": "profile info returns no friends count for the "
+                      "profile owner; me friends lists Brian's "
+                      "friends, not the sender's"}
+
+    mutual_raw = _first_present(info, ("mutual_friends",
+                                       "common_friends"))
+    mutual_friends = mutual_raw if isinstance(mutual_raw, list) \
+        else None
+    if mutual_friends is not None:
+        field_status["mutual_friends"] = {
+            "status": "ok", "source_command": PROFILE_INFO_CMD}
+    elif info_error:
+        field_status["mutual_friends"] = {
+            "status": info_error["status"],
+            "source_command": PROFILE_INFO_CMD,
+            "reason": info_error["reason"]}
+    else:
+        field_status["mutual_friends"] = {
+            "status": "not_exposed",
+            "source_command": PROFILE_INFO_CMD + " / " + FRIENDS_CMD,
+            "reason": "no connector command returns a common/mutual "
+                      "friends list; me friends establishes only "
+                      "whether the sender is Brian's direct friend"}
+
+    direct = surface.get("direct_friend") or {}
+    field_status["facebook_friend"] = {
+        "status": direct.get("status", "unknown"),
+        "source_command": FRIENDS_CMD,
+        "value": direct.get("value"),
+        "reason": direct.get(
+            "reason",
+            "exact friend_id match inside Brian's friends by name "
+            "search" if direct.get("value") is not None else None)}
+
+    country = None
+    loc_field = None
+    loc_value = None
+    for key in ("current_city", "hometown"):
+        if info.get(key):
+            loc_field, loc_value = key, info[key]
+            country = _country_from_location(loc_value)
+            if country:
+                break
+            loc_field, loc_value = key, info[key]
+    if country:
+        field_status["country"] = {
+            "status": "ok", "source_command": PROFILE_INFO_CMD,
+            "source_field": loc_field, "source_value": loc_value,
+            "basis": "explicit country or recognized state/province/"
+                     "region segment in the returned locality"}
+    elif info_error:
+        field_status["country"] = {
+            "status": info_error["status"],
+            "source_command": PROFILE_INFO_CMD,
+            "reason": info_error["reason"]}
+    elif loc_value:
+        field_status["country"] = {
+            "status": "not_exposed", "source_command": PROFILE_INFO_CMD,
+            "source_field": loc_field, "source_value": loc_value,
+            "reason": "connector returns locality text, not a country "
+                      "field, and this locality names no recognizable "
+                      "country/state/province/region"}
+    else:
+        field_status["country"] = {
+            "status": "not_public", "source_command": PROFILE_INFO_CMD,
+            "reason": "profile lists no current city or hometown"}
+
+    birthday_raw = _first_present(info, ("birthdate", "birthday",
+                                         "date_of_birth"))
+    birthday = _parse_birthday(birthday_raw)
+    if birthday:
+        field_status["birthday"] = {
+            "status": "ok", "source_command": PROFILE_INFO_CMD,
+            "source_value": birthday_raw}
+    elif info_error:
+        field_status["birthday"] = {
+            "status": info_error["status"],
+            "source_command": PROFILE_INFO_CMD,
+            "reason": info_error["reason"]}
+    else:
+        field_status["birthday"] = {
+            "status": "not_public", "source_command": PROFILE_INFO_CMD,
+            "reason": "profile info returned no birthdate (not listed "
+                      "or hidden)"}
+
+    # Interest signals: bio + hobbies + the person's OWN posts only
+    # (wall posts by other people are not the owner's themes).
+    text_sources = []
+    if info.get("bio"):
+        text_sources.append({"source": "profile_info.bio",
+                             "text": info["bio"]})
+    hobbies = info.get("hobbies")
+    if hobbies:
+        hobby_text = " ".join(
+            str(h.get("name") or h) if isinstance(h, dict) else str(h)
+            for h in hobbies)
+        if hobby_text.strip():
+            text_sources.append({"source": "profile_info.hobbies",
+                                 "text": hobby_text})
+    timeline = surface.get("timeline") or {}
+    posts = timeline.get("posts") or []
+    owner_id = str(info.get("id") or profile.get("platform_id") or "")
+    own_posts = []
+    for post in posts:
+        author = post.get("author_id")
+        if author is not None and str(author) == owner_id:
+            own_posts.append(post)
+    for post in own_posts[:20]:
+        caption = post.get("post_caption") or ""
+        media = post.get("media_summary") or ""
+        text = (caption + " " + media).strip()
+        if text:
+            text_sources.append({
+                "source": "timeline_fetch.own_post",
+                "text": text,
+                "post_id": post.get("post_id"),
+                "url": post.get("url")})
+    signals = classify_interest_signals(text_sources, len(own_posts))
+    timeline_error = errors.get("timeline")
+    if timeline_error and not any(
+            s["status"] == "yes" for s in signals.values()):
+        field_status["interest_signals"] = {
+            "status": timeline_error["status"],
+            "source_command": TIMELINE_CMD,
+            "reason": timeline_error["reason"],
+            "own_posts_read": len(own_posts)}
+    else:
+        field_status["interest_signals"] = {
+            "status": "ok",
+            "source_command": PROFILE_INFO_CMD + " / " + TIMELINE_CMD,
+            "own_posts_read": len(own_posts),
+            "note": "yes requires matched-term evidence; no means no "
+                    "signal in the scanned surface; unknown means no "
+                    "own posts were readable"}
+
+    return {
+        "followers": followers,
+        "friends_count": friends_count,
+        "mutual_friends": mutual_friends,
+        "country": country,
+        "birthday": birthday,
+        "interest_signals": signals,
+        "field_status": field_status,
+        "_profile_info": info,
+        "_own_posts_read": len(own_posts),
+        "_direct_friend": direct.get("value"),
+    }
+
+
+def _intel_summary(profile, intel):
+    signals = intel["interest_signals"]
+    tags = [f"{theme}-interest" for theme, sig in signals.items()
+            if sig.get("status") == "yes"]
+
+    def show(value, field):
+        if value is not None:
+            return str(value)
+        status = (intel["field_status"].get(field) or {}).get(
+            "status", "unknown")
+        return f"unknown ({status})"
+
+    lines = [
+        f"[comm_profile_intel profile_id={profile['id']}]",
+        f"Profile intel scan — {profile.get('display_name') or ''} "
+        f"(facebook profile {profile.get('platform_id') or ''})",
+        f"followers: {show(intel['followers'], 'followers')}; "
+        f"friends: {show(intel['friends_count'], 'friends_count')}; "
+        f"mutual friends: "
+        f"{show(intel['mutual_friends'], 'mutual_friends')}",
+        f"country: {show(intel['country'], 'country')}; "
+        f"birthday: {show(intel['birthday'], 'birthday')}",
+        "interests: " + "; ".join(
+            f"{theme}={sig['status']}" for theme, sig in
+            signals.items()),
+        f"interest_tags: {', '.join(tags) if tags else '(none)'}",
+        "[/comm_profile_intel]",
+    ]
+    return "\n".join(lines)
+
+
+def _replace_intel_note(notes, profile_id, summary):
+    pattern = re.compile(
+        r"\[comm_profile_intel profile_id=%s\].*?"
+        r"\[/comm_profile_intel\]\n?" % re.escape(str(profile_id)),
+        re.DOTALL)
+    base = pattern.sub("", notes or "").rstrip()
+    return (base + "\n" + summary) if base else summary
+
+
+def scan_profile_intel(profile_id, client=None, surface=None):
+    """Run (or re-run) the intel scan for one identity profile and
+    write it through to the CRM: comm_profile_intel row + a summary
+    block on the person's identity_people.notes (replaced on rescan,
+    never stacked) + any yes-interest tags named in that block. The
+    identity_people table has no tags column, so tags live in the
+    intel row's interest_signals and the note's interest_tags line —
+    as data in JSONB, not prose-only."""
+    conn = _dict_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM people.identity_profiles WHERE id=%s",
+            (profile_id,))
+        profile = cur.fetchone()
+        if profile is None:
+            raise ValueError(f"no identity profile {profile_id}")
+        if profile["platform"] not in ("facebook", "messenger"):
+            raise ValueError(
+                "intel scan supports facebook/messenger profiles; "
+                f"profile {profile_id} is {profile['platform']}")
+        if surface is None:
+            surface = fetch_facebook_surface(dict(profile),
+                                             client=client)
+        intel = build_profile_intel(dict(profile), surface)
+        cur.execute(
+            "INSERT INTO people.comm_profile_intel "
+            "(profile_id, followers, friends_count, mutual_friends, "
+            "country, birthday, interest_signals, field_status) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb) "
+            "ON CONFLICT (profile_id) DO UPDATE SET "
+            "scanned_at=now(), followers=EXCLUDED.followers, "
+            "friends_count=EXCLUDED.friends_count, "
+            "mutual_friends=EXCLUDED.mutual_friends, "
+            "country=EXCLUDED.country, birthday=EXCLUDED.birthday, "
+            "interest_signals=EXCLUDED.interest_signals, "
+            "field_status=EXCLUDED.field_status, updated_at=now() "
+            "RETURNING *",
+            (profile_id, intel["followers"], intel["friends_count"],
+             json.dumps(intel["mutual_friends"])
+             if intel["mutual_friends"] is not None else None,
+             intel["country"], intel["birthday"],
+             json.dumps(intel["interest_signals"]),
+             json.dumps(intel["field_status"])))
+        row = cur.fetchone()
+
+        info = intel.get("_profile_info") or {}
+        if info.get("bio"):
+            cur.execute(
+                "UPDATE people.identity_profiles SET "
+                "bio_current=%s, last_seen=now() WHERE id=%s",
+                (info["bio"], profile_id))
+            ir._snapshot_bio(cur, profile_id, info["bio"],
+                             "facebook_connector:profile_info")
+        if info.get("vanity_url"):
+            cur.execute(
+                "UPDATE people.identity_profiles SET "
+                "profile_url=COALESCE(profile_url, %s) WHERE id=%s",
+                (info["vanity_url"], profile_id))
+
+        note_status = "skipped (profile has no person anchor)"
+        if profile.get("person_id"):
+            summary = _intel_summary(dict(profile), intel)
+            cur.execute(
+                "SELECT notes FROM people.identity_people WHERE id=%s",
+                (profile["person_id"],))
+            person = cur.fetchone()
+            cur.execute(
+                "UPDATE people.identity_people SET notes=%s, "
+                "updated_at=now() WHERE id=%s",
+                (_replace_intel_note((person or {}).get("notes"),
+                                     profile_id, summary),
+                 profile["person_id"]))
+            note_status = "written"
+        conn.commit()
+    finally:
+        conn.close()
+    result = dict(row)
+    result["crm_note"] = note_status
+    print(format_profile_intel(result | {
+        "display_name": profile.get("display_name"),
+        "platform_id": profile.get("platform_id")}))
+    return result
+
+
+def pending_intel_profile_ids(limit=None):
+    conn = _dict_conn()
+    try:
+        cur = conn.cursor()
+        sql = (
+            "SELECT DISTINCT p.profile_id FROM "
+            "people.comm_thread_participants p "
+            "LEFT JOIN people.comm_profile_intel i "
+            "ON i.profile_id = p.profile_id "
+            "WHERE p.profile_id IS NOT NULL AND i.id IS NULL "
+            "AND p.role <> 'owner' ORDER BY p.profile_id")
+        if limit:
+            sql += " LIMIT %s"
+            cur.execute(sql, (limit,))
+        else:
+            cur.execute(sql)
+        return [r["profile_id"] for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def scan_pending_intel(limit=None, client=None):
+    ids = pending_intel_profile_ids(limit=limit)
+    results = []
+    for profile_id in ids:
+        try:
+            results.append(scan_profile_intel(profile_id,
+                                              client=client))
+        except Exception as exc:  # one bad profile must not stop the queue
+            print(f"  scan profile {profile_id}: FAILED "
+                  f"{type(exc).__name__}: {exc}")
+            results.append({"profile_id": profile_id,
+                            "error": str(exc)})
+    print(f"intel scans attempted: {len(ids)}; "
+          f"ok: {sum(1 for r in results if 'error' not in r)}")
+    return results
+
+
+def get_profile_intel(profile_id):
+    conn = _dict_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT i.*, p.display_name, p.platform, "
+            "p.platform_id, p.handle FROM people.comm_profile_intel i "
+            "JOIN people.identity_profiles p ON p.id=i.profile_id "
+            "WHERE i.profile_id=%s", (profile_id,))
+        return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def format_profile_intel(row):
+    if row is None:
+        return "profile intel: (no scan recorded)"
+    signals = row.get("interest_signals") or {}
+    status = row.get("field_status") or {}
+    if isinstance(signals, str):
+        signals = json.loads(signals)
+    if isinstance(status, str):
+        status = json.loads(status)
+
+    def show(value, field):
+        if value is not None:
+            return str(value)
+        return f"unknown ({(status.get(field) or {}).get('status', 'unknown')})"
+
+    lines = [
+        f"Profile intel — {row.get('display_name') or ''} "
+        f"[profile {row['profile_id']}, "
+        f"{row.get('platform') or 'facebook'} "
+        f"{row.get('platform_id') or row.get('handle') or ''}]",
+        f"  scanned: {row.get('scanned_at')}",
+        f"  followers: {show(row.get('followers'), 'followers')}",
+        f"  friends: {show(row.get('friends_count'), 'friends_count')}",
+        f"  mutual friends: "
+        f"{show(row.get('mutual_friends'), 'mutual_friends')}",
+        f"  country: {show(row.get('country'), 'country')}",
+        f"  birthday: {show(row.get('birthday'), 'birthday')}",
+    ]
+    for theme, sig in signals.items():
+        line = f"  {theme}: {sig.get('status')}"
+        ev = sig.get("evidence") or []
+        if ev:
+            refs = []
+            for e in ev:
+                ref = e.get("source", "evidence")
+                if e.get("post_id"):
+                    ref += f" post {e['post_id']}"
+                refs.append(ref + " [" + ", ".join(
+                    e.get("matched_terms") or []) + "]")
+            line += " — evidence: " + "; ".join(refs)
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def show_profile_intel(profile_id):
+    row = get_profile_intel(profile_id)
+    if row is None:
+        print(f"profile intel: no scan recorded for profile "
+              f"{profile_id}")
+        return None
+    print(format_profile_intel(dict(row)))
+    return dict(row)
+
+
 # ------------------------------------------------------------ reports
 
 def show_stats():
@@ -754,6 +1627,8 @@ def show_stats():
         pending = cur.fetchone()["c"]
         cur.execute("SELECT count(*) c FROM people.comm_ingest_runs")
         runs = cur.fetchone()["c"]
+        cur.execute("SELECT count(*) c FROM people.comm_profile_intel")
+        intel_scans = cur.fetchone()["c"]
         cur.execute(
             "SELECT resolution_state, count(*) c FROM "
             "people.comm_thread_participants GROUP BY 1 ORDER BY 1")
@@ -770,13 +1645,15 @@ def show_stats():
     print(f"messages: {messages}")
     print(f"attachments: {attachments}")
     print(f"ingest runs: {runs}")
+    print(f"profile intel scans: {intel_scans}")
     print(f"intel queue pending: {pending}")
     print("participant resolution:")
     for r in res_states:
         print(f"  {r['resolution_state']}: {r['c']}")
     return {"accounts": len(accounts), "threads": threads,
             "messages": messages, "attachments": attachments,
-            "runs": runs, "intel_pending": pending}
+            "runs": runs, "intel_scans": intel_scans,
+            "intel_pending": pending}
 
 
 def show_queue(limit=50):
@@ -954,6 +1831,59 @@ def selftest():
        shape2["dedupe_kind"] == "platform_id"
        and shape2["dedupe_key"] == "m-1")
 
+    # Profile-intel builder: honest field coverage on synthetic data.
+    unknown_intel = build_profile_intel(
+        {"id": 1, "platform_id": "111", "display_name": "Pat Example"},
+        {"profile_info": {"id": "111", "name": "Pat Example",
+                          "bio": "Weekend notes.",
+                          "current_city": "Suffolk"},
+         "timeline": {"posts": []},
+         "direct_friend": {"value": None, "status": "unknown",
+                           "reason": "fixture"},
+         "errors": {}})
+    ck("intel: followers/friends/mutual are NULL + not_exposed "
+       "(connector does not expose them)",
+       unknown_intel["followers"] is None
+       and unknown_intel["friends_count"] is None
+       and unknown_intel["mutual_friends"] is None
+       and unknown_intel["field_status"]["followers"]["status"]
+       == "not_exposed"
+       and unknown_intel["field_status"]["friends_count"]["status"]
+       == "not_exposed"
+       and unknown_intel["field_status"]["mutual_friends"]["status"]
+       == "not_exposed")
+    ck("intel: a bare locality yields no invented country; a "
+       "missing birthdate is not_public",
+       unknown_intel["country"] is None
+       and unknown_intel["field_status"]["country"]["status"]
+       == "not_exposed"
+       and unknown_intel["birthday"] is None
+       and unknown_intel["field_status"]["birthday"]["status"]
+       == "not_public")
+    ck("intel: no readable own posts => interests unknown, "
+       "never 'no'",
+       unknown_intel["interest_signals"]["crypto"]["status"]
+       == "unknown"
+       and unknown_intel["interest_signals"]["health"]["status"]
+       == "unknown")
+    wall_intel = build_profile_intel(
+        {"id": 2, "platform_id": "222", "display_name": "Sam Wall"},
+        {"profile_info": {"id": "222", "name": "Sam Wall",
+                          "bio": "General notes."},
+         "timeline": {"posts": [
+             {"post_id": "own1", "author_id": "222",
+              "post_caption": "A quiet evening at home"},
+             {"post_id": "wall1", "author_id": "999",
+              "post_caption": "Bitcoin and wellness all day"}]},
+         "direct_friend": {"value": False, "status": "ok"},
+         "errors": {}})
+    ck("intel: wall posts by others are not the owner's interest "
+       "evidence",
+       wall_intel["interest_signals"]["crypto"]["status"] == "no"
+       and wall_intel["interest_signals"]["crypto"]["evidence"] == []
+       and wall_intel["interest_signals"]["health"]["status"]
+       == "no")
+
     # DB fixture: a synthetic DYI-shaped export.
     init_schema()
     tmp = tempfile.mkdtemp(prefix="comm-ingest-selftest-")
@@ -1121,6 +2051,61 @@ def selftest():
         finally:
             conn.close()
 
+        intel_surface = {
+            "profile_info": {
+                "id": "42424", "name": "Renée Fournier",
+                "bio": "Bitcoin educator focused on wellness and "
+                       "nutrition.",
+                "birthdate": "March 4, 1990",
+                "current_city": "Austin, Texas",
+                "vanity_url": "https://facebook.com/renee.fournier"},
+            "timeline": {"posts": [
+                {"post_id": "own-health",
+                 "url": "https://facebook.com/posts/own-health",
+                 "author_id": "42424", "owner_id": "42424",
+                 "post_caption": "Morning workout and protein "
+                                 "notes"},
+                {"post_id": "wall-crypto", "author_id": "999",
+                 "owner_id": "42424",
+                 "post_caption": "Ethereum giveaway"}]},
+            "direct_friend": {"value": True, "status": "ok"},
+            "errors": {}}
+        intel_row = scan_profile_intel(fixture_profile_id,
+                                       surface=intel_surface)
+        ck("intel scan writes a comm_profile_intel row",
+           intel_row and intel_row["profile_id"]
+           == fixture_profile_id)
+        ck("intel scan: exposed country + birthday are stored",
+           intel_row["country"] == "United States"
+           and intel_row["birthday"] == "1990-03-04")
+        ck("intel scan: unexposed counts stay NULL + not_exposed",
+           intel_row["followers"] is None
+           and intel_row["friends_count"] is None
+           and intel_row["mutual_friends"] is None
+           and intel_row["field_status"]["followers"]["status"]
+           == "not_exposed")
+        ck("intel scan: crypto + health are yes WITH evidence refs",
+           intel_row["interest_signals"]["crypto"]["status"] == "yes"
+           and intel_row["interest_signals"]["crypto"]["evidence"]
+           and intel_row["interest_signals"]["health"]["status"]
+           == "yes"
+           and intel_row["interest_signals"]["health"]["evidence"])
+        conn = _dict_conn()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT notes FROM people.identity_people WHERE "
+                "id=%s", (fixture_person_id,))
+            notes = cur.fetchone()["notes"] or ""
+            ck("intel scan writes the CRM summary + interest tags "
+               "to the person's notes",
+               "[comm_profile_intel profile_id="
+               f"{fixture_profile_id}]" in notes
+               and "crypto-interest" in notes
+               and "health-interest" in notes)
+        finally:
+            conn.close()
+
         res_b = ingest_export(export_b, "selftest-msgr-b")
         ck("same thread in a second account's export dedupes on "
            "message identity (0 inserted, 3 duplicated)",
@@ -1161,6 +2146,12 @@ def selftest():
                         "people.identity_profiles WHERE person_id=%s)",
                         (row["person_id"], row["person_id"]))
             if fixture_profile_id:
+                cur.execute(
+                    "DELETE FROM people.identity_life_events WHERE "
+                    "profile_id=%s", (fixture_profile_id,))
+                cur.execute(
+                    "DELETE FROM people.identity_bio_snapshots "
+                    "WHERE profile_id=%s", (fixture_profile_id,))
                 cur.execute(
                     "DELETE FROM people.identity_profiles WHERE id=%s",
                     (fixture_profile_id,))
@@ -1207,6 +2198,17 @@ def main():
                     dest="requested_range")
     ap.add_argument("--stats", action="store_true")
     ap.add_argument("--queue", action="store_true")
+    ap.add_argument("--scan-intel", nargs="?", const="pending",
+                    metavar="PROFILE_ID",
+                    help="scan one facebook identity profile, or "
+                         "'pending' / no value for all comm "
+                         "participants lacking intel")
+    ap.add_argument("--scan-pending", action="store_true",
+                    help="scan all comm participants lacking intel")
+    ap.add_argument("--scan-limit", type=int,
+                    help="cap for --scan-intel pending")
+    ap.add_argument("--intel", type=int, metavar="PROFILE_ID",
+                    help="print the intel card for a profile")
     ap.add_argument("--verify", metavar="ACCOUNT")
     ap.add_argument("--mark-verified", metavar="ACCOUNT")
     ap.add_argument("--by", default="brian")
@@ -1230,6 +2232,17 @@ def main():
         ingest_export(args.ingest_export, args.account,
                       route=args.route,
                       requested_range=args.requested_range)
+    elif args.scan_intel is not None or args.scan_pending:
+        if args.scan_pending or args.scan_intel in (None, "pending"):
+            scan_pending_intel(limit=args.scan_limit)
+        else:
+            try:
+                scan_profile_intel(int(args.scan_intel))
+            except ValueError:
+                ap.error("--scan-intel needs a numeric PROFILE_ID "
+                         "or 'pending'")
+    elif args.intel:
+        show_profile_intel(args.intel)
     elif args.stats:
         show_stats()
     elif args.queue:

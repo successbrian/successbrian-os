@@ -208,3 +208,29 @@ CREATE TABLE IF NOT EXISTS people.comm_intel_queue (
 
 CREATE INDEX IF NOT EXISTS idx_comm_intel_queue_status
     ON people.comm_intel_queue (status, created_at);
+
+-- Sender-profile intel scan (Brian's order, 2026-11-08). One latest
+-- record per Facebook identity profile. Nullable facts stay nullable:
+-- field_status records, per requested field, whether the Facebook
+-- connector supplied it (ok), does not expose it (not_exposed), did
+-- not return it as public/listed (not_public), or failed (error).
+-- Interest evidence is references + matched terms, never a guess.
+CREATE TABLE IF NOT EXISTS people.comm_profile_intel (
+    id               BIGSERIAL PRIMARY KEY,
+    profile_id       BIGINT NOT NULL UNIQUE
+                     REFERENCES people.identity_profiles(id)
+                     ON DELETE CASCADE,
+    scanned_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    followers        BIGINT,
+    friends_count    BIGINT,
+    mutual_friends   JSONB,
+    country          TEXT,
+    birthday         TEXT,
+    interest_signals JSONB NOT NULL DEFAULT '{}'::jsonb,
+    field_status     JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_comm_profile_intel_scanned
+    ON people.comm_profile_intel (scanned_at DESC);

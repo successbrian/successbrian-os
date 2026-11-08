@@ -69,6 +69,15 @@ NOTES:
       threads.net/@<handle>). Composed URLs are marked
       url_source='composed'; URLs that arrived with the data
       are url_source='source' and are never overwritten.
+    - Lookup layer (Brian, 2026-11-08, for RoadChat): --lookup
+      searches people + profiles (exact / token / fuzzy name,
+      exact / prefix handle); --card renders the full person
+      card (text or --json) with every profile URL, link
+      grades, intel, comms, and queue state, UNKNOWNs shown
+      as unknown; --road-note files Brian's road observations
+      as Intel Bridge captures (atlas.scattered_captures via
+      scattered_brain.capture) so the clerk files them like
+      any road capture.
     - Life-event classification from bio diffs is keyword rules,
       honestly labeled method='rules-v1'. An LLM classifier is a
       later upgrade, not a silent assumption.
@@ -85,6 +94,9 @@ CLI:
     python3 identity_resolution.py --backfill-profile-urls
     python3 identity_resolution.py --rule-same <profile_id> <profile_id>
     python3 identity_resolution.py --rule-different <profile_id> <profile_id>
+    python3 identity_resolution.py --lookup <name-or-handle>
+    python3 identity_resolution.py --card <person_id|profile_id> [--json]
+    python3 identity_resolution.py --road-note <person_id|new> --text "..."
 
 Brian's rulings (2026-11-08, written back via --rule-same /
 --rule-different):
@@ -1870,6 +1882,720 @@ def show_stats():
         conn.close()
 
 
+
+
+# ------------------------------------------- lookup / card / road-note
+# The query layer (Brian, 2026-11-08: "we want this to run on
+# roadchat -- i'll use road chat to look these up and send data to
+# the ecosystem"). --lookup finds people, --card renders the full
+# person card (text or --json), --road-note files Brian's road
+# observations back into the ecosystem as Intel Bridge captures.
+# Read-only except --road-note, which writes exactly one capture.
+
+def _jsonable(value):
+    """Recursively convert DB values (Decimal, datetime) to JSON-safe
+    primitives. Dates become ISO strings; Decimals become floats."""
+    import datetime as _dt
+    if isinstance(value, dict):
+        return {k: _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (_dt.datetime, _dt.date)):
+        return value.isoformat()
+    return value
+
+
+def lookup_people(query, limit=20):
+    """Ranked candidate search across the identity layer.
+
+    Matches identity_people.display_name (exact / token / fuzzy via
+    name_similarity) and identity_profiles handle + display_name.
+    Anchor-linked persons rank ahead of unlinked profiles at equal
+    score. Returns a list of plain dicts (JSON-safe)."""
+    q_raw = (query or "").strip()
+    if not q_raw:
+        return []
+    q_norm = normalize_name(q_raw)
+    q_tokens = set(name_tokens(q_raw))
+    q_handle = normalize_handle(q_raw)
+    conn = _dict_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM people.identity_people")
+        people = {row["id"]: row for row in cur.fetchall()}
+        cur.execute(
+            "SELECT id, person_id, platform, platform_id, handle, "
+            "handle_norm, display_name, profile_url, url_source "
+            "FROM people.identity_profiles")
+        profiles = cur.fetchall()
+    finally:
+        conn.close()
+    profiles_by_person = defaultdict(list)
+    for prof in profiles:
+        if prof.get("person_id"):
+            profiles_by_person[prof["person_id"]].append(prof)
+
+    def handle_score(prof):
+        """(score, reason) for a profile against the query handle."""
+        hn = prof.get("handle_norm") or ""
+        if q_handle and hn and hn == q_handle:
+            return 0.97, "handle exact match"
+        if q_handle and hn and len(q_handle) >= 4 \
+                and hn.startswith(q_handle):
+            return 0.80, "handle prefix match"
+        return 0.0, None
+
+    entries = {}
+    for pid, person in people.items():
+        score = 0.0
+        reasons = []
+        p_norm = person.get("name_norm") or ""
+        p_tokens = set(name_tokens(person.get("display_name") or ""))
+        if q_norm and p_norm == q_norm:
+            score = 1.0
+            reasons.append("exact name match")
+        if q_tokens and q_tokens <= p_tokens:
+            if score < 0.92:
+                score = 0.92
+            reasons.append("all query tokens in name")
+        sim = name_similarity(person.get("display_name") or "", q_raw)
+        if sim > score:
+            score = sim
+            if sim >= 0.45:
+                reasons.append("fuzzy name similarity %.2f" % sim)
+        for prof in profiles_by_person.get(pid, []):
+            hs, hr = handle_score(prof)
+            if hs > score:
+                score = hs
+                reasons.append("%s (%s @%s)" % (
+                    hr, prof["platform"], prof.get("handle")))
+            elif hs and hr and hs >= 0.80:
+                reasons.append("%s (%s @%s)" % (
+                    hr, prof["platform"], prof.get("handle")))
+        if score >= 0.45:
+            entries[("person", pid)] = {
+                "kind": "person",
+                "person_id": pid,
+                "profile_id": None,
+                "display_name": person["display_name"],
+                "score": round(float(score), 4),
+                "reasons": reasons,
+                "profile_count": person.get("profile_count"),
+                "platform_count": person.get("platform_count"),
+                "platforms": sorted({p["platform"] for p in
+                                     profiles_by_person.get(pid, [])}),
+            }
+    for prof in profiles:
+        if prof.get("person_id"):
+            continue
+        score = 0.0
+        reasons = []
+        hs, hr = handle_score(prof)
+        if hs:
+            score = hs
+            reasons.append(hr)
+        dname = prof.get("display_name") or ""
+        if dname:
+            if q_norm and normalize_name(dname) == q_norm:
+                score = max(score, 1.0)
+                reasons.append("exact name match (unlinked profile)")
+            else:
+                sim = name_similarity(dname, q_raw)
+                if sim > score:
+                    score = sim
+                    if sim >= 0.45:
+                        reasons.append(
+                            "fuzzy name similarity %.2f" % sim)
+        if score >= 0.45:
+            entries[("profile", prof["id"])] = {
+                "kind": "profile",
+                "person_id": None,
+                "profile_id": prof["id"],
+                "display_name": dname or prof.get("handle"),
+                "score": round(float(score), 4),
+                "reasons": reasons,
+                "profile_count": None,
+                "platform_count": None,
+                "platforms": [prof["platform"]],
+            }
+    ranked = sorted(
+        entries.values(),
+        key=lambda e: (-e["score"],
+                       0 if e["kind"] == "person" else 1,
+                       -(e.get("profile_count") or 0)))
+    return ranked[:limit]
+
+
+def show_lookup(query):
+    results = lookup_people(query)
+    if not results:
+        print("lookup %r: no candidates at or above the match floor "
+              "(UNKNOWN — not in the identity layer under that name "
+              "or handle)" % query)
+        return results
+    print("lookup %r: %d candidate(s)" % (query, len(results)))
+    for e in results:
+        if e["kind"] == "person":
+            print("  person %d  %s  score %.2f  breadth %s profiles "
+                  "/ %s platforms  [%s]" % (
+                      e["person_id"], e["display_name"], e["score"],
+                      e["profile_count"], e["platform_count"],
+                      ", ".join(e["platforms"])))
+        else:
+            print("  profile %d (unlinked)  %s  score %.2f  [%s]" % (
+                e["profile_id"], e["display_name"], e["score"],
+                ", ".join(e["platforms"])))
+        for r in e["reasons"]:
+            print("      - %s" % r)
+    return results
+
+
+def _best_link_grade(profile_id, member_ids, matches):
+    """Best same_person grade linking this profile to another member
+    of the same person, or None when no pair match is on record."""
+    order = {"CONFIRMED": 0, "STRONG": 1, "POSSIBLE": 2}
+    best = None
+    for m in matches:
+        if m["kind"] != "same_person":
+            continue
+        if profile_id not in (m["profile_a_id"], m["profile_b_id"]):
+            continue
+        other = (m["profile_b_id"] if m["profile_a_id"] == profile_id
+                 else m["profile_a_id"])
+        if other not in member_ids:
+            continue
+        if best is None or order.get(m["grade"], 9) < \
+                order.get(best["grade"], 9):
+            best = m
+    return best
+
+
+def build_card(person_id=None, profile_id=None):
+    """Assemble the full person card as a plain dict (JSON-safe).
+
+    Accepts a person anchor id, or a profile id (resolved to its
+    anchor when linked; an unlinked profile gets a profile-only
+    card). UNKNOWN facts are carried as explicit 'unknown' values,
+    never omitted and never invented."""
+    conn = _dict_conn()
+    try:
+        cur = conn.cursor()
+        person = None
+        anchor_profile = None
+        if profile_id is not None:
+            cur.execute(
+                "SELECT * FROM people.identity_profiles WHERE id = %s",
+                (profile_id,))
+            anchor_profile = cur.fetchone()
+            if anchor_profile is None:
+                return {"error": "profile %s not found" % profile_id}
+            if anchor_profile.get("person_id"):
+                person_id = anchor_profile["person_id"]
+        if person_id is not None:
+            cur.execute(
+                "SELECT * FROM people.identity_people WHERE id = %s",
+                (person_id,))
+            person = cur.fetchone()
+            if person is None and anchor_profile is None:
+                return {"error": "person %s not found" % person_id}
+        if person is not None:
+            cur.execute(
+                "SELECT * FROM people.identity_profiles "
+                "WHERE person_id = %s ORDER BY platform, id",
+                (person["id"],))
+            profiles = cur.fetchall()
+        else:
+            profiles = [anchor_profile]
+        member_ids = [p["id"] for p in profiles]
+        cur.execute(
+            "SELECT * FROM people.identity_matches "
+            "WHERE profile_a_id = ANY(%s) OR profile_b_id = ANY(%s) "
+            "ORDER BY id",
+            (member_ids, member_ids))
+        matches = cur.fetchall()
+        member_set = set(member_ids)
+        variants = []
+        for m in matches:
+            sig = m.get("signals") or {}
+            for key in ("name_variants", "recorded_variants",
+                        "variants"):
+                for v in sig.get(key) or []:
+                    variants.append(v)
+        # comm layer (same database): intel + threads + intel queue.
+        has_intel = has_threads = has_queue = False
+        cur.execute("SELECT to_regclass('people.comm_profile_intel')")
+        has_intel = cur.fetchone()["to_regclass"] is not None
+        cur.execute("SELECT to_regclass('people.comm_threads')")
+        has_threads = cur.fetchone()["to_regclass"] is not None
+        cur.execute("SELECT to_regclass('people.comm_intel_queue')")
+        has_queue = cur.fetchone()["to_regclass"] is not None
+        intel_by_profile = {}
+        if has_intel and member_ids:
+            cur.execute(
+                "SELECT * FROM people.comm_profile_intel "
+                "WHERE profile_id = ANY(%s)", (member_ids,))
+            for row in cur.fetchall():
+                intel_by_profile[row["profile_id"]] = row
+        comms = {"thread_count": 0, "by_platform_type": [],
+                 "last_activity": None}
+        if has_threads and member_ids:
+            cur.execute(
+                "SELECT t.platform, t.thread_type, count(*) AS n, "
+                "max(t.last_message_at) AS last_at "
+                "FROM people.comm_thread_participants tp "
+                "JOIN people.comm_threads t ON t.id = tp.thread_id "
+                "WHERE tp.profile_id = ANY(%s) "
+                "GROUP BY t.platform, t.thread_type "
+                "ORDER BY t.platform, t.thread_type", (member_ids,))
+            for row in cur.fetchall():
+                comms["thread_count"] += row["n"]
+                comms["by_platform_type"].append({
+                    "platform": row["platform"],
+                    "thread_type": row["thread_type"],
+                    "threads": row["n"],
+                    "last_activity": row["last_at"]})
+                if row["last_at"] and (comms["last_activity"] is None
+                                       or row["last_at"]
+                                       > comms["last_activity"]):
+                    comms["last_activity"] = row["last_at"]
+        intel_queue_pending = []
+        if has_queue and member_ids:
+            cur.execute(
+                "SELECT id, reason, display_name_snapshot, "
+                "created_at FROM people.comm_intel_queue "
+                "WHERE profile_id = ANY(%s) AND status = 'pending' "
+                "ORDER BY id", (member_ids,))
+            intel_queue_pending = cur.fetchall()
+        pending_pairs = []
+        for m in matches:
+            if m["status"] == "pending_review":
+                other_id = (m["profile_b_id"]
+                            if m["profile_a_id"] in member_set
+                            else m["profile_a_id"])
+                pending_pairs.append({
+                    "match_id": m["id"], "kind": m["kind"],
+                    "grade": m["grade"],
+                    "score": m["score"],
+                    "other_profile_id": other_id})
+    finally:
+        conn.close()
+
+    profile_cards = []
+    for prof in profiles:
+        link = _best_link_grade(prof["id"], member_set, matches)
+        intel_row = intel_by_profile.get(prof["id"])
+        intel = None
+        if intel_row is not None:
+            sig = intel_row.get("interest_signals") or {}
+            fstat = intel_row.get("field_status") or {}
+            fb = fstat.get("facebook_friend") or {}
+            intel = {
+                "scanned_at": intel_row.get("scanned_at"),
+                "birthday": intel_row.get("birthday") or "unknown",
+                "country": intel_row.get("country") or "unknown",
+                "crypto": (sig.get("crypto") or {}).get(
+                    "status", "unknown"),
+                "crypto_evidence": (sig.get("crypto") or {}).get(
+                    "evidence") or [],
+                "health": (sig.get("health") or {}).get(
+                    "status", "unknown"),
+                "health_evidence": (sig.get("health") or {}).get(
+                    "evidence") or [],
+                "direct_friend_of_brian": fb.get("value", "unknown"),
+                "field_status": fstat,
+            }
+        profile_cards.append({
+            "profile_id": prof["id"],
+            "platform": prof["platform"],
+            "platform_id": prof.get("platform_id") or "unknown",
+            "handle": prof.get("handle") or "unknown",
+            "display_name": prof.get("display_name") or "unknown",
+            "profile_url": prof.get("profile_url") or "unknown",
+            "url_source": prof.get("url_source") or "unknown",
+            "followers": prof.get("followers"),
+            "following": prof.get("following"),
+            "source": prof.get("source") or "unknown",
+            "link_grade": (link["grade"] if link else None),
+            "link_status": (link["status"] if link else None),
+            "link_method": (link["method"] if link else None),
+            "link_score": (link["score"] if link else None),
+            "intel": intel,
+        })
+    lookalikes = [{
+        "match_id": m["id"], "grade": m["grade"],
+        "status": m["status"], "score": m["score"],
+        "verdict": (m.get("signals") or {}).get("verdict"),
+        "profile_a_id": m["profile_a_id"],
+        "profile_b_id": m["profile_b_id"],
+    } for m in matches if m["kind"] == "lookalike_risk"]
+    card = {
+        "person_id": (person["id"] if person else None),
+        "canonical_name": (person["display_name"] if person
+                           else None),
+        "brian_confirmed": (bool(person["brian_confirmed"])
+                            if person else False),
+        "pinned_fields": (person.get("pinned_fields") or {}
+                          if person else {}),
+        "name_variants": variants,
+        "breadth": {
+            "profile_count": (person.get("profile_count")
+                              if person else None),
+            "platform_count": (person.get("platform_count")
+                               if person else None),
+            "surface_count": (person.get("surface_count")
+                              if person else None),
+        },
+        "notes": (person.get("notes") if person else None),
+        "profiles": profile_cards,
+        "lookalikes": lookalikes,
+        "comms": comms,
+        "intel_queue_pending": intel_queue_pending,
+        "pending_pairs": pending_pairs,
+        "pending_pairs_count": len(pending_pairs),
+    }
+    return _jsonable(card)
+
+
+def render_card_text(card):
+    if card.get("error"):
+        return "card: %s" % card["error"]
+    lines = []
+    if card["person_id"] is not None:
+        lines.append("PERSON %d — %s" % (card["person_id"],
+                                         card["canonical_name"]))
+        lines.append("  Brian-confirmed: %s"
+                     % ("yes" if card["brian_confirmed"] else "no"))
+        pinned = card["pinned_fields"] or {}
+        if pinned:
+            lines.append("  Pinned (Brian-ruled, sync cannot "
+                         "overwrite): %s" % ", ".join(
+                             "%s = %s" % (k, v)
+                             for k, v in pinned.items()))
+        else:
+            lines.append("  Pinned fields: none")
+        if card["name_variants"]:
+            lines.append("  Recorded name variants (evidence, "
+                         "preserved): %s" % json.dumps(
+                             card["name_variants"]))
+        b = card["breadth"]
+        lines.append("  Breadth: %s profiles / %s platforms / "
+                     "%s surfaces (graded links only)" % (
+                         b["profile_count"], b["platform_count"],
+                         b["surface_count"]))
+        if card["notes"]:
+            lines.append("  Notes: %s" % card["notes"])
+    else:
+        lines.append("UNLINKED PROFILE (no person anchor yet)")
+    lines.append("  Profiles:")
+    for p in card["profiles"]:
+        lines.append("    - [%s] @%s (profile %d)" % (
+            p["platform"], p["handle"], p["profile_id"]))
+        lines.append("        url: %s (%s)" % (
+            p["profile_url"], p["url_source"]))
+        lines.append("        platform_id: %s · source: %s" % (
+            p["platform_id"], p["source"]))
+        if p["link_grade"]:
+            lines.append("        link: %s / %s via %s (score %s)"
+                         % (p["link_grade"], p["link_status"],
+                            p["link_method"], p["link_score"]))
+        else:
+            lines.append("        link: no pair match on record "
+                         "(anchor link only)")
+        intel = p["intel"]
+        if intel is None:
+            lines.append("        intel: unknown (no profile-intel "
+                         "scan on record)")
+        else:
+            lines.append("        intel (scanned %s):"
+                         % intel["scanned_at"])
+            lines.append("          birthday: %s · country: %s"
+                         % (intel["birthday"], intel["country"]))
+            for theme in ("crypto", "health"):
+                ev = intel["%s_evidence" % theme]
+                gist = ""
+                if ev:
+                    gist = " — evidence: %s" % json.dumps(ev)[:200]
+                lines.append("          %s: %s%s"
+                             % (theme, intel[theme], gist))
+            lines.append("          direct friend of Brian: %s"
+                         % intel["direct_friend_of_brian"])
+            fstat = intel["field_status"] or {}
+            covered = ["%s=%s" % (k, (v or {}).get("status"))
+                       for k, v in sorted(fstat.items())]
+            if covered:
+                lines.append("          field coverage: %s"
+                             % ", ".join(covered))
+    for lk in card["lookalikes"]:
+        lines.append("  Lookalike flag: match %d grade %s status %s "
+                     "verdict %s (profiles %d <-> %d)" % (
+                         lk["match_id"], lk["grade"], lk["status"],
+                         lk["verdict"] or "unknown",
+                         lk["profile_a_id"], lk["profile_b_id"]))
+    comms = card["comms"]
+    if comms["thread_count"]:
+        lines.append("  Comms: %d thread(s); last activity %s"
+                     % (comms["thread_count"],
+                        comms["last_activity"] or "unknown"))
+        for row in comms["by_platform_type"]:
+            lines.append("    - %s / %s: %d thread(s), last %s" % (
+                row["platform"], row["thread_type"], row["threads"],
+                row["last_activity"] or "unknown"))
+    else:
+        lines.append("  Comms: unknown (no ingested threads on "
+                     "record for this person)")
+    lines.append("  Match queue: %d pair(s) pending Brian's review"
+                 % card["pending_pairs_count"])
+    for pp in card["pending_pairs"]:
+        lines.append("    - match %d (%s, %s, score %s) vs profile "
+                     "%d" % (pp["match_id"], pp["kind"], pp["grade"],
+                             pp["score"], pp["other_profile_id"]))
+    if card["intel_queue_pending"]:
+        lines.append("  Intel queue: %d pending case(s)"
+                     % len(card["intel_queue_pending"]))
+        for q in card["intel_queue_pending"]:
+            lines.append("    - #%d %s (%s)" % (
+                q["id"], q["reason"],
+                q.get("display_name_snapshot") or "unknown"))
+    return "\n".join(lines)
+
+
+def road_note(target, text):
+    """File Brian's road observation as an Intel Bridge capture.
+
+    target is a person_id (int-like string) or 'new'. The write goes
+    through the ecosystem's own capture mechanism
+    (tools/atlas/scattered_brain.capture) into
+    atlas.scattered_captures on ecosystem_central — the clerk files
+    it from there like any road capture. Returns the capture id."""
+    import datetime as _dt
+    target = str(target).strip()
+    person = None
+    profiles = []
+    if target.lower() != "new":
+        try:
+            person_id = int(target)
+        except ValueError:
+            raise SystemExit(
+                "road-note target must be a person_id or 'new', "
+                "got %r" % target)
+        conn = _dict_conn()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT * FROM people.identity_people WHERE id = %s",
+                (person_id,))
+            person = cur.fetchone()
+            if person is None:
+                raise SystemExit(
+                    "road-note: person %d not found" % person_id)
+            cur.execute(
+                "SELECT platform, handle, profile_url "
+                "FROM people.identity_profiles "
+                "WHERE person_id = %s ORDER BY platform, id",
+                (person_id,))
+            profiles = cur.fetchall()
+        finally:
+            conn.close()
+    today = _dt.date.today().isoformat()
+    if person is not None:
+        title = "RoadChat note — %s" % person["display_name"]
+        ctx_lines = [
+            "source: RoadChat (Brian, %s)" % today,
+            "kind: people/identity road note",
+            "person_id: %d" % person["id"],
+            "canonical_name: %s" % person["display_name"],
+            "breadth: %s profiles / %s platforms" % (
+                person.get("profile_count"),
+                person.get("platform_count")),
+        ]
+        for prof in profiles:
+            ctx_lines.append("profile: %s @%s %s" % (
+                prof["platform"], prof.get("handle") or "unknown",
+                prof.get("profile_url") or "unknown"))
+    else:
+        title = "RoadChat note — new person (not yet in identity " \
+                "layer)"
+        ctx_lines = [
+            "source: RoadChat (Brian, %s)" % today,
+            "kind: people/identity road note",
+            "target: new person — identity unknown, recorded as "
+            "UNKNOWN; the raw text below is the whole record until "
+            "the clerk/Brian identify them",
+        ]
+    atlas_dir = os.path.join(os.path.dirname(os.path.abspath(
+        __file__)), "..", "atlas")
+    if atlas_dir not in sys.path:
+        sys.path.insert(0, atlas_dir)
+    import scattered_brain
+    conn = scattered_brain.pg()
+    try:
+        cid = scattered_brain.capture(
+            conn, title, "\n".join(ctx_lines), text)
+    finally:
+        conn.close()
+    print("road note filed: capture #%d — %s" % (cid, title))
+    return cid
+
+
+
+def _selftest_lookup_card_roadnote(ck):
+    """DB fixture round-trip for lookup / card / road-note.
+
+    Creates a throwaway person + two profiles + a ruled match + one
+    intel row, exercises the three commands, then deletes every
+    fixture row (including the road-note capture). Follows the
+    ecosystem pattern: selftest rows are created, exercised, and
+    cleaned in the same pass."""
+    person_id = None
+    profile_ids = []
+    capture_id = None
+    conn = _dict_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO people.identity_people "
+            "(display_name, name_norm, brian_confirmed, "
+            "pinned_fields, profile_count, platform_count, "
+            "surface_count) VALUES (%s, %s, TRUE, %s::jsonb, 2, 2, "
+            "2) RETURNING id",
+            ("Fixture Lookup Person",
+             normalize_name("Fixture Lookup Person"),
+             json.dumps({"display_name": "Fixture Lookup Person"})))
+        person_id = cur.fetchone()["id"]
+        for platform, pid_, handle, url, usrc in (
+                ("facebook", "selftest-fix-1", "FixtureLookupFB",
+                 "https://www.facebook.com/fixturelookup", "source"),
+                ("instagram", "selftest-fix-2", "fixturelookupig",
+                 "https://www.instagram.com/fixturelookupig/",
+                 "composed")):
+            cur.execute(
+                "INSERT INTO people.identity_profiles "
+                "(person_id, platform, platform_id, handle, "
+                "handle_norm, display_name, profile_url, "
+                "url_source, source) VALUES (%s, %s, %s, %s, %s, "
+                "%s, %s, %s, 'selftest') RETURNING id",
+                (person_id, platform, pid_, handle,
+                 normalize_handle(handle), "Fixture Lookup Person",
+                 url, usrc))
+            profile_ids.append(cur.fetchone()["id"])
+        cur.execute(
+            "INSERT INTO people.identity_matches "
+            "(kind, profile_a_id, profile_b_id, score, grade, "
+            "signals, method, status, resolved_by) VALUES "
+            "('same_person', %s, %s, 1.0, 'CONFIRMED', %s::jsonb, "
+            "'brian', 'ruled_same', 'brian')",
+            (profile_ids[0], profile_ids[1],
+             json.dumps({"name_variants": [
+                 {"recorded": "Fixture Lookap",
+                  "platform": "facebook"}]})))
+        cur.execute(
+            "INSERT INTO people.comm_profile_intel "
+            "(profile_id, birthday, country, interest_signals, "
+            "field_status) VALUES (%s, '1990-01-02', "
+            "'United States', %s::jsonb, %s::jsonb)",
+            (profile_ids[0],
+             json.dumps({"crypto": {"status": "yes",
+                                    "evidence": ["own post: bitcoin"]},
+                         "health": {"status": "unknown",
+                                    "evidence": []}}),
+             json.dumps({"birthday": {"status": "ok"},
+                         "facebook_friend": {"status": "ok",
+                                             "value": True}})))
+        conn.commit()
+
+        by_surname = lookup_people("Lookup")
+        ck("lookup finds fixture person by surname",
+           any(e["kind"] == "person"
+               and e["person_id"] == person_id for e in by_surname))
+        by_handle = lookup_people("fixturelookupig")
+        ck("lookup finds fixture person by handle",
+           any(e["kind"] == "person" and e["person_id"] == person_id
+               and any("handle exact" in r for r in e["reasons"])
+               for e in by_handle))
+        by_partial = lookup_people("fixture look")
+        ck("lookup finds fixture person by partial name",
+           any(e["kind"] == "person" and e["person_id"] == person_id
+               for e in by_partial))
+
+        card = build_card(person_id=person_id)
+        text = render_card_text(card)
+        ck("card renders both profile URLs",
+           "https://www.facebook.com/fixturelookup" in text
+           and "https://www.instagram.com/fixturelookupig/" in text)
+        fb_card = next(p for p in card["profiles"]
+                       if p["platform"] == "facebook")
+        ig_card = next(p for p in card["profiles"]
+                       if p["platform"] == "instagram")
+        ck("card carries intel where present (birthday + crypto "
+           "yes with evidence)",
+           fb_card["intel"] is not None
+           and fb_card["intel"]["birthday"] == "1990-01-02"
+           and fb_card["intel"]["crypto"] == "yes"
+           and fb_card["intel"]["crypto_evidence"])
+        ck("card shows intel as unknown where absent (never "
+           "invented)",
+           ig_card["intel"] is None
+           and "unknown (no profile-intel scan on record)" in text)
+        ck("card shows pinned fields and preserved variants",
+           "Fixture Lookup Person" in text
+           and "Fixture Lookap" in text)
+
+        capture_id = road_note(str(person_id),
+                               "selftest road note fixture — "
+                               "delete on sight")
+        atlas_dir = os.path.join(os.path.dirname(
+            os.path.abspath(__file__)), "..", "atlas")
+        if atlas_dir not in sys.path:
+            sys.path.insert(0, atlas_dir)
+        import scattered_brain
+        sconn = scattered_brain.pg()
+        try:
+            scur = sconn.cursor()
+            scur.execute(
+                "SELECT raw_text, context FROM "
+                "atlas.scattered_captures WHERE id = %s",
+                (capture_id,))
+            row = scur.fetchone()
+            ck("road-note writes a capture that reads back with "
+               "person context",
+               row is not None
+               and "selftest road note fixture" in (row[0] or "")
+               and ("person_id: %d" % person_id) in (row[1] or ""))
+            scur.execute(
+                "DELETE FROM atlas.scattered_captures WHERE id = %s",
+                (capture_id,))
+            sconn.commit()
+            capture_id = None
+        finally:
+            sconn.close()
+    finally:
+        try:
+            cur = conn.cursor()
+            if profile_ids:
+                cur.execute(
+                    "DELETE FROM people.identity_matches "
+                    "WHERE profile_a_id = ANY(%s) "
+                    "OR profile_b_id = ANY(%s)",
+                    (profile_ids, profile_ids))
+                cur.execute(
+                    "DELETE FROM people.comm_profile_intel "
+                    "WHERE profile_id = ANY(%s)", (profile_ids,))
+                cur.execute(
+                    "DELETE FROM people.identity_profiles "
+                    "WHERE id = ANY(%s)", (profile_ids,))
+            if person_id:
+                cur.execute(
+                    "DELETE FROM people.identity_people "
+                    "WHERE id = %s", (person_id,))
+            conn.commit()
+        finally:
+            conn.close()
+    ck("lookup/card/road-note fixtures cleaned up",
+       person_id is not None and capture_id is None)
+
+
 # ------------------------------------------------------------ selftest
 
 def selftest():
@@ -2157,6 +2883,14 @@ def selftest():
                           "https://facebook.com/from.source"})
        == (None, "already_set"))
 
+    # Lookup / card / road-note (DB fixtures, created,
+    # exercised, and cleaned up in the same pass).
+    try:
+        _selftest_lookup_card_roadnote(ck)
+    except Exception as exc:  # noqa: BLE001
+        ck("lookup/card/road-note DB fixtures raised %s"
+           % exc, False)
+
     failed = [name for name, ok in checks if not ok]
     for name, ok in checks:
         print(f"  {'PASS' if ok else 'FAIL'}  {name}")
@@ -2188,6 +2922,21 @@ def main():
                         help="write back Brian's ruled_same ruling "
                              "for two profile ids (100% confident: "
                              "link + correct/pin canonical name)")
+    parser.add_argument("--lookup", metavar="QUERY",
+                        help="ranked candidate search over people "
+                             "+ profiles by name or handle")
+    parser.add_argument("--card", type=int,
+                        metavar="ID",
+                        help="full person card for a person_id "
+                             "(falls back to profile_id); add "
+                             "--json for machine form")
+    parser.add_argument("--json", action="store_true",
+                        help="JSON output for --lookup / --card")
+    parser.add_argument("--road-note", metavar="PERSON_ID|new",
+                        help="file Brian's road observation as an "
+                             "Intel Bridge capture (needs --text)")
+    parser.add_argument("--text", metavar="TEXT",
+                        help="observation text for --road-note")
     parser.add_argument("--rule-different", nargs=2, type=int,
                         metavar=("PROFILE_A", "PROFILE_B"),
                         help="write back Brian's ruled_different "
@@ -2210,6 +2959,26 @@ def main():
         show_stats()
     elif args.backfill_profile_urls:
         backfill_profile_urls()
+    elif args.lookup:
+        if args.json:
+            print(json.dumps(lookup_people(args.lookup),
+                             indent=1))
+        else:
+            show_lookup(args.lookup)
+    elif args.card is not None:
+        card = build_card(person_id=args.card)
+        if card.get("error"):
+            card = build_card(profile_id=args.card)
+        if args.json:
+            print(json.dumps(card, indent=1))
+        else:
+            print(render_card_text(card))
+        if card.get("error"):
+            raise SystemExit(1)
+    elif args.road_note:
+        if not args.text:
+            parser.error("--road-note requires --text")
+        road_note(args.road_note, args.text)
     elif args.selftest:
         selftest()
     else:

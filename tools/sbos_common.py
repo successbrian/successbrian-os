@@ -588,3 +588,122 @@ if __name__ == "__main__":
     if "--selftest" in sys.argv:
         sys.exit(selftest())
     print(__doc__)
+
+
+# ------------------------------------------------------- morpheus queue
+# ONE common Morpheus work queue (Brian, 2026-11-08: "everything
+# in the ecosystem that is making all these 'morpheus' jobs...
+# we need one common morpheus work queue"). Every producer of
+# Morpheus work — Sonic's Ecosystem Bible jobs, the clerk's
+# preparation tier, packet plain-head restating, board
+# drafting — enqueues here through these functions. A producer
+# with its own private Morpheus queue is drift.
+
+MORPHEUS_QUEUE_DDL = """
+CREATE TABLE IF NOT EXISTS successbrian_os.morpheus_queue (
+    id BIGSERIAL PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    source_ref TEXT,
+    priority INT NOT NULL DEFAULT 100,
+    status TEXT NOT NULL DEFAULT 'queued'
+        CHECK (status IN ('queued', 'claimed', 'done',
+                          'failed', 'cancelled')),
+    claimed_by TEXT,
+    claimed_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    result TEXT
+);
+CREATE INDEX IF NOT EXISTS morpheus_queue_open_idx
+    ON successbrian_os.morpheus_queue (status, priority,
+                                        created_at);
+"""
+
+
+def morpheus_enqueue(created_by: str, kind: str, title: str,
+                     payload=None, source_ref: str = "",
+                     priority: int = 100) -> int:
+    """Queue one Morpheus job in the ONE common queue; returns
+    its id. created_by names the producer (sonic / clerk /
+    packet-builder / board / ...); kind names the work family
+    (bible-compliance / packet-head / prep / drafting / ...)."""
+    import json as _json
+    pg_exec(MORPHEUS_QUEUE_DDL)
+    return pg_one(
+        """INSERT INTO successbrian_os.morpheus_queue
+             (created_by, kind, title, payload, source_ref,
+              priority, status)
+           VALUES (%s, %s, %s, %s::jsonb, %s, %s, 'queued')
+           RETURNING id""",
+        (created_by, kind, title,
+         _json.dumps(payload or {}), source_ref or None,
+         int(priority)))
+
+
+def morpheus_claim(worker: str, kinds=None, limit: int = 1):
+    """Atomically claim queued Morpheus jobs (FOR UPDATE SKIP
+    LOCKED — parallel Morpheus instances never get the same
+    row). Returns a list of job dicts, oldest + highest
+    priority first."""
+    import json as _json
+    pg_exec(MORPHEUS_QUEUE_DDL)
+    sql = ("UPDATE successbrian_os.morpheus_queue "
+           "SET status = 'claimed', claimed_by = %s, "
+           "claimed_at = now() WHERE id IN "
+           "(SELECT id FROM successbrian_os.morpheus_queue "
+           "WHERE status = 'queued'")
+    params = [worker]
+    if kinds:
+        sql += " AND kind = ANY(%s)"
+        params.append(list(kinds))
+    sql += (" ORDER BY priority, created_at LIMIT %s "
+            "FOR UPDATE SKIP LOCKED) RETURNING id, created_by, "
+            "kind, title, payload, source_ref, priority")
+    params.append(int(limit))
+    out = []
+    for r in pg_rows(sql, tuple(params)):
+        payload = r[4]
+        if isinstance(payload, str):
+            try:
+                payload = _json.loads(payload)
+            except Exception:
+                payload = {}
+        out.append({"id": int(r[0]), "created_by": r[1],
+                    "kind": r[2], "title": r[3],
+                    "payload": payload or {},
+                    "source_ref": r[5] or "",
+                    "priority": int(r[6])})
+    return out
+
+
+def morpheus_finish(job_id: int, result: str = "",
+                    ok: bool = True) -> None:
+    """Finish a claimed Morpheus job: done (or failed) with its
+    result recorded. The result survives the worker — the
+    queue is the record."""
+    pg_exec(
+        """UPDATE successbrian_os.morpheus_queue
+              SET status = %s, result = %s, finished_at = now()
+            WHERE id = %s""",
+        ("done" if ok else "failed", (result or "")[:20000],
+         int(job_id)))
+
+
+def morpheus_release(job_id: int) -> None:
+    """Put a claimed job back to queued (worker unavailable)."""
+    pg_exec(
+        "UPDATE successbrian_os.morpheus_queue "
+        "SET status = 'queued', claimed_by = NULL, "
+        "claimed_at = NULL WHERE id = %s",
+        (int(job_id),))
+
+
+def morpheus_stats() -> dict:
+    """Open/done counts by status — the queue's vital signs."""
+    pg_exec(MORPHEUS_QUEUE_DDL)
+    return {r[0]: int(r[1]) for r in pg_rows(
+        "SELECT status, count(*) FROM "
+        "successbrian_os.morpheus_queue GROUP BY status")}

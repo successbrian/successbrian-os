@@ -376,6 +376,132 @@ def job_bible(args=None):
     return [task_key]
 
 
+def _biblecheck_problems():
+    """The checkable Ecosystem Bible SOPs, matched against the
+    clerk's own hourly routine. Returns (problems, notes) —
+    problems are compliance violations; notes are honest
+    readings that are not violations (yet)."""
+    problems, notes = [], []
+    rows = _pg_rows(
+        "SELECT count(*) FROM successbrian_os.wf3_filings "
+        "WHERE kind = 'price' AND workspace_slug <> "
+        "'db:price_intel'")
+    if rows and rows[0][0]:
+        problems.append(
+            f"placement test violated: {rows[0][0]} price "
+            f"filing(s) homed as documents — prices are "
+            f"database state (price_intel), never documents")
+    rows = _pg_rows(
+        "SELECT count(*) FROM successbrian_os.wf3_filings "
+        "WHERE attached_asset IS NOT NULL AND valid_until "
+        "IS NOT NULL")
+    if rows and rows[0][0]:
+        problems.append(
+            f"forever rule violated: {rows[0][0]} attached "
+            f"filing(s) still carry an expiry — attached intel "
+            f"does not expire")
+    rows = _pg_rows(
+        "SELECT to_regclass('public.second_brain') IS NULL "
+        "AND to_regclass('altair.second_brain') IS NOT NULL")
+    if not (rows and rows[0][0]):
+        problems.append(
+            "one-second-brain violated: the merged brain is "
+            "not the only second_brain table")
+    import os as _os
+    import time as _time
+    log = _os.path.expanduser("~/logs/clerk-reconcile.log")
+    try:
+        age = _time.time() - _os.path.getmtime(log)
+        if age > 4500:
+            problems.append(
+                f"cadence law violated: reconcile + integrity "
+                f"last ran {int(age // 60)} minutes ago — "
+                f"hourly work must run hourly")
+    except OSError:
+        problems.append(
+            "cadence law violated: no reconcile + integrity "
+            "run log exists — hourly work is not running")
+    rows = _pg_rows(
+        "SELECT count(*) FROM successbrian_os.wf3_filings "
+        "WHERE attached_asset IS NOT NULL AND superseded_by "
+        "IS NOT NULL AND archived_at IS NULL")
+    if rows and rows[0][0]:
+        problems.append(
+            f"retention lifecycle violated: {rows[0][0]} "
+            f"superseded attached filing(s) not archived — "
+            f"used-but-superseded is archived, never deleted, "
+            f"never left serving")
+    bible = _bible_problems()
+    if bible is None:
+        notes.append("Bible workspace itself unverifiable "
+                     "this hour (a store is unavailable)")
+    elif bible:
+        problems.append(
+            "the Bible workspace itself shows drift: "
+            + "; ".join(bible))
+    return problems, notes
+
+
+def job_biblecheck(args=None):
+    """Hourly Bible compliance: match everything the clerk is doing this hour against the Ecosystem Bible SOPs; drift kicks aside to Altair once a day. Detect only."""
+    problems, notes = _biblecheck_problems()
+    for n in notes:
+        print(f"biblecheck note: {n}")
+    if not problems:
+        print("biblecheck: the clerk's hourly work matches "
+              "the Ecosystem Bible (placement, forever rule, "
+              "one brain, hourly cadence, retention lifecycle) "
+              "— in compliance")
+        return []
+    task_key = (f"task:clerk-biblecheck-"
+                f"{date.today().isoformat()}")
+    existing = _pg_rows(
+        "SELECT node_key FROM atlas.nodes WHERE node_key = %s "
+        "AND status = 'queued'", (task_key,))
+    if existing:
+        print(f"biblecheck: {len(problems)} compliance "
+              f"problem(s) already kicked aside today as "
+              f"{task_key} — not duplicated")
+        return []
+    details = {
+        "question": (
+            "WORKFLOW #2 KICK-ASIDE from the clerk's hourly "
+            "Bible-compliance check (Brian, 2026-11-08: the "
+            "clerk matches up everything it is doing that hour "
+            "to make sure it's all in compliance with the "
+            "Ecosystem Bible). PROBLEMS: "
+            + "; ".join(problems)
+            + f". Read by clerk.py job_biblecheck on "
+            f"{datetime.now().astimezone().isoformat(timespec='seconds')}. "
+            f"Altair: bring the clerk's routine back into "
+            f"compliance through the owning machinery. The "
+            f"clerk detected this only — it does not grade or "
+            f"fix itself."),
+        "theme": "wf2-bible-compliance",
+        "found_by": "clerk-biblecheck",
+    }
+    if args and "--dry-run" in args:
+        print(f"biblecheck [dry-run]: would kick aside "
+              f"{task_key}: {'; '.join(problems)}")
+        return []
+    import subprocess as _sp
+    import json as _json
+    r = _sp.run(
+        ["python3", scatter_clerk.ATLAS_PY, "add-node", task_key,
+         "atlas_task",
+         (f"Bible compliance: clerk hourly work out of line "
+          f"— {problems[0]}")[:180],
+         "--status", "queued", "--details",
+         _json.dumps(details)],
+        capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"biblecheck: kick-aside FAILED: "
+              f"{r.stderr[:200]}")
+        return []
+    print(f"biblecheck: {len(problems)} compliance problem(s) "
+          f"kicked aside as {task_key}")
+    return [task_key]
+
 def job_sweep(_args=None):
     """The hourly look at the Intel Bridge: sort everything new."""
     state = scatter_clerk.load_state()
@@ -400,19 +526,26 @@ def job_sweep(_args=None):
     # helps maintain the core-required Bible workspace;
     # drift kicks aside to WF2 from this hourly check.
     bible_kicks = job_bible()
+    # Hourly Bible compliance (Brian, 2026-11-08): the clerk
+    # matches everything it is doing this hour against the
+    # Ecosystem Bible SOPs.
+    biblecheck_kicks = job_biblecheck()
     metrics = {
         "captures_in": captures_in,
         "board_filed": len(keys),
         "sent_altair": len(kicked) + len(blogqa_kicks)
-                       + len(bible_kicks),
+                       + len(bible_kicks)
+                       + len(biblecheck_kicks),
         "bounced": 0,
         "filed_kept": len(kept),
         "rechecks_sent": len(rechecks),
         "blog_qa_kickasides": len(blogqa_kicks),
         "bible_kickasides": len(bible_kicks),
+        "biblecheck_kickasides": len(biblecheck_kicks),
     }
     write_checkin(len(keys) + len(kicked) + len(rechecks)
-                  + len(blogqa_kicks) + len(bible_kicks),
+                  + len(blogqa_kicks) + len(bible_kicks)
+                  + len(biblecheck_kicks),
                   metrics)
 
 
@@ -1120,6 +1253,7 @@ JOBS = {
     "integrity": job_integrity,
     "blogqa": job_blogqa,
     "bible": job_bible,
+    "biblecheck": job_biblecheck,
     "package": job_package,
 }
 

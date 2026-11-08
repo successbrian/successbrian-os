@@ -56,8 +56,34 @@ DB_NAME = os.environ.get("SBOS_DB", "ecosystem_central")
 # Local model endpoints (llama.cpp servers on k11-alpha).
 SONIC_URL = os.environ.get("SONIC_URL", "http://127.0.0.1:11439/v1/chat/completions")
 SONIC_MODEL = os.environ.get("SONIC_MODEL", "qwen3.6")
+MORPHEUS_MODEL = os.environ.get("MORPHEUS_MODEL", "morpheus")
+PENNY_MODEL = os.environ.get("PENNY_MODEL", "penny")
 MORPHEUS_URL = os.environ.get("MORPHEUS_URL", "http://127.0.0.1:11437/v1/chat/completions")
 PENNY_URL = os.environ.get("PENNY_URL", "http://127.0.0.1:11438/v1/chat/completions")
+
+# Sonic KV tiers (Brian, 2026-11-08): chat with Altair keeps the
+# server's 96K KV. AUTOMATED tasks size their context by need —
+# 16K standard, 32K deep — enforced as prompt budgets at the
+# caller (one server has one per-slot KV size; the cost driver is
+# tokens actually processed). New automated Sonic callers should
+# pass their prompt through budget_prompt() at their tier.
+SONIC_KV_CHAT = 96000
+SONIC_KV_AUTO = 16000
+SONIC_KV_AUTO_DEEP = 32000
+
+
+def budget_prompt(text, tier_tokens=SONIC_KV_AUTO):
+    """Trim a prompt to a KV tier budget (rough 4 chars/token),
+    keeping the head and tail — the caller's framing usually sits
+    at both ends. Returns the (possibly trimmed) prompt."""
+    cap = int(tier_tokens) * 4
+    if text is None or len(text) <= cap:
+        return text
+    head = cap * 2 // 3
+    tail = cap - head
+    return (text[:head]
+            + "\n[... trimmed to the automated-task KV budget ...]\n"
+            + text[-tail:])
 
 
 # ---------------------------------------------------------------- basics
@@ -757,10 +783,13 @@ CREATE TABLE IF NOT EXISTS {table} (
     claimed_by TEXT,
     claimed_at TIMESTAMPTZ,
     finished_at TIMESTAMPTZ,
+    attempts INT NOT NULL DEFAULT 0,
     result TEXT
 );
 CREATE INDEX IF NOT EXISTS {name}_open_idx
     ON {table} (status, priority, created_at);
+ALTER TABLE {table}
+    ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0;
 """
 
 
@@ -817,7 +846,7 @@ def engine_job_claim(engine: str, worker: str, kinds=None,
         params.append(list(kinds))
     sql += (" ORDER BY priority, created_at LIMIT %s "
             "FOR UPDATE SKIP LOCKED) RETURNING id, created_by, "
-            "kind, title, payload, source_ref, priority")
+            "kind, title, payload, source_ref, priority, attempts")
     params.append(int(limit))
     out = []
     for r in pg_rows(sql, tuple(params)):
@@ -831,7 +860,8 @@ def engine_job_claim(engine: str, worker: str, kinds=None,
                     "kind": r[2], "title": r[3],
                     "payload": payload or {},
                     "source_ref": r[5] or "",
-                    "priority": int(r[6])})
+                    "priority": int(r[6]),
+                    "attempts": int(r[7] or 0)})
     return out
 
 
@@ -855,6 +885,85 @@ def engine_job_release(engine: str, job_id: int) -> None:
         f"UPDATE {table} SET status = 'queued', "
         f"claimed_by = NULL, claimed_at = NULL WHERE id = %s",
         (int(job_id),))
+
+
+TIMEOUT_MAX_ATTEMPTS = 3
+
+
+def _tier_down_payload(payload):
+    """Budget a job payload's prompt one KV tier DOWN for a
+    retry (Sonic failure-reduction, Brian 2026-11-08): a prompt
+    above the 16K standard tier is re-budgeted TO 16K; a prompt
+    already at/under 16K stays as it is (16K is the floor).
+    Handles both payload shapes: {prompt: ...} and
+    {messages: [{content: ...}]}."""
+    import copy as _copy
+    out = _copy.deepcopy(payload or {})
+    cap = SONIC_KV_AUTO * 4
+    if isinstance(out.get("prompt"), str) \
+            and len(out["prompt"]) > cap:
+        out["prompt"] = budget_prompt(out["prompt"],
+                                      SONIC_KV_AUTO)
+    msgs = out.get("messages")
+    if isinstance(msgs, list):
+        for m in msgs:
+            if isinstance(m, dict) \
+                    and isinstance(m.get("content"), str) \
+                    and len(m["content"]) > cap:
+                m["content"] = budget_prompt(m["content"],
+                                             SONIC_KV_AUTO)
+    return out
+
+
+def engine_job_timeout_retry(engine: str, job_id: int,
+                             max_attempts: int =
+                             TIMEOUT_MAX_ATTEMPTS) -> str:
+    """A claimed job whose run TIMED OUT is not a failure —
+    it is unfinished work (Brian's failure-reduction build,
+    2026-11-08; the 2026-11-08 baseline was timeouts stamped
+    terminal: sonic 11/19 failed, morpheus 18/28 failed).
+    Release it back to 'queued' with its attempt counted and
+    its prompt tiered down one tier, so the retry is smaller
+    than the run that timed out. After max_attempts timed-out
+    attempts the job fails loudly. Returns 'requeued' or
+    'failed'. Shared by all four engine queues through this
+    core; who CLAIMS a queue stays each engine's own affair
+    (no alpha runner claims REAP jobs)."""
+    import json as _json
+    table = ENGINE_JOB_TABLES[engine]
+    pg_exec(_engine_queue_ddl(table))
+    rows = pg_rows(
+        f"SELECT attempts, payload FROM {table} WHERE id = %s",
+        (int(job_id),))
+    if not rows:
+        return "failed"
+    attempts, payload = int(rows[0][0] or 0), rows[0][1]
+    if isinstance(payload, str):
+        try:
+            payload = _json.loads(payload)
+        except Exception:
+            payload = {}
+    new_attempts = attempts + 1
+    if new_attempts >= int(max_attempts):
+        engine_job_finish(
+            engine, job_id,
+            "timed out after %d attempts" % int(max_attempts),
+            ok=False)
+        pg_exec(
+            f"UPDATE {table} SET attempts = %s WHERE id = %s",
+            (new_attempts, int(job_id)))
+        return "failed"
+    pg_exec(
+        f"""UPDATE {table}
+               SET status = 'queued', claimed_by = NULL,
+                   claimed_at = NULL, attempts = %s,
+                   payload = %s::jsonb, result = %s
+             WHERE id = %s""",
+        (new_attempts, _json.dumps(_tier_down_payload(payload)),
+         "timed out (attempt %d of %d) — requeued with the "
+         "prompt budgeted one tier down"
+         % (new_attempts, int(max_attempts)), int(job_id)))
+    return "requeued"
 
 
 def engine_job_stats(engine: str) -> dict:

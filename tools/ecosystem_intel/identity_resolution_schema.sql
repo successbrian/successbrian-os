@@ -73,6 +73,15 @@ CREATE INDEX IF NOT EXISTS idx_identity_profiles_person
 CREATE INDEX IF NOT EXISTS idx_identity_profiles_platform
     ON people.identity_profiles (platform);
 
+-- Profile-URL provenance (Brian, 2026-11-08: "store the profile
+-- url's for me to look up"): url_source='source' means the URL
+-- arrived with the data; 'composed' means
+-- --backfill-profile-urls built it from a canonical pattern.
+-- This module's own table only; the breadth-column ALTER above
+-- is the precedent followed.
+ALTER TABLE people.identity_profiles
+    ADD COLUMN IF NOT EXISTS url_source TEXT;
+
 CREATE TABLE IF NOT EXISTS people.identity_matches (
     id           BIGSERIAL PRIMARY KEY,
     kind         TEXT NOT NULL CHECK (kind IN ('same_person', 'lookalike_risk')),

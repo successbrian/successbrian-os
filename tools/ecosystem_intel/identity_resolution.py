@@ -59,6 +59,16 @@ NOTES:
       SAME PERSON, self-chosen variant spelling confined to the
       Facebook vanity username (ZLoesher1); the Instagram handle
       (zloescher1) and both display names spell Loescher correctly.
+    - Profile URLs (Brian, 2026-11-08: store the profile
+      url's for me to look up): --backfill-profile-urls fills
+      ONLY NULL profile_url values from canonical patterns
+      (facebook/messenger numeric FBID ->
+      facebook.com/profile.php?id=..., vanity handle ->
+      facebook.com/<handle>, instagram ->
+      instagram.com/<handle>/, threads ->
+      threads.net/@<handle>). Composed URLs are marked
+      url_source='composed'; URLs that arrived with the data
+      are url_source='source' and are never overwritten.
     - Life-event classification from bio diffs is keyword rules,
       honestly labeled method='rules-v1'. An LLM classifier is a
       later upgrade, not a silent assumption.
@@ -72,6 +82,7 @@ CLI:
     python3 identity_resolution.py --queue
     python3 identity_resolution.py --stats
     python3 identity_resolution.py --selftest
+    python3 identity_resolution.py --backfill-profile-urls
     python3 identity_resolution.py --rule-same <profile_id> <profile_id>
     python3 identity_resolution.py --rule-different <profile_id> <profile_id>
 
@@ -1115,6 +1126,144 @@ def import_profiles(path):
             "skipped": skipped, "snapshots": snapshots}
 
 
+
+# ---------------------------------------------------- profile URLs
+
+def compose_profile_url(profile):
+    """Compose the canonical lookup URL for a profile from the
+    identifiers the row already holds. Returns (url, None) or
+    (None, reason). Only patterns that are certain are composed;
+    anything else stays NULL and is reported as unfillable - a URL
+    is never invented (Brian, 2026-11-08: store the profile URLs
+    so he can look people up)."""
+    platform = canonical_platform(_get(profile, "platform"))
+    pid = _get(profile, "platform_id")
+    pid = str(pid).strip() if pid is not None else None
+    handle = _get(profile, "handle", "handle_norm", "username")
+    handle = str(handle).strip().lstrip("@") if handle else None
+    if platform in ("facebook", "messenger"):
+        # Messenger ids live in the Facebook FBID namespace (proven
+        # 2026-11-08: Messenger participant ids equal Facebook
+        # profile ids), so both compose to facebook.com URLs.
+        if pid and pid.isdigit():
+            return (f"https://www.facebook.com/profile.php?id={pid}",
+                    None)
+        if handle:
+            return (f"https://www.facebook.com/{handle}", None)
+        if pid:
+            return (f"https://www.facebook.com/{pid}", None)
+        return (None, "no platform_id or handle on the row")
+    if platform == "instagram":
+        if handle:
+            return (f"https://www.instagram.com/{handle}/", None)
+        return (None, "instagram numeric id has no canonical "
+                      "public profile URL")
+    if platform == "threads":
+        if handle:
+            return (f"https://www.threads.net/@{handle}", None)
+        return (None, "threads numeric id has no canonical "
+                      "public profile URL")
+    if platform == "telegram":
+        if handle:
+            return (f"https://t.me/{handle}", None)
+        return (None, "no handle on the row")
+    if platform == "x":
+        if handle:
+            return (f"https://x.com/{handle}", None)
+        return (None, "no handle on the row")
+    if platform == "tiktok":
+        if handle:
+            return (f"https://www.tiktok.com/@{handle}", None)
+        return (None, "no handle on the row")
+    if platform == "youtube":
+        if handle:
+            return (f"https://www.youtube.com/@{handle}", None)
+        return (None, "no handle on the row")
+    if platform == "linkedin":
+        if handle:
+            return (f"https://www.linkedin.com/in/{handle}", None)
+        return (None, "no handle on the row")
+    return (None, f"no canonical public profile URL for "
+                  f"platform '{platform}'")
+
+
+def plan_url_fill(profile):
+    """Decide the backfill action for one profile row. A row that
+    already carries a profile_url is NEVER filled over - a URL that
+    arrived from a source wins over a composed one."""
+    if _get(profile, "profile_url"):
+        return (None, "already_set")
+    return compose_profile_url(profile)
+
+
+def backfill_profile_urls():
+    """Fill NULL profile_url values with composed canonical URLs
+    (Brian, 2026-11-08). Idempotent: only NULL rows are touched,
+    every UPDATE re-checks profile_url IS NULL, existing URLs are
+    marked url_source='source' and composed ones 'composed', so a
+    composed URL is never confused with one that came from data."""
+    conn = _dict_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("ALTER TABLE people.identity_profiles "
+                    "ADD COLUMN IF NOT EXISTS url_source TEXT")
+        cur.execute("UPDATE people.identity_profiles "
+                    "SET url_source = 'source' "
+                    "WHERE profile_url IS NOT NULL "
+                    "AND url_source IS NULL")
+        marked_source = cur.rowcount
+        cur.execute(
+            "SELECT platform, count(*) AS total, "
+            "count(profile_url) AS with_url "
+            "FROM people.identity_profiles GROUP BY platform")
+        before = {row["platform"]: row for row in cur.fetchall()}
+        cur.execute("SELECT id, platform, platform_id, handle, "
+                    "handle_norm, profile_url "
+                    "FROM people.identity_profiles "
+                    "WHERE profile_url IS NULL ORDER BY id")
+        rows = cur.fetchall()
+        filled = defaultdict(int)
+        unfillable = defaultdict(int)
+        reasons = defaultdict(int)
+        for row in rows:
+            url, reason = plan_url_fill(row)
+            if url is None:
+                unfillable[row["platform"]] += 1
+                reasons[reason] += 1
+                continue
+            cur.execute("UPDATE people.identity_profiles "
+                        "SET profile_url = %s, "
+                        "url_source = 'composed' "
+                        "WHERE id = %s AND profile_url IS NULL",
+                        (url, row["id"]))
+            if cur.rowcount:
+                filled[row["platform"]] += 1
+        conn.commit()
+        cur.execute(
+            "SELECT platform, count(*) AS total, "
+            "count(profile_url) AS with_url "
+            "FROM people.identity_profiles GROUP BY platform")
+        after = {row["platform"]: row for row in cur.fetchall()}
+    finally:
+        conn.close()
+    print(f"profile-url backfill: {marked_source} existing URLs "
+          f"marked url_source='source'")
+    for platform in sorted(set(before) | set(after)):
+        b = before.get(platform, {"total": 0, "with_url": 0})
+        a = after.get(platform, {"total": 0, "with_url": 0})
+        print(f"  {platform}: {a['with_url']}/{a['total']} with URL "
+              f"(was {b['with_url']}; filled "
+              f"{filled.get(platform, 0)}, unfillable "
+              f"{unfillable.get(platform, 0)})")
+    for reason, count in sorted(reasons.items()):
+        print(f"  unfillable: {count} x {reason}")
+    print(f"profile-url backfill: {sum(filled.values())} URLs "
+          f"composed, {sum(unfillable.values())} left NULL")
+    return {"filled": dict(filled),
+            "unfillable": dict(unfillable),
+            "marked_source": marked_source}
+
+
 # ------------------------------------------------------------- resolve
 
 def _pair_key(id_a, id_b):
@@ -1969,6 +2118,45 @@ def selftest():
        sandy_breadth[13]["profile_count"] == 3
        and sandy_breadth[13]["platform_count"] == 2)
 
+    # Profile-URL composition (Brian, 2026-11-08: store the URLs
+    # so he can look people up). plan_url_fill never touches a row
+    # that already carries a URL - source data wins over composed.
+    ck("url compose: facebook numeric id -> profile.php",
+       compose_profile_url({"platform": "facebook",
+                            "platform_id": "100011414759603"})
+       == ("https://www.facebook.com/profile.php?id=100011414759603",
+           None))
+    ck("url compose: facebook vanity handle",
+       compose_profile_url({"platform": "facebook",
+                            "handle": "ZLoesher1"})
+       == ("https://www.facebook.com/ZLoesher1", None))
+    ck("url compose: messenger id lives in the FBID namespace",
+       compose_profile_url({"platform": "messenger",
+                            "platform_id": "61593899171921"})
+       == ("https://www.facebook.com/profile.php?id=61593899171921",
+           None))
+    ck("url compose: instagram handle",
+       compose_profile_url({"platform": "instagram",
+                            "handle": "zloescher1"})
+       == ("https://www.instagram.com/zloescher1/", None))
+    ck("url compose: threads handle",
+       compose_profile_url({"platform": "threads",
+                            "handle": "successbrian"})
+       == ("https://www.threads.net/@successbrian", None))
+    ck("url compose: whatsapp has no canonical public profile URL",
+       compose_profile_url({"platform": "whatsapp",
+                            "platform_id": "15551234567"})[0] is None)
+    ck("url compose: instagram numeric id alone is unfillable",
+       compose_profile_url({"platform": "instagram",
+                            "platform_id": "17841451315998885"})[0]
+       is None)
+    ck("url fill: an existing URL is never overwritten",
+       plan_url_fill({"platform": "facebook",
+                      "platform_id": "100011414759603",
+                      "profile_url":
+                          "https://facebook.com/from.source"})
+       == (None, "already_set"))
+
     failed = [name for name, ok in checks if not ok]
     for name, ok in checks:
         print(f"  {'PASS' if ok else 'FAIL'}  {name}")
@@ -1990,6 +2178,11 @@ def main():
     parser.add_argument("--queue", action="store_true")
     parser.add_argument("--stats", action="store_true")
     parser.add_argument("--selftest", action="store_true")
+    parser.add_argument("--backfill-profile-urls",
+                        action="store_true",
+                        help="fill NULL profile_url values with "
+                             "composed canonical URLs (never "
+                             "overwrites an existing URL)")
     parser.add_argument("--rule-same", nargs=2, type=int,
                         metavar=("PROFILE_A", "PROFILE_B"),
                         help="write back Brian's ruled_same ruling "
@@ -2015,6 +2208,8 @@ def main():
         show_queue()
     elif args.stats:
         show_stats()
+    elif args.backfill_profile_urls:
+        backfill_profile_urls()
     elif args.selftest:
         selftest()
     else:

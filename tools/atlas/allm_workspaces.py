@@ -1640,6 +1640,10 @@ RELATIONSHIPS = [
     ("console-room", "chicago-tardis", "near",
      "Sibling event bodies: Brian's annual convention "
      "and his annual Chicago trip."),
+    ("ecosystem-bible", "successbrian-os", "documents",
+     "R42: the Ecosystem Bible documents how the whole "
+     "ecosystem runs — the operator's ecosystem-wide SOPs "
+     "and governance (Brian, 2026-11-08)."),
     ("business-goals", "successbrian-os", "enables",
      "R29: goals drive SuccessBrian OS to build the "
      "systems that manage the daily chaos (Brian, "

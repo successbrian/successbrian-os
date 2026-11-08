@@ -4,7 +4,7 @@ Second-brain writer for SuccessBrian OS.
 
 PURPOSE:
     Record durable learnings to the agent second brain
-    (ecosystem_central.second_brain on k11-alpha): every fact carries
+    (altair.second_brain in ecosystem_central on k11-alpha — the ONE second-brain table since the 2026-11-08 merge): every fact carries
     confidence, expiry, and verification so stale knowledge can't silently
     poison agent reasoning.
 
@@ -86,11 +86,12 @@ def _build_sql(topic: str, content: str, category: str = "learning",
                verification: str = "", expires_days: int | None = 90,
                tags: list[str] | None = None) -> str:
     expires = (f"now() + interval '{int(expires_days)} days'"
-               if expires_days else "NULL")
+               if expires_days
+               else "now() + interval '90 days'")
     tags_sql = ("ARRAY[" + ",".join(f"'{esc(t)}'" for t in (tags or [])) + "]"
                 if tags else "NULL")
     return (
-        "INSERT INTO second_brain "
+        "INSERT INTO altair.second_brain "
         "(topic, category, content, confidence, source, verification, "
         "expires_at, tags) VALUES "
         f"('{esc(topic)}', '{esc(category)}', '{esc(content)}', "

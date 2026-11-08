@@ -23,7 +23,7 @@ CALLED BY
 NOTES
     - Sources (PostgreSQL on k11-alpha via the kssh pipe pattern; never nest
       single quotes in a kssh -c arg — see AGENTS.md):
-        1. public.second_brain      (learnings/decisions, 455+ rows)
+        1. altair.second_brain      (the one merged second-brain table since 2026-11-08)
         2. altair.brian_decisions   (62+ rows: question/context/answer)
         3. altair.brian_learnings   (77+ rows: content)
         4. altair.research_digest   (100+ rows: topic/title/summary/signal)
@@ -148,7 +148,7 @@ def build_pairs(wanted_sources):
             "ecosystem_central",
             "SELECT id, topic, category, content, confidence, "
             "COALESCE(array_to_string(tags, ','),'') AS tags "
-            "FROM public.second_brain ORDER BY id;",
+            "FROM altair.second_brain ORDER BY id;",
         ):
             rid = str(r["id"])
             topic, content = clean(r["topic"]), clean(r["content"])

@@ -22,7 +22,7 @@ CALLED BY
       smarter as new content lands.
 
 SOURCES
-    second_brain : the second-brain table (Postgres public.second_brain,
+    second_brain : the second-brain table (Postgres altair.second_brain,
                    or a SQLite .db export when ref ends in .db).
     anythingllm  : a directory of AnythingLLM document JSONs
                    (storage/documents/.../*.json).
@@ -92,7 +92,7 @@ def _rows(sql, variables=None):
 # ---------------------------------------------------------------- readers
 
 def read_second_brain(ref, limit):
-    """ref: Postgres table (public.second_brain) or a SQLite .db path."""
+    """ref: Postgres table (altair.second_brain) or a SQLite .db path."""
     chunks = []
     if ref.endswith(".db"):
         con = sqlite3.connect(ref)

@@ -117,9 +117,9 @@ def kb_to_dealsdesk(message, urgency="routine"):
 
 def learn(topic, content, tags):
     return int(psql(
-        "INSERT INTO public.second_brain "
-        "(topic, category, content, confidence, source, verification, tags) "
-        "VALUES (%s,'intake',%s,'high','people_intake','dispatched discovery',%s) "
+        "INSERT INTO altair.second_brain "
+        "(topic, category, content, confidence, source, verification, tags, expires_at) "
+        "VALUES (%s,'intake',%s,'high','people_intake','dispatched discovery',%s, now() + interval '90 days') "
         "RETURNING id;" % (lit(topic), lit(content), lit("{%s}" % ",".join(tags)))))
 
 

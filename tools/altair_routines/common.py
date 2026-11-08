@@ -87,9 +87,10 @@ def sb_log(topic, content, category="observation", confidence="medium",
            source="altair-routines", tags=("altair-routines",)):
     """Append one record to the second brain (local psql, k11 only)."""
     tag_arr = "ARRAY[" + ",".join(f"'{sq(t)}'" for t in tags) + "]::text[]"
-    sql = (f"INSERT INTO second_brain (topic, category, content, confidence, "
-           f"source, tags) VALUES ('{sq(topic)}', '{sq(category)}', "
-           f"'{sq(content)}', '{sq(confidence)}', '{sq(source)}', {tag_arr});")
+    sql = (f"INSERT INTO altair.second_brain (topic, category, content, confidence, "
+           f"source, tags, expires_at) VALUES ('{sq(topic)}', '{sq(category)}', "
+           f"'{sq(content)}', '{sq(confidence)}', '{sq(source)}', {tag_arr}, "
+           f"now() + interval '90 days');")
     try:
         r = subprocess.run(PSQL + ["-c", sql],
                            capture_output=True, text=True, timeout=30)

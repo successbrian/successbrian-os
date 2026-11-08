@@ -366,13 +366,15 @@ def _fix_brain(item, via_link_only=False, c=None):
         c.commit()
         row = brain_row(c, item["brain_topic"])
         return bool(row) and item["canonical_id"] in (row["tags"] or [])
-    # NOTE (found live 2026-10-25): tools/second_brain.py writes
-    # public.second_brain, while Brian's ecosystem-first lookup
-    # order names altair.second_brain as the second brain. The two
-    # tables are a house inconsistency (ticketed by the reconcile
-    # run that found it). Until the house settles it, the index
-    # treats altair.second_brain as the brain of record — the table
-    # Brian named — and writes there with the sink's own fields.
+    # NOTE (found live 2026-10-25; SETTLED by Brian
+    # 2026-11-08): two tables once claimed the second-brain
+    # name. Brian ruled "merge them into one table": all
+    # 1,943 public.second_brain rows were merged into
+    # altair.second_brain (1,931 new, 12 exact duplicates),
+    # every writer/reader was repointed to altair, and the
+    # public table was renamed to an archive. altair.second_
+    # brain is the one second brain; the index writes there
+    # with the sink's own fields.
     cur = c.cursor()
     try:
         cur.execute(

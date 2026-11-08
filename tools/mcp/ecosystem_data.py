@@ -70,7 +70,7 @@ def second_brain_search(query: str, limit: int = 10) -> str:
     q = _like_escape(query)
     rows, err = _psql(
         "SELECT topic, left(content, 300), confidence, created_at"
-        " FROM public.second_brain"
+        " FROM altair.second_brain"
         " WHERE topic ILIKE '%%%s%%' ESCAPE '\\'"
         "    OR content ILIKE '%%%s%%' ESCAPE '\\'"
         " ORDER BY created_at DESC LIMIT %d;" % (q, q, limit))

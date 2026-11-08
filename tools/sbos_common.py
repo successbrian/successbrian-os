@@ -910,103 +910,50 @@ def sonic_finish(job_id, result="", ok=True):
 
 
 # ------------------------------------------------------ Lyra's table
-# Brian, 2026-11-08: everything in the ecosystem comes and
-# writes to Lyra's table; she sees by reading her table. This
-# is her perception layer — the ruled replacement for the old
-# "Lyra sees everything" line. Table:
-# successbrian_os.lyra_table. Anyone may WRITE; Lyra's passes
-# READ (unread, priority order) and mark handled. Writing is
-# one function so every producer leaves the same-shaped row.
-
-_LYRA_DDL = """
-CREATE TABLE IF NOT EXISTS successbrian_os.lyra_table (
-    id BIGSERIAL PRIMARY KEY,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    writer TEXT NOT NULL,
-    kind TEXT NOT NULL DEFAULT 'note',
-    title TEXT NOT NULL,
-    body TEXT NOT NULL DEFAULT '',
-    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-    source_ref TEXT NOT NULL DEFAULT '',
-    priority INT NOT NULL DEFAULT 100,
-    status TEXT NOT NULL DEFAULT 'unread' CHECK
-        (status IN ('unread','read','handled','archived')),
-    read_at TIMESTAMPTZ,
-    handled_at TIMESTAMPTZ,
-    handle_note TEXT NOT NULL DEFAULT '');
-CREATE INDEX IF NOT EXISTS lyra_table_unread_idx
-    ON successbrian_os.lyra_table (status, priority, id)
-    WHERE status = 'unread'"""
-
-
-def lyra_ensure():
-    """Create Lyra's table if missing (idempotent)."""
-    pg_exec(_LYRA_DDL)
-
+# THE Lyra table is successbrian_os.clerk_checkins — settled
+# by Brian 2026-10-26 (the common table ruled 2026-10-25:
+# everything reports in to Lyra; she doesn't go running
+# around looking). pulse() above is its write path. The
+# helpers here are thin named views for callers who think in
+# Lyra terms. A duplicate successbrian_os.lyra_table was
+# built 2026-11-08 by mistake (name-search miss) and folded
+# into clerk_checkins the same night on Brian's ruling; it
+# survives renamed as lyra_table_folded_archive_20261108.
 
 def lyra_write(writer: str, kind: str, title: str, body: str = "",
                payload=None, source_ref: str = "",
-               priority: int = 100) -> int:
-    """Write one row to Lyra's table; returns the row id.
-    This is how anything in the ecosystem gets into Lyra's
-    sight: it writes here, she reads here."""
-    import json as _json
-    lyra_ensure()
-    return pg_one(
-        "INSERT INTO successbrian_os.lyra_table "
-        "(writer, kind, title, body, payload, source_ref, "
-        "priority) VALUES (%s,%s,%s,%s,%s::jsonb,%s,%s) "
-        "RETURNING id",
-        (writer, kind, title, body,
-         _json.dumps(payload or {}), source_ref, priority))
+               priority: int = 100) -> bool:
+    """Write to Lyra's table (clerk_checkins) via pulse().
+    kind / source_ref / priority / payload ride in the row's
+    metrics; title (+ body) is the message. Returns True when
+    the row landed."""
+    metrics = {"kind": kind, "source_ref": source_ref,
+               "priority": priority}
+    if payload:
+        metrics["payload"] = payload
+    message = title if not body else f"{title} — {body}"
+    return pulse(writer, message, metrics)
 
 
-def lyra_read(limit: int = 10, kinds=None) -> list:
-    """Lyra's sight: claim the oldest unread rows (priority,
-    then id) and mark them read, atomically."""
-    lyra_ensure()
-    sql = ("UPDATE successbrian_os.lyra_table SET "
-           "status='read', read_at=now() WHERE id IN "
-           "(SELECT id FROM successbrian_os.lyra_table "
-           "WHERE status='unread'")
+def lyra_recent(limit: int = 10, source: str = "") -> list:
+    """Lyra's sight, read as ruled: the latest rows in her
+    table (presence), newest first. Absence is judged by the
+    callers against each publisher's expected rhythm."""
+    sql = ("SELECT id, created_at, source, message, metrics "
+           "FROM successbrian_os.clerk_checkins")
     params = []
-    if kinds:
-        sql += " AND kind = ANY(%s)"
-        params.append(list(kinds))
-    sql += (" ORDER BY priority, id FOR UPDATE SKIP LOCKED "
-            "LIMIT %s) RETURNING id, writer, kind, title, body, "
-            "payload, source_ref, priority")
+    if source:
+        sql += " WHERE source = %s"
+        params.append(source)
+    sql += " ORDER BY id DESC LIMIT %s"
     params.append(int(limit))
-    out = []
-    for r in pg_rows(sql, tuple(params)):
-        payload = r[5]
-        if isinstance(payload, str):
-            import json as _json
-            try:
-                payload = _json.loads(payload)
-            except Exception:
-                payload = {}
-        out.append({
-            "id": r[0], "writer": r[1], "kind": r[2],
-            "title": r[3], "body": r[4],
-            "payload": payload or {}, "source_ref": r[6],
-            "priority": r[7]})
-    return out
-
-
-def lyra_handled(row_id: int, note: str = ""):
-    """Mark a row Lyra has read as handled (her digest/work
-    on it is done), with an optional note."""
-    n = pg_exec(
-        "UPDATE successbrian_os.lyra_table SET "
-        "status='handled', handled_at=now(), handle_note=%s "
-        "WHERE id=%s AND status='read'", (note, row_id))
-    return n == 1
+    return [{"id": r[0], "created_at": r[1], "source": r[2],
+             "message": r[3], "metrics": r[4] or {}}
+            for r in pg_rows(sql, tuple(params))]
 
 
 def lyra_stats() -> dict:
-    """Row counts by status — is her table flowing or piling
-    up unread?"""
+    """Row counts by publisher (source) in Lyra's table."""
     return dict(pg_rows(
-        "SELECT status, count(*) FROM "
-        "successbrian_os.lyra_table GROUP BY status"))
+        "SELECT source, count(*) FROM "
+        "successbrian_os.clerk_checkins GROUP BY source"))

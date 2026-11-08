@@ -718,10 +718,18 @@ def morpheus_stats() -> dict:
 # to create work for any engine. Tables:
 # successbrian_os.{morpheus,penny,reap}_queue.
 
+# WHO CREATES: any utilized engine can create jobs for any
+# other engine through these queues (Brian, 2026-11-08: when
+# REAP is utilized, as part of what it does, it can also
+# create Sonic, Morpheus, and Penny jobs, as well as jobs for
+# other models). Sonic is the standing top-of-hour creator,
+# not the only creator; created_by always names the actual
+# creator, and a new engine joins by adding one map entry.
 ENGINE_JOB_TABLES = {
     "morpheus": "successbrian_os.morpheus_queue",
     "penny": "successbrian_os.penny_queue",
     "reap": "successbrian_os.reap_queue",
+    "sonic": "successbrian_os.sonic_queue",
 }
 
 
@@ -862,3 +870,17 @@ def reap_claim(worker, kinds=None, limit=1):
 
 def reap_finish(job_id, result="", ok=True):
     return engine_job_finish("reap", job_id, result, ok)
+
+
+def sonic_enqueue(created_by, kind, title, payload=None,
+                  source_ref="", priority=100):
+    return engine_job_enqueue("sonic", created_by, kind, title,
+                              payload, source_ref, priority)
+
+
+def sonic_claim(worker, kinds=None, limit=1):
+    return engine_job_claim("sonic", worker, kinds, limit)
+
+
+def sonic_finish(job_id, result="", ok=True):
+    return engine_job_finish("sonic", job_id, result, ok)

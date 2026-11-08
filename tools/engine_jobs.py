@@ -23,7 +23,7 @@ import sys
 sys.path.insert(0, os.path.expanduser("~/successbrian-os/tools"))
 import sbos_common as sc  # noqa: E402
 
-ENGINES = ("morpheus", "penny", "reap")
+ENGINES = ("morpheus", "penny", "reap", "sonic")
 
 
 def main():

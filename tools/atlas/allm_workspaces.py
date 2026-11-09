@@ -710,6 +710,18 @@ ECOSYSTEM_BIBLE_SUBJECTS = ["ecosystembible",
                             "ecosystemsop",
                             "ecosystemgovernance"]
 
+# Compound-subject routing for the abdul-el-sayed dossier
+# body (Brian, 2026-11-09): filings ABOUT him carry titles
+# like "Abdul El-Sayed Muslim Brotherhood", which match no
+# owner string — the same failure R42 fixed for the Bible.
+# _norm strips everything non-alphanumeric, so the
+# forms below are spaceless (built by concatenation to
+# keep them exact). "elsayed" alone is his surname and
+# catches every fuller form.
+EL_SAYED_SUBJECTS = ["abdul" "elsayed",
+                     "abdulrahman" "elsayed",
+                     "elsayed"]
+
 # Audiences being built (R11). Each gets a SPACE (mandatory);
 # a competitive-research sibling is ruled per audience.
 # space=None records a known gap the audit reports until
@@ -1340,7 +1352,8 @@ SEGMENTS = {
                    "sam-altman", "dario-amodei",
                    "jensen-huang", "lisa-su",
                    "pallab-ghosal", "joel-therien",
-                   "lisa-demuth", "mike-lindell"],
+                   "lisa-demuth", "mike-lindell",
+                   "abdul-el-sayed"],
     },
     "platforms": {
         "character": "Platforms and operating systems "
@@ -2162,6 +2175,24 @@ REGISTRY = [
      "live",
      "Named by Brian 2026-10-23 (tracked people batch). "
      "Created in AnythingLLM 2026-10-23 via the API."),
+    ("abdul-el-sayed", "domain",
+     "Tracked public figure - Abdul El-Sayed", None,
+     "Dossier: Abdul El-Sayed (U.S. Senator-elect from "
+     "Michigan, first Muslim elected to the U.S. Senate) "
+     "- sourced public record of his Islamic affiliations, "
+     "statements and network, and of positions/statements "
+     "critics characterize as anti-American, with "
+     "fact-checks, his own responses, and debunked claims "
+     "filed beside the allegations.",
+     "Public-figure dossier material lands here (R19). "
+     "Every entry is evidence-graded (verified / reported "
+     "/ alleged / debunked) with a named source and date. "
+     "Not a relationship body.",
+     "live",
+     "Named by Brian 2026-11-09: keep records of his "
+     "Islamic and potentially anti-American activities in "
+     "a political AnythingLLM workspace. Created in "
+     "AnythingLLM 2026-11-09 via the API."),
     ("anthropic", "domain",
      "Tracked company — Anthropic", None,
      "Dossier: Anthropic (AI company, the Claude model "
@@ -3133,6 +3164,20 @@ def determine(conn, subject, category=None):
                        "ecosystem-wide SOP body — the "
                        "core-required Ecosystem Bible "
                        "workspace (Brian, 2026-11-08)."}
+    # El-Sayed dossier routing (Brian, 2026-11-09): a subject
+    # naming Abdul El-Sayed routes to his tracked-figure body,
+    # including compound subjects — checked before owner-text
+    # matching for the same reason as the R42 block above.
+    _elsayed_row = next((r for r in rows
+                         if r[0] == "abdul-el-sayed"), None)
+    if _elsayed_row and any(ph in subj
+                            for ph in EL_SAYED_SUBJECTS):
+        return {"verdict": "existing",
+                "workspace": "abdul-el-sayed",
+                "status": _elsayed_row[6],
+                "why": "The subject names Abdul El-Sayed — his "
+                       "tracked-figure dossier body (R19; Brian, "
+                       "2026-11-09)."}
     # R1/R3: the subject's own workspace. An EXACT slug match
     # outranks every owner-text match, globally — otherwise a
     # subject named inside another workspace's owner string

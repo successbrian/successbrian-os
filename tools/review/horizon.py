@@ -1150,7 +1150,77 @@ def health_language_clean(text):
 # ---------------------------------------------------------------------------
 # 6. CONTENT CHAIN — weekly movement visits -> contacts -> revenue.
 # Dry tributaries are reported dry (known gaps, named).
+#
+# THE TWO QUESTIONS (Brian, 2026-11-10): every blog also gets two
+# verdicts computed from the record — Q1 AUDIENCE (contacts
+# captured trend from blog_scorecards: present / rising / flat /
+# none) and Q2 SELLING (the promoted thing from the blogs
+# record + offers/revenue recorded: present / none). Data gaps
+# print as gaps — the scorecard tributary has been dry since
+# 2026-10-29, so today most verdicts honestly read "no data".
 # ---------------------------------------------------------------------------
+def audience_verdict(period_rows):
+    """period_rows: [(period_start, contacts_captured|None)],
+    oldest first. Returns (verdict, detail) in words."""
+    if not period_rows:
+        return ("no data",
+                "no scorecard rows — the blog has never been "
+                "measured")
+    vals = [c for (_p, c) in period_rows if c is not None]
+    if not vals:
+        return ("no data",
+                "scorecard rows exist (%d) but contacts were "
+                "never recorded in them" % len(period_rows))
+    if len(vals) == 1:
+        return ("present",
+                "contacts recorded in the only measured "
+                "period: %s (no trend yet — one period)"
+                % vals[0])
+    if vals[-1] > vals[0]:
+        return ("rising",
+                "contacts %s -> %s across %d recorded periods"
+                % (vals[0], vals[-1], len(vals)))
+    if vals[-1] < vals[0]:
+        return ("falling",
+                "contacts %s -> %s across %d recorded periods"
+                % (vals[0], vals[-1], len(vals)))
+    return ("flat",
+            "contacts steady at %s across %d recorded periods"
+            % (vals[-1], len(vals)))
+
+
+def selling_verdict(thing, revenue_vals, aff_programs,
+                    layer_rows):
+    """(thing = blogs.promoted_thing, revenue_vals = recorded
+    revenue_cents values, aff_programs = [(program, status)],
+    layer_rows = [(layer_key, state)]). Returns (verdict,
+    detail) in words."""
+    rev = [v for v in revenue_vals if v is not None]
+    if rev and sum(rev) > 0:
+        return ("present",
+                "revenue recorded: %d cents total across %d "
+                "period(s); thing on record: %s"
+                % (sum(rev), len(rev), thing or "none named"))
+    live_aff = [p for (p, s) in aff_programs
+                if s not in ("unknown",)]
+    live_layers = [k for (k, s) in layer_rows
+                   if s not in ("unknown",)]
+    if live_aff or live_layers:
+        return ("offers recorded — revenue not recorded",
+                "thing on record: %s; affiliate program rows "
+                "with a state: %d; monetization layers with a "
+                "state: %d; revenue_cents recorded: %s"
+                % (thing or "none named", len(live_aff),
+                   len(live_layers),
+                   ("sum %d cents" % sum(rev)) if rev
+                   else "none"))
+    return ("none recorded",
+            "thing on record: %s; no affiliate program or "
+            "monetization layer carries a state, and no "
+            "revenue is recorded"
+            % (thing or "none named"))
+
+
 def content_chain():
     today = R.now_ct().date()
     cov = []
@@ -1243,10 +1313,54 @@ def content_chain():
                 "live_blogs": [{"slug": r[0], "ramp_stage": r[1]}
                                for r in live]}
 
+    def two_questions():
+        blogs = pg_rows(
+            "SELECT slug, promoted_thing, audience FROM "
+            "campaignsdesk.blogs ORDER BY slug")
+        scores = {}
+        for r in pg_rows(
+                "SELECT blog_slug, period_start, "
+                "contacts_captured, revenue_cents FROM "
+                "campaignsdesk.blog_scorecards ORDER BY "
+                "blog_slug, period_start"):
+            scores.setdefault(r[0], []).append(
+                (r[1], r[2], r[3]))
+        aff = {}
+        for r in pg_rows(
+                "SELECT blog_slug, program_name, status FROM "
+                "campaignsdesk.blog_affiliate_programs"):
+            aff.setdefault(r[0], []).append((r[1], r[2]))
+        layers = {}
+        for r in pg_rows(
+                "SELECT blog_slug, layer_key, state FROM "
+                "campaignsdesk.blog_monetization_layers"):
+            layers.setdefault(r[0], []).append((r[1], r[2]))
+        out = []
+        for (slug, thing, aud) in blogs:
+            srows = scores.get(slug, [])
+            av, ad = audience_verdict(
+                [(p, c) for (p, c, _rv) in srows])
+            sv, sd = selling_verdict(
+                thing, [rv for (_p, _c, rv) in srows],
+                aff.get(slug, []), layers.get(slug, []))
+            out.append({"blog": slug, "thing": thing,
+                        "audience_named": aud,
+                        "audience": av, "audience_detail": ad,
+                        "selling": sv, "selling_detail": sd})
+        return {"blogs": out,
+                "note": "Brian's two questions per blog "
+                        "(2026-11-10): does it find an "
+                        "audience, does it sell that audience "
+                        "something — computed from "
+                        "blog_scorecards + the blogs record; "
+                        "dry tributaries print as gaps"}
+
     rep["scorecards"] = _attempt(cov, "content:scorecards", scorecards)
     rep["reach"] = _attempt(cov, "content:reach", reach)
     rep["clicks"] = _attempt(cov, "content:clicks", clicks)
     rep["ramp_stages"] = _attempt(cov, "content:stages", stages)
+    rep["two_questions"] = _attempt(
+        cov, "content:two_questions", two_questions)
     return rep
 
 
@@ -1271,6 +1385,16 @@ def content_text(rep):
     st = rep.get("ramp_stages") or {}
     L.append(f"  ramp stages: {st.get('distribution')}")
     L.append(f"  live blogs: {st.get('live_blogs')}")
+    tq = rep.get("two_questions") or {}
+    L.append("  TWO QUESTIONS — per blog (Brian's test: find an "
+             "audience, sell them something)")
+    for b in tq.get("blogs") or []:
+        L.append(f"    {b['blog']}: AUDIENCE {b['audience']} — "
+                 f"{b['audience_detail']}")
+        L.append(f"    {b['blog']}: SELLING {b['selling']} — "
+                 f"{b['selling_detail']}")
+    if tq.get("note"):
+        L.append(f"  note: {tq['note']}")
     for c in rep["coverage"]:
         if not c["ok"]:
             L.append(f"  GAP source {c['source']}: {c.get('note', '')}")
@@ -2382,6 +2506,38 @@ def horizon_selftest():
           rep["flow"]["board_packets"]["total"] > 0)
     check("coherence motion shares computed",
           rep["priority"]["motion_by_goal"]["window_days"] == 7)
+    # Brian's Two Questions (2026-11-10) — content-chain
+    # verdicts: pure cases first, then the live section.
+    check("two-questions: no scorecard rows read no data",
+          audience_verdict([])[0] == "no data")
+    check("two-questions: NULL contacts read no data honestly",
+          audience_verdict([("2026-10-01", None)])[0]
+          == "no data")
+    check("two-questions: one recorded period reads present",
+          audience_verdict([("2026-10-01", 12)])[0]
+          == "present")
+    check("two-questions: growth reads rising",
+          audience_verdict([("2026-10-01", 3),
+                            ("2026-11-01", 9)])[0] == "rising")
+    check("two-questions: steady reads flat",
+          audience_verdict([("2026-10-01", 5),
+                            ("2026-11-01", 5)])[0] == "flat")
+    check("two-questions: recorded revenue reads present",
+          selling_verdict("Thing", [0, 1500], [], [])[0]
+          == "present")
+    check("two-questions: planned offers, no revenue, worded",
+          selling_verdict("Thing", [None],
+                          [("GMKtec direct", "planned")],
+                          [])[0].startswith("offers recorded"))
+    check("two-questions: nothing anywhere reads none recorded",
+          selling_verdict(None, [], [], [])[0]
+          == "none recorded")
+    crep = content_chain()
+    check("two-questions: content-chain carries the section",
+          bool((crep.get("two_questions") or {}).get("blogs")))
+    check("two-questions: fleet blogs all get verdicts",
+          len((crep.get("two_questions") or {}).get(
+              "blogs") or []) >= 30)
     print("selftest horizon: "
           f"{'ALL PASS' if ok and rc == 0 else 'FAILURES PRESENT'}")
     return 0 if (ok and rc == 0) else 1

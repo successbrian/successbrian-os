@@ -3318,8 +3318,14 @@ _ROUTE_STOP = set(
 
 
 def _route_tokens(text):
-    return [t for t in re.findall(r"[a-z0-9]+", (text or "").lower())
-            if len(t) >= 3 and t not in _ROUTE_STOP]
+    out = []
+    for t in re.findall(r"[a-z0-9]+", (text or "").lower()):
+        if len(t) < 3 or t in _ROUTE_STOP:
+            continue
+        if len(t) > 4 and t.endswith("s"):
+            t = t[:-1]
+        out.append(t)
+    return out
 
 
 def _body_vocab(row):
@@ -3348,7 +3354,7 @@ def route_subject(conn, subject, extra_text="", blog_slug=None):
     extra_c = Counter(_route_tokens(extra_text))
 
     def occ(t):
-        return min(subj_c.get(t, 0), 3) * 2 + min(extra_c.get(t, 0), 3)
+        return min(subj_c.get(t, 0), 3) * 2 + min(extra_c.get(t, 0), 2)
 
     scored = []
     for r in rows:
@@ -3358,9 +3364,21 @@ def route_subject(conn, subject, extra_text="", blog_slug=None):
         v = vocabs[slug]
         score = 0.0
         hits = []
-        if v["slug"] and all(t in subj_c for t in v["slug"]):
+        # SUBJECT-side evidence: the subject itself must point at
+        # the body (its full slug phrase, >=2 of its slug terms,
+        # a single-term slug, or an owner term) — body text alone
+        # can corroborate but never carry a route. (Learned on
+        # the 2026-11-09 dry-run: multi-topic digests and old-era
+        # fragments accumulated enough stray terms to misroute.)
+        subj_slug_hits = [t for t in set(v["slug"]) if t in subj_c]
+        subject_hit = False
+        if v["slug"] and len(subj_slug_hits) == len(set(v["slug"])):
             score += 6.0
+            subject_hit = True
             hits.append("subject names the body (%s)" % slug)
+        elif len(subj_slug_hits) >= 2 or \
+                (len(set(v["slug"])) == 1 and subj_slug_hits):
+            subject_hit = True
         for t in set(v["slug"]):
             n = occ(t)
             if n and df.get(t, 99) <= 4:
@@ -3370,22 +3388,35 @@ def route_subject(conn, subject, extra_text="", blog_slug=None):
             n = occ(t)
             if n and df.get(t, 99) <= 3:
                 score += 1.0 * n
+                if t in subj_c and df.get(t, 99) <= 2:
+                    # Only a DISTINCTIVE owner term is subject
+                    # evidence; a generic one ('digest') must
+                    # not carry a route by itself.
+                    subject_hit = True
                 hits.append("owner term '%s'" % t)
+        purpose_score = 0.0
         for t in set(v["purpose"]):
             n = min(subj_c.get(t, 0), 2) * 2 + min(extra_c.get(t, 0), 2)
             if n and df.get(t, 99) <= 2:
-                score += 0.5 * n
+                purpose_score += 0.5 * n
+        score += min(purpose_score, 2.0)
         if blog_slug and slug == blog_slug:
-            score += 8.0
+            # The clerk's blog match is corroboration, not
+            # subject evidence on its own: a multi-topic digest
+            # can contain a blog's beat without belonging to
+            # that blog (the [RPT-*] digests vs the driving
+            # blog, dry-run 2026-11-09). The body still needs
+            # its own subject-side evidence to win.
+            score += 5.0
             hits.append("clerk blog-context match")
         if score > 0:
-            scored.append((score, slug, hits))
+            scored.append((score, slug, hits, subject_hit))
     scored.sort(key=lambda x: (-x[0], x[1]))
-    cands = [(sl, round(sc, 1)) for sc, sl, _ in scored[:3]]
+    cands = [(sl, round(sc, 1)) for sc, sl, _, _h in scored[:3]]
     if scored:
         top = scored[0]
         second = scored[1][0] if len(scored) > 1 else 0.0
-        if top[0] >= 8.0 and top[0] > second:
+        if top[0] >= 8.0 and top[0] > second and top[3]:
             row = next(r for r in rows if r[0] == top[1])
             return {"verdict": "existing", "workspace": top[1],
                     "status": row[6],
@@ -3710,6 +3741,13 @@ def _embed_map(conn):
                      "Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=60) as resp:
             resp.read()
+        try:
+            import allm_embed as _ae
+            _ae.register_catalog("successbrian-os",
+                                 "workspace-map.md",
+                                 "Workspace map")
+        except Exception:
+            pass
         return "map: uploaded + embedded in successbrian-os"
     except Exception as exc:  # the map is gravy; the graph is not
         return "map: FAILED (%s) — graph wiring unaffected" % exc
@@ -3832,6 +3870,18 @@ def _upload_embed(slug, fname, text, key):
     loc = payload["documents"][0]["location"]
     _allm_post("/api/v1/workspace/%s/update-embeddings" % slug,
                {"adds": [loc], "deletes": []}, key)
+    # EMBED AND INDEX ARE ONE ACT (2026-11-09 filing-flow
+    # repair): catalog-register every embed this helper makes.
+    try:
+        import allm_embed as _ae
+        _t = None
+        for _ln in (text or "").splitlines():
+            if _ln.startswith("# "):
+                _t = _ln[2:].strip()[:200]
+                break
+        _ae.register_catalog(slug, fname, _t)
+    except Exception:
+        pass
 
 
 def cmd_plan(conn, argv):

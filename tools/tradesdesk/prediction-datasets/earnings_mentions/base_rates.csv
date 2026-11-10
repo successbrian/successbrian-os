@@ -1,0 +1,505 @@
+company,word,min_mentions,times_offered,times_yes,base_rate,distinct_calls
+AAPL,app store margin,1,1,0,0.0,1
+AAPL,apple intelligence,1,2,2,1.0,2
+AAPL,apple pay,1,4,3,0.75,4
+AAPL,apple silicon,1,1,1,1.0,1
+AAPL,augmented reality /ar,1,1,0,0.0,1
+AAPL,battery life,1,1,1,1.0,1
+AAPL,broadcom,1,1,1,1.0,1
+AAPL,china,1,5,5,1.0,5
+AAPL,chipset,1,1,0,0.0,1
+AAPL,creator,1,1,0,0.0,1
+AAPL,creator studio,1,3,2,0.667,3
+AAPL,ecosystem,1,1,1,1.0,1
+AAPL,fold / folding / foldable,1,3,0,0.0,3
+AAPL,formula 1 / f1,1,5,5,1.0,5
+AAPL,friday night baseball,1,1,0,0.0,1
+AAPL,gemini,1,3,0,0.0,3
+AAPL,glasses,1,1,0,0.0,1
+AAPL,hedge,1,1,0,0.0,1
+AAPL,icloud,1,1,1,1.0,1
+AAPL,india / indian,1,1,1,1.0,1
+AAPL,intelligence,1,1,1,1.0,1
+AAPL,ipad,1,1,1,1.0,1
+AAPL,iphone,1,1,1,1.0,1
+AAPL,iphone 18,1,1,0,0.0,1
+AAPL,liquid glass,1,3,0,0.0,3
+AAPL,loyalty,1,1,1,1.0,1
+AAPL,m3,1,5,0,0.0,5
+AAPL,mac,1,1,1,1.0,1
+AAPL,macbook,1,1,1,1.0,1
+AAPL,manufacturing,1,5,5,1.0,5
+AAPL,modem,1,5,2,0.4,5
+AAPL,openai / chatgpt,1,1,0,0.0,1
+AAPL,privacy,1,2,2,1.0,2
+AAPL,regulation / regulator / regulatory,1,2,1,0.5,2
+AAPL,retail footprint,1,1,0,0.0,1
+AAPL,satellite,1,1,0,0.0,1
+AAPL,service,1,1,1,1.0,1
+AAPL,services,1,1,1,1.0,1
+AAPL,severance,1,2,1,0.5,2
+AAPL,share repurchase / share buy-back / share buyback,1,1,1,1.0,1
+AAPL,shutdown / shut down,1,1,0,0.0,1
+AAPL,siri,1,5,5,1.0,5
+AAPL,sleep apnea,1,1,0,0.0,1
+AAPL,sport,1,1,1,1.0,1
+AAPL,streaming,1,5,1,0.2,5
+AAPL,supply chain,1,1,1,1.0,1
+AAPL,tariff,1,4,4,1.0,4
+AAPL,the studio,1,1,1,1.0,1
+AAPL,trump,1,1,0,0.0,1
+AAPL,upgrade cycle,1,1,0,0.0,1
+AAPL,vision,1,1,1,1.0,1
+AAPL,vision pro,1,1,1,1.0,1
+AAPL,wearable,1,4,4,1.0,4
+AAPL,wearables,1,1,1,1.0,1
+AAPL,widget,1,4,0,0.0,4
+AAPL,wwdc,1,1,1,1.0,1
+AMD,agentic ai,1,1,1,1.0,1
+AMD,ai chip,1,2,0,0.0,2
+AMD,automotive,1,1,1,1.0,1
+AMD,automotive / automobile,1,1,1,1.0,1
+AMD,buyback,1,1,0,0.0,1
+AMD,china,1,2,2,1.0,2
+AMD,chiplet,1,1,0,0.0,1
+AMD,cloud,1,1,1,1.0,1
+AMD,custom silicon,1,1,0,0.0,1
+AMD,data center,1,1,1,1.0,1
+AMD,embedded,1,1,1,1.0,1
+AMD,epyc,1,1,1,1.0,1
+AMD,export restriction,1,1,1,1.0,1
+AMD,export restriction / export control,1,1,1,1.0,1
+AMD,frontier,1,2,2,1.0,2
+AMD,gaming,1,1,1,1.0,1
+AMD,gpu,1,1,1,1.0,1
+AMD,gpu shortage,1,1,0,0.0,1
+AMD,graphic,1,1,1,1.0,1
+AMD,healthcare,1,1,1,1.0,1
+AMD,helios,1,1,1,1.0,1
+AMD,hpc,1,2,2,1.0,2
+AMD,hpc / high-performance computing,1,1,1,1.0,1
+AMD,inference,1,1,1,1.0,1
+AMD,inference / inferencing,1,1,1,1.0,1
+AMD,inventory,1,1,1,1.0,1
+AMD,memory / hbm,1,1,1,1.0,1
+AMD,meta,1,2,1,0.5,2
+AMD,mi300,1,1,1,1.0,1
+AMD,mi300x,1,1,0,0.0,1
+AMD,mi450 / mi455x,1,1,1,1.0,1
+AMD,microsoft / azure,1,1,1,1.0,1
+AMD,milan,1,1,0,0.0,1
+AMD,nvidia,1,2,0,0.0,2
+AMD,openai,1,1,1,1.0,1
+AMD,oracle,1,1,1,1.0,1
+AMD,pc / personal computer,1,1,1,1.0,1
+AMD,reddit,1,1,0,0.0,1
+AMD,rocm,1,2,2,1.0,2
+AMD,supply chain,1,1,1,1.0,1
+AMD,triton,1,1,0,0.0,1
+AMD,tsmc,1,2,0,0.0,2
+AMD,venice,1,1,1,1.0,1
+AMD,xilinx,1,1,1,1.0,1
+AMZN,advertising,1,1,1,1.0,1
+AMZN,alexa,1,1,1,1.0,1
+AMZN,alexa+ / alexa plus,1,5,5,1.0,5
+AMZN,amazon bedrock,1,1,1,1.0,1
+AMZN,amazon leo / project kuiper,1,1,1,1.0,1
+AMZN,anthropic,1,1,1,1.0,1
+AMZN,aws / amazon web services,1,2,2,1.0,2
+AMZN,china,1,4,0,0.0,4
+AMZN,content,1,1,1,1.0,1
+AMZN,data center,1,3,3,1.0,3
+AMZN,delivery,1,1,1,1.0,1
+AMZN,drone,1,3,0,0.0,3
+AMZN,emerging country,1,1,1,1.0,1
+AMZN,emission,1,1,0,0.0,1
+AMZN,fulfillment network,1,1,1,1.0,1
+AMZN,gen-ai / gen ai / generative ai,1,2,2,1.0,2
+AMZN,gen-ai / generative ai,1,3,3,1.0,3
+AMZN,grocery,1,1,0,0.0,1
+AMZN,grocery delivery,1,1,0,0.0,1
+AMZN,headcount,1,1,0,0.0,1
+AMZN,inflation,1,1,1,1.0,1
+AMZN,inventory management,1,1,0,0.0,1
+AMZN,iran / middle east,1,1,1,1.0,1
+AMZN,labor costs,1,1,0,0.0,1
+AMZN,labor market,1,1,1,1.0,1
+AMZN,layoff / job cuts,1,1,0,0.0,1
+AMZN,live sports,1,4,4,1.0,4
+AMZN,machine learning,1,1,0,0.0,1
+AMZN,marketplace,1,1,1,1.0,1
+AMZN,openai,1,3,3,1.0,3
+AMZN,operating margin,1,2,2,1.0,2
+AMZN,pharmaceutical,1,1,0,0.0,1
+AMZN,pharmaceutical / pharma,1,1,0,0.0,1
+AMZN,physical store,1,1,1,1.0,1
+AMZN,pinterest,1,1,1,1.0,1
+AMZN,prime day,1,6,5,0.833,6
+AMZN,prime video,1,2,2,1.0,2
+AMZN,project kuiper,1,4,2,0.5,4
+AMZN,reacher,1,1,0,0.0,1
+AMZN,regulator / regulation,1,1,0,0.0,1
+AMZN,repurchase,1,1,0,0.0,1
+AMZN,retail profit,1,1,0,0.0,1
+AMZN,robotic / robotics,1,3,3,1.0,3
+AMZN,robotics,1,3,3,1.0,3
+AMZN,rufus,1,3,2,0.667,3
+AMZN,rxpass,1,4,0,0.0,4
+AMZN,shutdown / shut down,1,1,0,0.0,1
+AMZN,silicon,1,2,2,1.0,2
+AMZN,snowflake,1,1,1,1.0,1
+AMZN,sponsored products,1,4,3,0.75,4
+AMZN,subscription,1,2,1,0.5,2
+AMZN,supply chain,1,5,2,0.4,5
+AMZN,sustainability,1,1,0,0.0,1
+AMZN,tariff,1,5,5,1.0,5
+AMZN,third party seller,1,1,0,0.0,1
+AMZN,third party sellers,1,3,3,1.0,3
+AMZN,third-party sellers,1,1,0,0.0,1
+AMZN,thursday night football,1,1,0,0.0,1
+AMZN,trainium,1,1,1,1.0,1
+AMZN,trump,1,1,0,0.0,1
+AMZN,warehouse,1,1,0,0.0,1
+AMZN,world cup,1,1,0,0.0,1
+AMZN,zoox / robotaxi,1,1,0,0.0,1
+AVGO,acquisition,1,4,0,0.0,4
+AVGO,anthropic,1,2,2,1.0,2
+AVGO,competition,1,4,1,0.25,4
+AVGO,department of war / dow,1,1,0,0.0,1
+AVGO,ethernet,1,1,1,1.0,1
+AVGO,google,1,1,1,1.0,1
+AVGO,hyperscaler,1,4,4,1.0,4
+AVGO,jericho 4,1,1,0,0.0,1
+AVGO,meta,1,2,2,1.0,2
+AVGO,nvlink,1,3,0,0.0,3
+AVGO,open source,1,4,0,0.0,4
+AVGO,openai,1,4,4,1.0,4
+AVGO,optic,1,4,2,0.5,4
+AVGO,organic,1,3,1,0.333,3
+AVGO,quantum,1,3,0,0.0,3
+AVGO,tomahawk 6,1,4,4,1.0,4
+AVGO,vmware,1,1,1,1.0,1
+CRWV,anthropic,1,1,0,0.0,1
+CRWV,autonomous,1,1,1,1.0,1
+CRWV,china / chinese,1,1,0,0.0,1
+CRWV,crowdstrike / crowd strike,1,2,1,0.5,2
+CRWV,government,1,2,2,1.0,2
+CRWV,healthcare,1,2,0,0.0,2
+CRWV,marimo,1,2,1,0.5,2
+CRWV,meta,1,2,1,0.5,2
+CRWV,nvidia,1,1,1,1.0,1
+CRWV,nvidia,3,1,1,1.0,1
+CRWV,quantum,1,2,0,0.0,2
+CRWV,shutdown / shut down,1,1,0,0.0,1
+CRWV,solidigm,1,1,1,1.0,1
+CRWV,storage,1,2,2,1.0,2
+CRWV,tariff,1,2,0,0.0,2
+GOOGL,acquisition,1,1,1,1.0,1
+GOOGL,ai / artificial intelligence,1,2,2,1.0,2
+GOOGL,ai compute / ai computing,1,1,0,0.0,1
+GOOGL,ai safety,1,1,0,0.0,1
+GOOGL,android,1,2,2,1.0,2
+GOOGL,antitrust,1,2,0,0.0,2
+GOOGL,autonomous,1,3,2,0.667,3
+GOOGL,bard,1,1,0,0.0,1
+GOOGL,chrome,1,1,1,1.0,1
+GOOGL,circle to search,1,1,1,1.0,1
+GOOGL,cloud,1,2,2,1.0,2
+GOOGL,data center,1,1,1,1.0,1
+GOOGL,data centers,1,1,1,1.0,1
+GOOGL,deepmind / deep mind,1,6,2,0.333,6
+GOOGL,eu / european union,1,2,0,0.0,2
+GOOGL,european commission,1,3,0,0.0,3
+GOOGL,family link,1,1,0,0.0,1
+GOOGL,gemini,1,2,2,1.0,2
+GOOGL,gemini 3,1,3,2,0.667,3
+GOOGL,generative ai / gen-ai / gen ai,1,1,0,0.0,1
+GOOGL,google maps,1,1,0,0.0,1
+GOOGL,headwind,1,2,2,1.0,2
+GOOGL,ironwood,1,3,2,0.667,3
+GOOGL,microsoft,1,1,0,0.0,1
+GOOGL,nano banana,1,3,2,0.667,3
+GOOGL,nvidia,1,1,1,1.0,1
+GOOGL,operating margin,1,3,3,1.0,3
+GOOGL,pixel,1,3,3,1.0,3
+GOOGL,privacy,1,6,0,0.0,6
+GOOGL,profitability,1,1,0,0.0,1
+GOOGL,quantum,1,5,0,0.0,5
+GOOGL,recall / recalled,1,1,1,1.0,1
+GOOGL,regulator / regulation / regulatory,1,6,1,0.167,6
+GOOGL,search advertising,1,2,0,0.0,2
+GOOGL,search advertising / search ad,1,3,2,0.667,3
+GOOGL,shutdown / shut down,1,1,0,0.0,1
+GOOGL,spacex,1,1,0,0.0,1
+GOOGL,subscription,1,2,2,1.0,2
+GOOGL,tailwind,1,2,2,1.0,2
+GOOGL,virtual,1,1,0,0.0,1
+GOOGL,waymo,1,3,3,1.0,3
+GOOGL,wiz,1,5,2,0.4,5
+GOOGL,workspace,1,1,1,1.0,1
+GOOGL,youtube premium,1,1,0,0.0,1
+GOOGL,youtube shorts,1,5,2,0.4,5
+META,activitypub,1,1,0,0.0,1
+META,ad targeting / ad-targeting,1,1,0,0.0,1
+META,advertising,1,4,3,0.75,4
+META,age verification,1,1,0,0.0,1
+META,ai recommendation,1,1,1,1.0,1
+META,algorithm,1,4,2,0.5,4
+META,antitrust,1,2,0,0.0,2
+META,ar / augmented reality,1,1,0,0.0,1
+META,behemoth,1,2,0,0.0,2
+META,channel,1,2,1,0.5,2
+META,china,1,1,0,0.0,1
+META,cloud,1,4,4,1.0,4
+META,dividend,1,4,2,0.5,4
+META,efficiency,1,1,1,1.0,1
+META,election,1,1,1,1.0,1
+META,europe / european,1,1,1,1.0,1
+META,generative ai / gen ai / gen-ai,1,1,1,1.0,1
+META,hiring,1,4,3,0.75,4
+META,hiring freeze,1,1,0,0.0,1
+META,horizon worlds,1,1,0,0.0,1
+META,hyperion,1,4,0,0.0,4
+META,instagram,1,2,2,1.0,2
+META,llama,1,5,2,0.4,5
+META,maverick,1,2,0,0.0,2
+META,meta ai,1,1,1,1.0,1
+META,metaverse,1,1,1,1.0,1
+META,moderation,1,1,0,0.0,1
+META,muse,1,1,1,1.0,1
+META,nebius,1,1,0,0.0,1
+META,oakley,1,4,2,0.5,4
+META,orion,1,5,2,0.4,5
+META,prediction market / kalshi,1,1,0,0.0,1
+META,quest 3,1,1,0,0.0,1
+META,ray-ban,1,5,3,0.6,5
+META,reality,1,1,1,1.0,1
+META,reels,1,1,1,1.0,1
+META,reels,3,1,0,0.0,1
+META,regulator / regulatory / regulation,1,1,1,1.0,1
+META,revenue per user / rpu,1,1,0,0.0,1
+META,sam,1,3,0,0.0,3
+META,scout,1,2,0,0.0,2
+META,shutdown / shut down,1,1,0,0.0,1
+META,silicon,1,1,1,1.0,1
+META,thread / threads,1,2,2,1.0,2
+META,threads,1,3,3,1.0,3
+META,tiktok,1,5,0,0.0,5
+META,uk / united kingdom,1,1,0,0.0,1
+META,vr / virtual reality,1,5,3,0.6,5
+META,whatsapp,1,3,3,1.0,3
+MRVL,aws / amazon,1,4,1,0.25,4
+MRVL,celestial,1,3,3,1.0,3
+MRVL,electro-optic / electro optic,1,3,2,0.667,3
+MRVL,hyperscaler,1,3,3,1.0,3
+MRVL,india / indian,1,1,0,0.0,1
+MRVL,inference,1,4,3,0.75,4
+MRVL,lpo,1,3,1,0.333,3
+MRVL,microsoft,1,3,0,0.0,3
+MRVL,nvidia,1,4,2,0.5,4
+MRVL,photonic fabric,1,1,1,1.0,1
+MRVL,pipeline,1,2,1,0.5,2
+MRVL,polariton,1,1,0,0.0,1
+MRVL,prepayment,1,1,1,1.0,1
+MRVL,scale across,1,1,1,1.0,1
+MRVL,storage,1,4,3,0.75,4
+MRVL,tariff,1,3,0,0.0,3
+MRVL,teralynx,1,2,1,0.5,2
+MRVL,trainium,1,4,0,0.0,4
+MRVL,xconn,1,2,1,0.5,2
+MSFT,activision,1,2,0,0.0,2
+MSFT,activision / blizzard,1,1,1,1.0,1
+MSFT,activision-blizzard / activision blizzard,1,1,0,0.0,1
+MSFT,ai / artificial intelligence,1,2,2,1.0,2
+MSFT,amd / advanced micro devices,1,1,1,1.0,1
+MSFT,anthropic,1,3,3,1.0,3
+MSFT,azure,1,3,3,1.0,3
+MSFT,capex,1,1,1,1.0,1
+MSFT,chatgpt,1,1,1,1.0,1
+MSFT,cloud,1,2,2,1.0,2
+MSFT,cloud consumption,1,1,0,0.0,1
+MSFT,college,1,1,0,0.0,1
+MSFT,copilot,1,3,3,1.0,3
+MSFT,cost structure,1,1,0,0.0,1
+MSFT,cybersecurity,1,6,1,0.167,6
+MSFT,data sovereignty,1,1,0,0.0,1
+MSFT,deepseek,1,1,1,1.0,1
+MSFT,dynamics,1,1,1,1.0,1
+MSFT,enterprise ai,1,2,0,0.0,2
+MSFT,fairwater,1,1,1,1.0,1
+MSFT,foundry,1,1,1,1.0,1
+MSFT,frontier,1,2,2,1.0,2
+MSFT,game pass,1,1,1,1.0,1
+MSFT,gaming,1,5,4,0.8,5
+MSFT,github,1,2,2,1.0,2
+MSFT,hardware,1,1,1,1.0,1
+MSFT,helios,1,1,1,1.0,1
+MSFT,intelligent cloud,1,1,1,1.0,1
+MSFT,layoff / job cuts,1,1,0,0.0,1
+MSFT,linkedin,1,5,5,1.0,5
+MSFT,m365,1,1,1,1.0,1
+MSFT,m365 / microsoft 365,1,2,2,1.0,2
+MSFT,maia,1,1,1,1.0,1
+MSFT,memory,1,1,1,1.0,1
+MSFT,monetization,1,1,1,1.0,1
+MSFT,more with less,1,1,0,0.0,1
+MSFT,nvidia,1,2,2,1.0,2
+MSFT,openai,1,6,6,1.0,6
+MSFT,phi,1,5,1,0.2,5
+MSFT,quantum,1,1,1,1.0,1
+MSFT,r&d / research and development,1,1,1,1.0,1
+MSFT,regulatory / regulation / regulator,1,1,0,0.0,1
+MSFT,server,1,2,2,1.0,2
+MSFT,shutdown / shut down,1,1,0,0.0,1
+MSFT,stargate,1,2,0,0.0,2
+MSFT,surface,1,1,0,0.0,1
+MSFT,sustainability,1,1,0,0.0,1
+MSFT,teams,1,5,5,1.0,5
+MSFT,windows,1,2,2,1.0,2
+MSFT,windows 11,1,3,1,0.333,3
+MSFT,xbox / x-box,1,1,1,1.0,1
+NVDA,a100,1,1,0,0.0,1
+NVDA,amazon,1,1,0,0.0,1
+NVDA,amd,1,1,0,0.0,1
+NVDA,amd/intel,1,1,0,0.0,1
+NVDA,apple,1,1,0,0.0,1
+NVDA,arizona,1,4,0,0.0,4
+NVDA,automation,1,4,1,0.25,4
+NVDA,automotive,1,1,1,1.0,1
+NVDA,autonomous,1,1,1,1.0,1
+NVDA,blackwell,1,2,2,1.0,2
+NVDA,buyback,1,1,0,0.0,1
+NVDA,china,1,2,2,1.0,2
+NVDA,cloud,1,1,1,1.0,1
+NVDA,cosmos,1,5,4,0.8,5
+NVDA,crypto / cryptocurrency,1,1,0,0.0,1
+NVDA,cuda,1,2,2,1.0,2
+NVDA,data center,1,1,1,1.0,1
+NVDA,datacenter,1,1,1,1.0,1
+NVDA,deepseek,1,1,1,1.0,1
+NVDA,demand,1,1,1,1.0,1
+NVDA,dgx cloud,1,1,0,0.0,1
+NVDA,dividend,2,1,0,0.0,1
+NVDA,domestic,1,4,0,0.0,4
+NVDA,elon/musk,1,1,0,0.0,1
+NVDA,enterprise,1,1,1,1.0,1
+NVDA,export restriction,1,1,1,1.0,1
+NVDA,gaming,1,5,4,0.8,5
+NVDA,geforce,1,1,1,1.0,1
+NVDA,generative ai / gen ai / gen-ai,1,1,1,1.0,1
+NVDA,gm / general motors,1,4,0,0.0,4
+NVDA,gpu shortage,1,1,0,0.0,1
+NVDA,grok,1,1,1,1.0,1
+NVDA,h100,1,2,1,0.5,2
+NVDA,h20,1,4,1,0.25,4
+NVDA,h200,1,1,0,0.0,1
+NVDA,hermes,1,1,0,0.0,1
+NVDA,hopper,1,2,2,1.0,2
+NVDA,humanoid,1,4,1,0.25,4
+NVDA,hyperscaler,1,4,4,1.0,4
+NVDA,inference,1,3,3,1.0,3
+NVDA,mellanox,1,1,0,0.0,1
+NVDA,microsoft,1,1,1,1.0,1
+NVDA,networking,1,1,1,1.0,1
+NVDA,omniverse,1,6,5,0.833,6
+NVDA,oracle,1,1,0,0.0,1
+NVDA,perplexity,1,1,1,1.0,1
+NVDA,production,1,1,1,1.0,1
+NVDA,professional,1,1,1,1.0,1
+NVDA,quantum,1,1,1,1.0,1
+NVDA,rent,1,1,1,1.0,1
+NVDA,robotic,1,1,1,1.0,1
+NVDA,rtx 5080,1,1,0,0.0,1
+NVDA,satya/nadella,1,1,0,0.0,1
+NVDA,self driving,1,4,3,0.75,4
+NVDA,sovereign,1,1,1,1.0,1
+NVDA,star wars,1,1,0,0.0,1
+NVDA,supply chain,1,1,1,1.0,1
+NVDA,taiwan,1,5,1,0.2,5
+NVDA,talent,1,4,1,0.25,4
+NVDA,tariff,1,4,0,0.0,4
+NVDA,tesla,1,1,0,0.0,1
+NVDA,trump,1,5,0,0.0,5
+NVDA,tsmc,1,4,1,0.25,4
+NVDA,tsmc/taiwan semiconductor manufacturing company,1,1,0,0.0,1
+NVDA,vr / virtual reality,1,3,0,0.0,3
+ORCL,ai forecast,1,1,0,0.0,1
+ORCL,air force,1,3,0,0.0,3
+ORCL,automation,1,3,1,0.333,3
+ORCL,backlog,1,3,2,0.667,3
+ORCL,capital expenditure,1,1,0,0.0,1
+ORCL,cloud backlog,1,1,0,0.0,1
+ORCL,cloud guidance,1,1,0,0.0,1
+ORCL,cloud infrastructure,1,1,1,1.0,1
+ORCL,debt,1,3,3,1.0,3
+ORCL,debt level,1,1,0,0.0,1
+ORCL,earnings surprise,1,1,0,0.0,1
+ORCL,health,1,3,3,1.0,3
+ORCL,healthcare ai,1,1,0,0.0,1
+ORCL,hyperscaler,1,3,1,0.333,3
+ORCL,java,1,1,0,0.0,1
+ORCL,multicloud,1,4,4,1.0,4
+ORCL,openai,1,3,1,0.333,3
+ORCL,openai deal,1,1,0,0.0,1
+ORCL,partner,1,3,3,1.0,3
+ORCL,partner ecosystem,1,1,0,0.0,1
+ORCL,red bull,1,2,0,0.0,2
+ORCL,rpo /  remaining performance obligation,1,1,1,1.0,1
+ORCL,saas momentum,1,1,0,0.0,1
+ORCL,sovereign,1,3,1,0.333,3
+ORCL,stargate,1,4,0,0.0,4
+ORCL,tariff,1,3,0,0.0,3
+ORCL,valuation concern,1,1,0,0.0,1
+PLTR,ai agent,1,1,0,0.0,1
+PLTR,ai growth,1,3,0,0.0,3
+PLTR,ai platform,1,2,0,0.0,2
+PLTR,analyst upgrade,1,1,0,0.0,1
+PLTR,anthropic / claude,1,1,0,0.0,1
+PLTR,apollo,1,2,1,0.5,2
+PLTR,automotive,1,4,0,0.0,4
+PLTR,civil liberties,1,1,0,0.0,1
+PLTR,commercial growth,1,5,2,0.4,5
+PLTR,eps surprise,1,1,0,0.0,1
+PLTR,foundry,1,4,4,1.0,4
+PLTR,gotham,1,1,0,0.0,1
+PLTR,gotham platform,1,4,0,0.0,4
+PLTR,government contract,1,5,0,0.0,5
+PLTR,hadean,1,2,0,0.0,2
+PLTR,healthcare,1,4,1,0.25,4
+PLTR,ice / immigration and customs enforcement,1,1,0,0.0,1
+PLTR,international,1,4,4,1.0,4
+PLTR,international/migration,1,1,1,1.0,1
+PLTR,iran / iranian,1,2,0,0.0,2
+PLTR,israel,1,3,1,0.333,3
+PLTR,kill,1,2,0,0.0,2
+PLTR,lethal,1,6,4,0.667,6
+PLTR,margin expansion,1,1,0,0.0,1
+PLTR,market share,1,1,0,0.0,1
+PLTR,maven,1,1,1,1.0,1
+PLTR,military,1,1,0,0.0,1
+PLTR,missile,1,1,0,0.0,1
+PLTR,nhs / national health service,1,1,0,0.0,1
+PLTR,nvidia,1,4,1,0.25,4
+PLTR,opium,1,1,0,0.0,1
+PLTR,partnership,1,4,3,0.75,4
+PLTR,percepta,1,1,0,0.0,1
+PLTR,polymarket,1,1,0,0.0,1
+PLTR,privacy,1,1,0,0.0,1
+PLTR,reddit,1,1,0,0.0,1
+PLTR,regulatory / regulator / regulation,1,1,0,0.0,1
+PLTR,retail sentiment,1,1,0,0.0,1
+PLTR,revenue guidance,1,5,4,0.8,5
+PLTR,revolution,1,1,1,1.0,1
+PLTR,shutdown / shut down,1,1,0,0.0,1
+PLTR,slop / ai slop,1,1,1,1.0,1
+PLTR,sovereign ai,1,1,1,1.0,1
+PLTR,stellantis,1,1,0,0.0,1
+PLTR,titan deployment,1,2,0,0.0,2
+PLTR,tolkien,1,1,0,0.0,1
+PLTR,ukraine,1,1,0,0.0,1
+PLTR,usda,1,2,1,0.5,2
+PLTR,valuation concern,1,1,0,0.0,1
+PLTR,vibe,1,1,0,0.0,1
+PLTR,warp factor,1,1,0,0.0,1
+PLTR,warp speed,1,5,4,0.8,5
+PLTR,warrior culture,1,1,0,0.0,1

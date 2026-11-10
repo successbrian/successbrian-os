@@ -1294,7 +1294,7 @@ SEGMENTS = {
         "bodies": ["trafficstreemz", "aegeanvedaflow",
                    "cryptostreemz",
                    "ai-strategies-network-marketers",
-                   "ai-strategies-competitive-research"],
+                   "ai-strategies-competitive-research", "influencers"],
     },
     "products": {
         "character": "Vibe-coded products and projects — "
@@ -1306,7 +1306,7 @@ SEGMENTS = {
                      "SBOS plugins, R16; the domain's "
                      "knowledge bodies sit in the domain.)",
         "bodies": ["contactflowcrm", "systeme-io",
-                   "civitasmarket"],
+                   "civitasmarket", "successacademy", "webinarbizs"],
     },
     "crypto": {
         "character": "Time-sensitive trading and yield "
@@ -1427,7 +1427,8 @@ SEGMENTS = {
                    "people-brian-likes", "ai-bubble-crash",
                    "flat-earth",
                    "name-finding-and-enrichment",
-                   "business-goals", "ecosystem-bible", "scattered-second-brain", "rolodex"],
+                   "business-goals", "ecosystem-bible", "scattered-second-brain", "rolodex",
+                   "gamma-intake", "wix", "fragment-pipeline"],
     },
 }
 
@@ -3023,6 +3024,66 @@ REGISTRY = [
      "Anything not yet determined. Audit flags whatever sits "
      "here; the tray should trend to empty.",
      "live", "135 documents live at build time — real backlog."),
+    ("gamma-intake", "domain", "Meghan CEO (node-gamma)", None,
+     "Intake body for node-gamma: packages bound for the gamma "
+     "node (work orders, restore packages, engine material) "
+     "are staged here. Meghan CEO's remit is gamma only; this "
+     "is the alpha-side shelf of the gamma document flow.",
+     "Gamma-bound packages and gamma intake material land "
+     "here.",
+     "live",
+     "Live in AnythingLLM before it was registered (first "
+     "doc: reap-restore-2026-11-09.md). Registry catch-up "
+     "2026-11-09, clerk filing-flow repair."),
+    ("influencers", "domain", "CampaignsDesk", None,
+     "The Influencer Game Plan body: CampaignsDesk's module "
+     "for the influencer arena (registered 2026-11-01 on "
+     "Brian's order) — serves the Oliabo campaign line and "
+     "uses the people store.",
+     "Influencer game-plan material and influencer-arena "
+     "intel land here.",
+     "live",
+     "Live in AnythingLLM before it was registered (charter: "
+     "influencer-game-plan.md). Registry catch-up 2026-11-09, "
+     "clerk filing-flow repair."),
+    ("successacademy", "domain", "SuccessAcademy project", None,
+     "Project home for SuccessAcademy (Atlas "
+     "proj:successacademy): the back-end support layer for "
+     "the skin marketing systems (TrafficStreemz skin "
+     "family). Holds project design/notes, integration "
+     "records, and decisions. NOT a blog workspace — "
+     "SuccessAcademy has no blog by Brian's ruling.",
+     "SuccessAcademy project design, integration records, "
+     "and decisions land here. Nothing blog-shaped.",
+     "live",
+     "Workspace + charter created 2026-10-28 (Batch 4B) on "
+     "Brian's ruling; registry row caught up 2026-11-09, "
+     "clerk filing-flow repair."),
+    ("webinarbizs", "domain", "WebinarBizs.com project", None,
+     "Project home for WebinarBizs.com (Atlas "
+     "proj:webinarbizs): a project under research waiting "
+     "on a big MLM-based webinar platform to support it — "
+     "platform evaluations, the dependency record, skin-idea "
+     "notes, and project decisions. NOT a blog workspace — "
+     "WebinarBizs.com has no blog by Brian's ruling.",
+     "WebinarBizs platform evaluations, dependency records, "
+     "and project decisions land here. Nothing blog-shaped.",
+     "live",
+     "Workspace + charter created 2026-10-28 (Batch 4B) on "
+     "Brian's ruling; registry row caught up 2026-11-09, "
+     "clerk filing-flow repair."),
+    ("wix", "domain", "Brian (web presence)", None,
+     "Brian's Wix web-presence body: the architecture and "
+     "operating knowledge of his Wix-based sites — the "
+     "NameCheap domain -> FlexiFunnels capture -> free Wix "
+     "site chain (Brian, 2026-10-24), analytics, site "
+     "workflow, and homepage/article copy craft.",
+     "Wix platform knowledge, site workflow, analytics, and "
+     "copy-craft material land here.",
+     "live",
+     "Live in AnythingLLM before it was registered (5 docs). "
+     "Registry catch-up 2026-11-09, clerk filing-flow "
+     "repair."),
 ]
 
 DDL = """

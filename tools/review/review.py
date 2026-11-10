@@ -217,22 +217,29 @@ def collect_gauges():
                 "JOIN workspaces w ON w.id = wd.workspaceId").fetchall()
         finally:
             con.close()
-        # Both sides are normalized to stems: AnythingLLM stores
-        # filenames as '<name>.md-<uuid>.json' while knowledge_index
-        # catalog rows carry the plain stem (sometimes with the source
-        # extension). Stem-vs-stem is the honest join.
-        def stem(fn):
-            fn = re.sub(r"-[0-9a-f]{8}-[0-9a-f-]{27,}\.json$", "", fn or "")
-            return re.sub(r"\.(md|txt|json|pdf|html?)$", "", fn)
+        # Count with the SAME normalization the index is written
+        # in: the catalog's base_filename
+        # (board/backfill_kindex_catalog), which strips
+        # AnythingLLM's generated hash suffixes
+        # ('<name>.md-<uuid>.json' AND '<name>-<hex>.json').
+        # The earlier stem-vs-stem join missed the '-<hex>.json'
+        # shape and reported 469 phantom unindexed docs on
+        # 2026-11-09: all 469 were indexed under base_filename
+        # (genuine missing = 0; repair QA read 0 throughout).
+        # Pair-based, identical to filing_flow_qa.mode_unindexed,
+        # so the gauges and the filing QA cannot disagree again.
+        sys.path.insert(
+            0, os.path.expanduser('~/successbrian-os/board'))
+        from backfill_kindex_catalog import base_filename
+        pairs = {(slug, base_filename(fn)) for (slug, fn) in docs}
         indexed = set()
         for slug, fn in pg_rows(
                 "SELECT allm_workspace, allm_filename "
                 "FROM successbrian_os.knowledge_index "
                 "WHERE allm_workspace IS NOT NULL "
                 "AND allm_filename IS NOT NULL"):
-            indexed.add((slug, stem(fn)))
-        g["unindexed_docs"] = sum(
-            1 for (slug, fn) in docs if (slug, stem(fn)) not in indexed)
+            indexed.add((slug, fn))
+        g["unindexed_docs"] = len(pairs - indexed)
         g["allm_docs_total"] = len(docs)
 
     def authorship():

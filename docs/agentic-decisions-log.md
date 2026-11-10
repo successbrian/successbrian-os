@@ -115,3 +115,12 @@
 ---
 
 *Log created 2026-10-28 on Brian's order. Canonical copies: this file in the successbrian-os repo (docs/) and the embedded document of the same filename in the SuccessBrian OS AnythingLLM workspace. On update, edit the repo file and re-embed (replace-on-update) so exactly one current edition lives in the workspace.*
+
+### 2026-11-09 · Horizon layer design choices (Spencer review toolkit, weekly instruments)
+- **Made by:** Muse subagent executing Brian's build order 2026-11-09 23:29 CST ("build tools/systems/code into successbrian os" for the Saturday horizon check), extended 23:30 / 23:37 / 23:38 CST.
+- **Context:** The horizon layer needed placement, verdict rules, and a goal-linkage method that no Brian ruling specified.
+- **Decisions:** (1) One module, `tools/review/horizon.py`, exposed on the existing review.py CLI (lazy import) rather than a second CLI — Spencer keeps one coherent surface. (2) Build-verification verdict rules run in a fixed order — own QA failing → regressed; mapped gauge worsened → regressed; gauge improved → improved; all checks passing on QA evidence only → improved (labeled as such); anything else → unverifiable with the reason attached. (3) Goal linkage is computed from anchor nodes seeded from live atlas.nodes with per-goal citations plus token matching — never inferred relationships. (4) The orphan census BFS limit is 3 hops, with a named substrate carve-out (SUBSTRATE_KEYS) so core infrastructure is never mislabeled an orphan. (5) The health instrument enforces its data-only rule in code (banned-phrasing scan; the verb aborts rather than print a tainted report).
+- **Why:** Each choice favors a stated, checkable limit over a smoother-looking invented one — the honesty rules Brian set for the review passes.
+- **What it shapes:** Every Saturday horizon pass from 2026-11-14 on; the verdict and linkage definitions are the baseline future coherence snapshots compare against.
+- **Reversibility:** Brian can order any rule changed; verdicts and censuses already persisted keep their recorded evidence and the rule version is visible in the code/spec.
+- **Source:** Intel Bridge capture filed with this build (horizon toolkit build record, 2026-11-09).

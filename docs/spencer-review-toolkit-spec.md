@@ -118,3 +118,129 @@ rulings live with Brian.
   not the tool's.
 - The assembler never writes verdict prose; slots stay placeholders
   until a pass agent fills them.
+
+## Horizon layer — the weekly instruments (built 2026-11-09)
+
+Brian's order (2026-11-09 23:29 CST, extended 23:30, 23:37, 23:38):
+build the machinery for the Saturday 04:00 WEEKEND HORIZON CHECK into
+SuccessBrian OS. The horizon layer is `tools/review/horizon.py`,
+exposed on this toolkit's one CLI (`tools/review/review.py`); it
+imports the daily layer (`import review as R`) and shares its tables
+plus three of its own. State: `successbrian_os.review_agenda`
+(the week's ≤3 priorities, set by the Saturday pass, read as data by
+the Mon–Fri passes), `successbrian_os.review_build_verdicts` (one row
+per build verification, raw evidence kept), and
+`successbrian_os.review_coherence` (the weekly Deep Look census, so
+coherence movement is computable week over week). Atlas:
+`sys:spencer-review-toolkit-horizon` -[part_of]->
+`sys:spencer-review-toolkit`. PM: project `spencer-review-toolkit`,
+weekly checks horizon-* (one per verb, plus the selftest).
+
+### The ten instrument families
+
+1. **pace** — required pace vs recorded actuals for every goal the
+   alpha stores carry machine-readably (sbos_goals success_metrics /
+   target dates, public.brian_goals progress, the Mindell deadline
+   node). Verdicts: ahead / holding / slipping / no-data, with
+   numbers and the method named per goal. A goal whose actuals are
+   not machine-readable is a printed GAP line, never an invented
+   figure. Known gaps at build: the GotBackup fixed dollar ladder is
+   not stored as data anywhere on alpha (goal_month_scores holds 0
+   rows); the quick-$1,000 track has no alpha actuals; Claude-side
+   tracked goals are not readable from alpha.
+2. **trend** — week-over-week over review_snapshots (history began
+   2026-11-09; until a full week exists the report says
+   "accumulating" and shows first-vs-latest), recurring QA failures
+   from pm_project_qa_runs with streak counts, and the authorship
+   reserve/SLO series. Fan-evidence and GitHub stars ride the
+   snapshot series (afbn_fans / github_stars gauges).
+3. **aging** — the slow-debt report: review_decisions age buckets,
+   captures (raw depth + triaged-unruled >14d), altair.issues
+   blocked_brian, open PM repair steps bucketed 0–6d / 7–13d / 14d+
+   (Brian's flag law: 14 days no progress flags harder), and the
+   parked registry — hand-seeded ONLY with a source citation on
+   every row (repo Phase 2 items, credential rotations, board
+   launcher, gamma disk).
+4. **money** — project_budgets + dealsdesk budgets vs the build
+   table (builds by status, build items by status, queued totals),
+   open ecosystem_needs with per-item caps. A budget whose period
+   has lapsed reads "lapsed"; a need without a cap reads "no cap
+   set" — never "no limit". Prices are Postgres state only.
+5. **health-week** — health_log aggregation, data only: last-7-day
+   entries by metric, the full A1C series dated as recorded, dose
+   entries by weekday (dated entries only), movement-shaped entry
+   counts. The tool emits no targets, no advice, no evaluative
+   health language; a banned-phrasing scan runs inside the verb and
+   inside the selftest, and the verb aborts rather than print a
+   tainted report.
+6. **content-chain** — visits → contacts → revenue per blog from
+   campaignsdesk.blog_scorecards plus the reach tables
+   (reach_daily_activity / reach_snapshots, tracked-link clicks from
+   campaignsdesk.outbound_clicks), this week vs last where data
+   exists, per-blog ramp stage. Dry tributaries are reported dry
+   (at build: scorecard visits/contacts/revenue are dry; no
+   scorecard written since 2026-10-29).
+7. **agenda-set / agenda-list / agenda-mark** — the week's agenda as
+   DATA: week of, 1–3 priorities, each with source + why; state
+   set/open/done/moved. Seeded EMPTY by design — the first real
+   agenda is set by the first Saturday run; no invented priorities.
+8. **week-briefing** (also `briefing --kind weekend` and stored by
+   `snapshot --kind weekend`) — the Saturday skeleton in its charter
+   groups: THE WEEK ON THE GOALS / MONEY / SYSTEMS / CONTENT /
+   HEALTH / THE WEEK'S AGENDA / DEEP LOOK / DONE THIS PASS /
+   WAITING ON BRIAN, numbers filled, judgment slots marked.
+9. **build-verify** — Brian 23:30 CST: "QA check other
+   builds/improvements that happened and make sure they really
+   improved things." Enumerates the window's builds (PM projects /
+   checks registered, build-word captures, desk git logs) and joins
+   (a) the claim, (b) the build's QA checks' current status, (c) the
+   mapped gauge before vs after (BUILD_GAUGE_MAP; before = last
+   snapshot at/before registration, after = live gauges). Verdicts:
+   improved / unchanged / regressed / unverifiable — each with
+   evidence lines and an explicit reason when unverifiable.
+   `--persist` writes review_build_verdicts; `--add-frictions`
+   files regressed builds into the friction ledger (lane 2).
+10. **coherence** — the Deep Look (Brian 23:29 + 23:37 + 23:38 CST):
+    is Atlas driving the goals, is the system working together on
+    them, and is it working the highest priorities first,
+    efficiently, week to week and day to day?
+    (a) Goal linkage census: per goal, Atlas anchors (seeded from
+    live atlas.nodes, cited per goal in GOAL_LINKS) + token-matched
+    plan/project nodes, edges, linked tasks open vs done, oldest
+    open age. No presence = a named gap class.
+    (b) Atlas flow: tasks created / completed / aged >14d in the
+    window, by goal where linkable; the board-packet queue
+    (atlas_task nodes keyed task:ssb-packet-*) measured live as the
+    known boundary stall.
+    (c) Orphan machinery census: every system/project node BFS'd
+    (undirected, ≤3 hops) to any goal anchor. No path found is
+    reported honestly with confidence in words: core substrate
+    (SUBSTRATE_KEYS) reads "indirect path plausible"; anything else
+    is a CANDIDATE orphan for the pass's judgment, listed with its
+    activity (degree, last update, status) so dead weight can be
+    told from quiet infrastructure.
+    (d) Handoff stalls: one table of cross-system queues (clerk
+    raw, board packets, Atlas tasks, v4pro handoffs, PM steps,
+    review decisions, blocked issues) with depth + oldest age; an
+    unreadable queue is stated, never skipped silently.
+    (e) Priority discipline: agenda completion rate from
+    review_agenda (not computable until the first Saturday-set week
+    completes — stated, not faked); queue-age vs priority inversion
+    CANDIDATES (goal-linked items open >14d beside newer unlinked
+    items completed — candidates for the pass's judgment, never
+    verdicts); the week's motion by goal (completed Atlas work
+    mapped vs unmapped = the machinery-for-itself share).
+    `--persist` writes the census to review_coherence.
+
+### Honesty rules (horizon layer)
+
+- Every number comes from an alpha store read live at run time, or
+  the line is a labeled GAP with the stores searched named.
+- Thin history is a reported state ("accumulating"), not a defect
+  to hide: snapshot history starts 2026-11-09, so week-over-week
+  firms up from 2026-11-16.
+- The health instrument's data-only rule is enforced in code
+  (banned-phrasing scan), not just in this doc.
+- Verdicts the tool cannot support are "unverifiable" with the
+  reason attached; inversion candidates are never promoted to
+  verdicts by the tool.

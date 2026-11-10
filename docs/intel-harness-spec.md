@@ -119,3 +119,19 @@ assembler; state in `successbrian_os.review_*`). Spec:
 `docs/spencer-review-toolkit-spec.md`. The toolkit is bookkeeping —
 map, not territory: it records and measures the flow; judgment lives
 in the passes, rulings with Brian.
+
+**Horizon layer (added 2026-11-09).** The same CLI also carries the
+weekly instruments for the Saturday 04:00 weekend horizon check —
+`tools/review/horizon.py`: pace (goals vs recorded actuals), trend,
+aging, money, health-week (data only), content-chain, the agenda
+table the daily passes read as data, build verification (did the
+week's builds really improve things — verdicts persisted with their
+evidence), and the coherence audit — the Deep Look at whether Atlas
+is driving the goals and the system is working its highest
+priorities first (goal linkage, Atlas flow, orphan machinery,
+handoff stalls, priority discipline; census persisted weekly).
+Spec: the horizon-layer section of
+`docs/spencer-review-toolkit-spec.md`. The Intel Harness's verdicts
+are among the builds build-verify re-checks each week
+(BUILD_GAUGE_MAP watches the market-pricing gauge), so harness
+improvements are proven on gauges, not asserted.

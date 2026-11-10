@@ -33,6 +33,14 @@ Verbs:
   decide-age                    waiting items with ages, oldest first
   decide-rule    --id N (--ruling T | --dismiss)
   briefing   --kind am|pm       assemble the briefing skeleton
+  horizon layer (weekly; implemented in tools/review/horizon.py):
+  pace / trend / aging / money / health-week / content-chain [--json]
+  build-verify [--days N] [--persist] [--add-frictions] [--json]
+  agenda-set --week D --item T --source S --why W   (1-3 priorities)
+  coherence [--days N] [--persist] [--json]   Atlas/goal Deep Look
+  agenda-list [--json] / agenda-mark --id N --state S [--note T]
+  week-briefing                 the Saturday horizon skeleton
+  horizon-selftest
   selftest
 
 State (Postgres, successbrian_os schema):
@@ -55,6 +63,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # horizon layer lives beside this file
 
 from sbos_common import pg_exec, pg_one, pg_rows  # noqa: E402
 
@@ -475,8 +484,12 @@ def take_snapshot(kind, window_verdict=None):
          window_verdict))
     sid = row[0][0]
     # briefing hash over the skeleton rendered from this snapshot
-    text = render_briefing(kind if kind in ("am", "pm") else "am",
-                           snap_id=sid)
+    if kind == "weekend":
+        import horizon as _hz
+        text = _hz.render_week_briefing()
+    else:
+        text = render_briefing(kind if kind in ("am", "pm") else "am",
+                               snap_id=sid)
     h = hashlib.sha256(text.encode()).hexdigest()[:16]
     pg_exec("UPDATE successbrian_os.review_snapshots SET briefing_hash=%s "
             "WHERE id=%s", (h, sid))
@@ -644,7 +657,7 @@ def main(argv=None):
 
     p = sub.add_parser("snapshot")
     p.add_argument("--kind", default="manual",
-                   choices=["am", "pm", "manual"])
+                   choices=["am", "pm", "manual", "weekend"])
     p.add_argument("--window-verdict", default=None)
 
     sub.add_parser("delta")
@@ -680,7 +693,39 @@ def main(argv=None):
     p.add_argument("--dismiss", action="store_true")
 
     p = sub.add_parser("briefing")
-    p.add_argument("--kind", default="pm", choices=["am", "pm"])
+    p.add_argument("--kind", default="pm",
+                   choices=["am", "pm", "weekend"])
+
+
+    for _v in ("pace", "trend", "aging", "money", "health-week",
+               "content-chain", "agenda-list"):
+        p = sub.add_parser(_v)
+        p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("coherence")
+    p.add_argument("--days", type=int, default=7)
+    p.add_argument("--persist", action="store_true")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("build-verify")
+    p.add_argument("--days", type=int, default=7)
+    p.add_argument("--persist", action="store_true")
+    p.add_argument("--add-frictions", action="store_true")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("agenda-set")
+    p.add_argument("--week", required=True)
+    p.add_argument("--item", action="append", required=True)
+    p.add_argument("--source", action="append", required=True)
+    p.add_argument("--why", action="append", required=True)
+
+    p = sub.add_parser("agenda-mark")
+    p.add_argument("--id", type=int, required=True)
+    p.add_argument("--state", required=True)
+    p.add_argument("--note", default=None)
+
+    sub.add_parser("week-briefing")
+    sub.add_parser("horizon-selftest")
 
     sub.add_parser("selftest")
     args = ap.parse_args(argv)
@@ -774,7 +819,79 @@ def main(argv=None):
         print(f"DECISION #{args.id} -> {state}")
     elif args.verb == "briefing":
         ensure_tables()
-        print(render_briefing(args.kind))
+        if args.kind == "weekend":
+            import horizon as hz
+            print(hz.render_week_briefing())
+        else:
+            print(render_briefing(args.kind))
+    elif args.verb in ("pace", "trend", "aging", "money",
+                       "health-week", "content-chain", "build-verify",
+                       "coherence",
+                       "agenda-set", "agenda-list", "agenda-mark",
+                       "week-briefing", "horizon-selftest"):
+        import horizon as hz
+        if args.verb == "pace":
+            rep = hz.pace_report()
+            print(json.dumps(rep, indent=1, default=str) if args.json
+                  else hz.pace_text(rep))
+        elif args.verb == "trend":
+            rep = hz.trend_report()
+            print(json.dumps(rep, indent=1, default=str) if args.json
+                  else hz.trend_text(rep))
+        elif args.verb == "aging":
+            rep = hz.aging_report()
+            print(json.dumps(rep, indent=1, default=str) if args.json
+                  else hz.aging_text(rep))
+        elif args.verb == "money":
+            rep = hz.money_report()
+            print(json.dumps(rep, indent=1, default=str) if args.json
+                  else hz.money_text(rep))
+        elif args.verb == "health-week":
+            rep = hz.health_week()
+            txt = hz.health_text(rep)
+            bad = hz.health_language_clean(
+                txt + json.dumps(rep, default=str))
+            if bad:
+                print(f"HEALTH WEEK ABORTED: instrument output "
+                      f"carried banned phrasing {bad}")
+                return 1
+            print(json.dumps(rep, indent=1, default=str) if args.json
+                  else txt)
+        elif args.verb == "content-chain":
+            rep = hz.content_chain()
+            print(json.dumps(rep, indent=1, default=str) if args.json
+                  else hz.content_text(rep))
+        elif args.verb == "build-verify":
+            rep = hz.build_verify(days=args.days, persist=args.persist,
+                                  add_frictions=args.add_frictions)
+            print(json.dumps(rep, indent=1, default=str) if args.json
+                  else hz.build_verify_text(rep))
+        elif args.verb == "agenda-set":
+            if not (len(args.item) == len(args.source)
+                    == len(args.why)):
+                print("agenda-set: --item/--source/--why must repeat "
+                      "the same number of times")
+                return 1
+            wk = datetime.strptime(args.week, "%Y-%m-%d").date()
+            ids = hz.agenda_set(wk, list(zip(args.item, args.source,
+                                             args.why)))
+            print(f"AGENDA set for week of {args.week}: ids {ids}")
+        elif args.verb == "agenda-list":
+            rep = hz.agenda_list()
+            print(json.dumps(rep, indent=1, default=str) if args.json
+                  else hz.agenda_text(rep))
+        elif args.verb == "agenda-mark":
+            hz.agenda_mark(args.id, args.state, args.note)
+            print(f"AGENDA #{args.id} -> {args.state}")
+        elif args.verb == "coherence":
+            rep = hz.coherence_report(days=args.days,
+                                      persist=args.persist)
+            print(json.dumps(rep, indent=1, default=str) if args.json
+                  else hz.coherence_text(rep))
+        elif args.verb == "week-briefing":
+            print(hz.render_week_briefing())
+        elif args.verb == "horizon-selftest":
+            return hz.horizon_selftest()
     elif args.verb == "selftest":
         return selftest()
     return 0

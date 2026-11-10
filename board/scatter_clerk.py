@@ -568,6 +568,19 @@ def classify(cap, contexts=None):
                     f"the text does not say an open item is resolved "
                     f"or advanced — routing unchanged, blog context "
                     f"attached")
+    # BODY PRICE overlay (capture #1138 follow-up, 2026-11-10):
+    # a capture whose body carries a price pattern is price
+    # intel even under a plain title — stated here so the sort
+    # shows its reason; assess_shelf_life applies the kind.
+    try:
+        _bph = _body_price_hit(cap)
+    except Exception:
+        _bph = None
+    if _bph:
+        reasons.append(
+            f"body carries a price pattern ({_bph[0]}: "
+            f"'{_bph[1]}') — price intel by body scan")
+
     # ARTICLE OVERLAY (Brian, 2026-11-01): for kept intel, the clerk also
     # asks the article question — is this related to an article we need on
     # a blog? Existing article FIRST, then new-article via blog boundaries
@@ -597,6 +610,56 @@ def _checked_on(cap):
     return None
 
 
+# BODY PRICE SCAN (2026-11-10; from the clerk filing-flow repair
+# record, capture #1138): the title rule in assess_shelf_life
+# missed an October AMD price that sat in the capture BODY under
+# a plain title, so the capture was filed as a document instead
+# of price state. The scan below extends the same word-rule
+# style to the body: a currency amount counts as a price
+# observation only when a price-context word stands next to
+# it. Bare dollar mentions in prose (a budget figure, a total
+# raised, a savings anecdote) do NOT hit — every pattern names
+# the framing that makes the amount a price, and the hit text
+# travels into the clerk's stated basis so the sort stays
+# auditable. Words and reasons, no scores (Brian's clerk law).
+_BODY_PRICE_PATTERNS = [
+    ("amount after a price verb",
+     re.compile(r"(?i)\b(?:costs?|priced(?:\s+at)?|lists?\s+at|"
+                r"listed\s+at|sells?(?:\s+for)?|selling\s+for|"
+                r"retail(?:s|ing)?(?:\s+at)?|goes\s+for|"
+                r"in\s+stock\s+at|on\s+sale\s+(?:at|for)|"
+                r"sticker(?:\s+price)?|msrp)\b"
+                r"[^$.\n]{0,40}?\$([\d,]+(?:\.\d{1,2})?)")),
+    ("price word next to an amount",
+     re.compile(r"(?i)\bprices?\b[^$.\n]{0,40}?"
+                r"\$([\d,]+(?:\.\d{1,2})?)")),
+    ("amount next to a following price word",
+     re.compile(r"(?i)\$([\d,]+(?:\.\d{1,2})?)[^$.\n]{0,40}?"
+                r"\bprices?\b")),
+    ("market verb at an amount",
+     re.compile(r"(?i)\b(?:closed|closing|trading|trades|"
+                r"settled|opened)\b[^$.\n]{0,24}?"
+                r"\$([\d,]+(?:\.\d{1,2})?)")),
+    ("amount per unit",
+     re.compile(r"(?i)\$([\d,]+(?:\.\d{1,2})?)\s*(?:/|per)\s*"
+                r"(?:gb|gib|tb|unit|month|mo|seat|user)\b")),
+]
+
+
+def _body_price_hit(cap):
+    """First price pattern found in the capture BODY (its raw
+    text), as (pattern_name, matched_text) — or None. The title
+    is NOT scanned here: title markers are the older rule's
+    job (assess_shelf_life checks those first)."""
+    body = cap.get("raw") or ""
+    if "$" not in body:
+        return None
+    for name, rx in _BODY_PRICE_PATTERNS:
+        m = rx.search(body)
+        if m:
+            return name, " ".join(m.group(0).split())
+    return None
+
 def assess_shelf_life(cap):
     """THE clerk's one assessment: how long this intel stays
     valuable. Returns (kind, days, basis_text). Validity runs
@@ -613,9 +676,24 @@ def assess_shelf_life(cap):
         kind = "page"
     else:
         kind = "reference"
+    body_hit = None
+    if kind == "reference":
+        # Body-scan fallback (see _BODY_PRICE_PATTERNS above):
+        # a would-be reference filing whose body carries a
+        # real price pattern is price intel, and the basis
+        # below names the pattern that hit. Producer-tagged
+        # titles (price/video/page) never reach this branch —
+        # their declared kind stands.
+        body_hit = _body_price_hit(cap)
+        if body_hit:
+            kind = "price"
     days = SHELF_LIFE_DAYS[kind]
     basis = (f"{kind} intel is valuable for {days} days "
              f"(operating default)")
+    if body_hit:
+        basis += (f"; price found in the capture body, not "
+                  f"the title — {body_hit[0]}: "
+                  f"'{body_hit[1]}'")
     return kind, days, basis
 
 EASY_QUESTIONS = [
@@ -1811,10 +1889,108 @@ def blog_selftest():
     return 1 if failures else 0
 
 
+def price_body_selftest():
+    """Body price-scan test path (capture #1138 follow-up,
+    2026-11-10): IN-MEMORY sample captures through
+    assess_shelf_life() and classify(). Nothing is filed or
+    written. The October-style case (plain title, priced body)
+    must come out price; the prose-money control must stay
+    reference; producer-tagged titles keep their declared kind.
+    Prints PRICE_BODY_SELFTEST_OK when all pass."""
+    samples = [
+        ("october-amd-plain-title-priced-body", {
+            "id": None,
+            "title": "AMD daily arc \u2014 October check",
+            "context": ("checked 2026-10-30; source "
+                        "https://example.invalid/amd-daily"),
+            "raw": ("Daily arc notes for the AMD position watch. "
+                    "The shares moved with the broader chip "
+                    "complex through the session and AMD closed "
+                    "at $404.40 on Thursday, the low print of "
+                    "the week after the datacenter headlines. "
+                    "Volume ran heavier than the prior five "
+                    "sessions and the name remains on the watch "
+                    "list for the next scheduled check, with the "
+                    "arc recorded here in full so the trend "
+                    "shelf holds the observation beside the "
+                    "earlier prints from this month and last."),
+        }, "price", "market verb at an amount"),
+        ("price-verb-in-body", {
+            "id": None,
+            "title": "Mini PC check",
+            "context": "",
+            "raw": ("The GMKtec EVO-X1 costs $1,149.99 at the "
+                    "store this week, same shelf position as "
+                    "the last check."),
+        }, "price", "amount after a price verb"),
+        ("per-unit-in-body", {
+            "id": None,
+            "title": "V100 watch",
+            "context": "",
+            "raw": ("The V100 32GB sits at $28.12/GB this week "
+                    "on the tracker, unchanged from the prior "
+                    "reading."),
+        }, "price", "amount per unit"),
+        ("prose-money-control", {
+            "id": None,
+            "title": "Build notes and budget talk",
+            "context": "",
+            "raw": ("Notes from the evening: the hardware "
+                    "budget is $500 for the month, the "
+                    "fundraiser raised $2 million last year, "
+                    "and he saved $300 on the electric bill "
+                    "over the summer. Nothing here was bought "
+                    "or quoted; it is household arithmetic "
+                    "recorded for context."),
+        }, "reference", None),
+        ("title-price-regression", {
+            "id": None,
+            "title": "PRICE: Core 4 EPYC 7252 $47.95",
+            "context": "",
+            "raw": "Short filed note.",
+        }, "price", None),
+        ("video-title-keeps-kind", {
+            "id": None,
+            "title": "VIDEO: a local AI episode",
+            "context": "",
+            "raw": ("In passing he mentions a server that "
+                    "costs $2,700 to build, one line in an "
+                    "hour of talk about local models."),
+        }, "video", None),
+    ]
+    failures = 0
+    for label, cap, expected_kind, expected_pattern in samples:
+        kind, days, basis = assess_shelf_life(cap)
+        ok = kind == expected_kind
+        if expected_pattern:
+            ok = ok and expected_pattern in basis
+        if label == "title-price-regression":
+            ok = ok and "capture body" not in basis
+        failures += 0 if ok else 1
+        print(f"SAMPLE {label}: kind={kind} "
+              f"(expected {expected_kind}) "
+              f"{'PASS' if ok else 'FAIL'}")
+        print(f"  basis: {basis}")
+        if label in ("october-amd-plain-title-priced-body",
+                     "prose-money-control"):
+            probe = dict(cap)
+            _route, reasons = classify(probe)
+            has = any("price pattern" in r for r in reasons)
+            want = label.startswith("october")
+            ok2 = has == want
+            failures += 0 if ok2 else 1
+            print(f"  classify price-pattern reason: {has} "
+                  f"(expected {want}) "
+                  f"{'PASS' if ok2 else 'FAIL'}")
+    print("PRICE_BODY_SELFTEST_" + ("FAILED" if failures else "OK"))
+    return 1 if failures else 0
+
 def main(argv=None):
     argv = argv or sys.argv
     if "--blog-selftest" in argv:
         return blog_selftest()
+    if "--price-body-selftest" in argv:
+        return price_body_selftest()
     dry = "--dry-run" in argv
     run(dry_run=dry)
     return 0

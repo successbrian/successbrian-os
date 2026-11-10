@@ -108,3 +108,14 @@ Phase 2 is not "wiring desks onto a harness." It is the rest of the flow's stops
 - Migration: `/home/dealsdesk/scripts/2026-11-09_market_pricing_intel_harness.sql`
 - Atlas: node `sys:intel-harness` (bookkeeping — map, not territory, §2)
 - Captures: #1098 (order), #1099–#1104 (rulings Q1–Q6), build record (this build's closing capture)
+
+## 10. Management surface — the Spencer Review Toolkit
+
+The flow is managed and guided day by day by the twice-daily Spencer
+review passes (captures #1113/#1114/#1130), whose instruments live in
+`tools/review/review.py` (window recorder, gauges panel, pass memory
+with snapshot/delta, friction ledger, decisions queue, briefing
+assembler; state in `successbrian_os.review_*`). Spec:
+`docs/spencer-review-toolkit-spec.md`. The toolkit is bookkeeping —
+map, not territory: it records and measures the flow; judgment lives
+in the passes, rulings with Brian.

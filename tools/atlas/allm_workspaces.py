@@ -1427,7 +1427,7 @@ SEGMENTS = {
                    "people-brian-likes", "ai-bubble-crash",
                    "flat-earth",
                    "name-finding-and-enrichment",
-                   "business-goals", "ecosystem-bible", "scattered-second-brain"],
+                   "business-goals", "ecosystem-bible", "scattered-second-brain", "rolodex"],
     },
 }
 
@@ -2845,6 +2845,24 @@ REGISTRY = [
      "Brian's career and job-search material.",
      "Career material.", "live",
      "Purpose drafted from workspace name — Brian to confirm."),
+    ("rolodex", "domain",
+     "Brian (SuccessBrian OS — his personal Rolodex)", None,
+     "The Rolodex knowledge body: Brian's specialized CRM "
+     "functionality and personal sales system inside "
+     "SuccessBrian OS — its design, its integration, and "
+     "Meghan CEO's every-heartbeat improvement passes on "
+     "it. Holds design/integration knowledge and heartbeat "
+     "state, NOT Brian's contacts' private details (those "
+     "live in the people machinery).",
+     "Rolodex design, integration notes, and Meghan's "
+     "heartbeat passes land here (latest pass replaces "
+     "rolodex-heartbeat-latest.md). Contact/person records "
+     "do NOT land here.",
+     "live",
+     "Ordered by Brian 2026-11-09: an Atlas project in "
+     "Altair's second brain with its own AnythingLLM "
+     "workspace, worked by Meghan CEO every heartbeat. "
+     "Created in AnythingLLM 2026-11-09 via the API."),
     ("crew2", "domain", "Brian (day job — Crew2 Inc.)", None,
      "Brian's Crew2 day-job knowledge body: his own notes, "
      "observations and proposals from working as a "

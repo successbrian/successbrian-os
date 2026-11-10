@@ -105,6 +105,7 @@ a full-height dual-slot card. A tower that cannot host the GPU has no job
 in this fleet — 1L/SFF already cover CPU-only nodes. Build note: these
 server cards are passive — a tower build needs directed airflow over the
 card.
+**Amendment (2026-11-09, P40 cleanup - capture #1091):** Brian blocked the Tesla P40 on 2026-10-25. Despite the Oct 20 doctrine text above, the P40 is NOT a tower GPU class for Brian's builds; the tower classes are V100 32 GB, M40 24 GB, and 3090-class, and the fleet GPU standard is dual Tesla V100 32GB PCIe.
 
 ## Priority order (Spencer's read — Brian decides)
 1. Get the current fleet UP AND RUNNING (below) — everything else waits

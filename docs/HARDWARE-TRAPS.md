@@ -40,6 +40,7 @@ inference stack if you pin versions:
   pick for inference.
 - **Tesla P40 24 GB** (Pascal, sm_61) — 24 GB, server blower design, runs
   llama.cpp well.
+  **Fleet ruling (Brian, 2026-10-25; P40 cleanup 2026-11-09): BLOCKED for Brian's builds - never a buy class or a spec option here, whatever the hardware can run. The fleet GPU standard is dual Tesla V100 32GB PCIe. This entry remains as hardware reference only.**
 - **Tesla M40 12/24 GB** (Maxwell, sm_52) — no tensor cores, but serviceable
   inference overflow.
 

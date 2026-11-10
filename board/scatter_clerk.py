@@ -581,6 +581,19 @@ def classify(cap, contexts=None):
             f"body carries a price pattern ({_bph[0]}: "
             f"'{_bph[1]}') — price intel by body scan")
 
+    # AI-THINKING overlay (Brian, 2026-11-10): flag captures
+    # that carry what businesses think about AI solving their
+    # problems — the lens Brian reads by. Detection only;
+    # routing unchanged.
+    try:
+        _ait = match_ai_thinking(cap)
+    except Exception:
+        _ait = None
+    cap["_ai_thinking"] = _ait
+    if _ait:
+        reasons.append(
+            "carries business AI thinking — " + _ait["reason"])
+
     # ARTICLE OVERLAY (Brian, 2026-11-01): for kept intel, the clerk also
     # asks the article question — is this related to an article we need on
     # a blog? Existing article FIRST, then new-article via blog boundaries
@@ -659,6 +672,328 @@ def _body_price_hit(cap):
         if m:
             return name, " ".join(m.group(0).split())
     return None
+
+# ------------------------------------------------------------------
+# AI-THINKING LENS (Brian, 2026-11-10 00:54 CST: "what matters to
+# BRIAN is learning more and more about AI and what businesses are
+# thinking in regards to how AI solves their problems"; 00:57 CST:
+# "program this logic into my flow into actual code"). A word
+# rule in the clerk's style — named patterns, the reason stated
+# in words, NO score: does this item carry what businesses and
+# operators THINK about AI solving business problems — their
+# results in their own words, adoption and pricing moves for
+# business AI, vendor AI-for-business announcements with
+# customer outcomes attached — as opposed to pure tech specs or
+# model news? Detection rides along in classify()
+# (cap["_ai_thinking"]); routing is unchanged. Stored tags live
+# in successbrian_os.ai_thinking_tags (the backfill verb below);
+# Brian's monthly positioning pulse reads them through
+# tools/ecosystem_intel/ai_thinking_feed.py.
+_AI_ANCHOR = (r"(?:\bai\b|\ba\.i\.\b|artificial intelligence"
+              r"|\bai agents?\b|\bchatbots?\b|\bcopilot\b"
+              r"|\bautomation\b)")
+_AI_THINKING_PATTERNS = [
+    ("operator outcome in their own words",
+     re.compile(r"(?i)\b(?:we|our (?:team|business|company|shop|"
+                r"store|agency|clients?|customers?))\b"
+                r"[\s\S]{0,90}?" + _AI_ANCHOR +
+                r"[\s\S]{0,90}?\b(?:sav\w+|cut|reduc\w+|increas\w+"
+                r"|grew|grow\w+|book\w+|clos\w+|answer\w+|handl\w+"
+                r"|respond\w+|free\w+|missed calls?)\b")),
+    ("customers reporting AI results",
+     re.compile(r"(?i)\b(?:customers?|clients?|businesses|"
+                r"companies|operators?|owners?|firms?)\b"
+                r"[^.\n]{0,70}?(?:using|use|used|adopt\w+|deploy\w+"
+                r"|report\w*|achiev\w+|gain\w+|sav\w+|seeing|saw)"
+                r"\b[^.\n]{0,70}?" + _AI_ANCHOR)),
+    ("outcome-based AI offer",
+     re.compile(r"(?i)(?:" + _AI_ANCHOR +
+                r"[^.\n]{0,80}?\b(?:outcome[- ]based|tied to "
+                r"(?:customer )?outcomes?|measurable (?:goals|"
+                r"results|outcomes))\b"
+                r"|\b(?:outcome[- ]based|tied to (?:customer )?"
+                r"outcomes?|measurable (?:goals|results|outcomes))"
+                r"\b[^.\n]{0,80}?" + _AI_ANCHOR + r")")),
+    # The problem nouns stay CONCRETE service-business
+    # functions: the first full backfill (2026-11-10) showed
+    # the loose words (follow-ups, pipeline, dispatch,
+    # booking) firing on the ecosystem's own machinery prose,
+    # where they mean code, not a business problem.
+    ("AI handed a business problem",
+     re.compile(r"(?i)(?:" + _AI_ANCHOR +
+                r"[^.\n]{0,70}?\b(?:lead management|lead "
+                r"generation|self[- ]scheduling|appointments?|"
+                r"support tickets?|customer "
+                r"(?:support|service)|phone calls?|call handling)"
+                r"\b"
+                r"|\b(?:lead management|lead generation|"
+                r"self[- ]scheduling|appointments?|"
+                r"support tickets?|customer (?:support|service)|"
+                r"phone calls?|call handling)\b[^.\n]{0,70}?"
+                + _AI_ANCHOR + r")")),
+    ("businesses adopting AI",
+     re.compile(r"(?i)\b(?:businesses|companies|smbs?|small "
+                r"businesses|enterprises?|operators?|owners?|"
+                r"firms?)\b[^.\n]{0,70}?\b(?:adopt\w+|deploy\w+|"
+                r"piloting|rolling out|paying for|spending on)\b"
+                r"[^.\n]{0,70}?" + _AI_ANCHOR)),
+    ("AI pricing move for business",
+     re.compile(r"(?i)" + _AI_ANCHOR +
+                r"[^.\n]{0,50}?\b(?:pricing|prices?|per[- ]seat|"
+                r"per[- ]user|subscription|plans?)\b[^.\n]{0,50}?"
+                r"\b(?:business|enterprise|teams?|smb|commercial|"
+                r"customers?)\b")),
+    ("survey of business AI thinking",
+     re.compile(r"(?i)\b(?:survey|study|poll|benchmark|report)\b"
+                r"[^.\n]{0,70}?\b(?:businesses|business owners|"
+                r"operators|executives|leaders|smbs?)\b"
+                r"[^.\n]{0,70}?" + _AI_ANCHOR)),
+    ("share of businesses using AI",
+     re.compile(r"(?i)\b\d{1,3}\s?%\b[^.\n]{0,50}?\b(?:of )?"
+                r"(?:businesses|companies|owners|operators|smbs?|"
+                r"respondents)\b[^.\n]{0,60}?" + _AI_ANCHOR)),
+]
+
+_AI_TAGGER_ID = "scatter_clerk.match_ai_thinking v1 (2026-11-10)"
+
+
+def _ai_thinking_scan_text(cap):
+    return " ".join([cap.get("title") or "",
+                     cap.get("context") or "",
+                     cap.get("raw") or cap.get("raw_text") or ""])
+
+
+# A hit whose own matched words are code talking about itself
+# (a self-test fixture, a unit test) is machinery, not a
+# business thinking about AI — the fixture titled "... AI
+# pipeline" in capture #1097 is the found example (2026-11-10
+# backfill). The exclusion reads the matched span only.
+_AI_THINKING_EXCLUSIONS = ("selftest", "self-test", "self test",
+                           "fixture", "unit test", "py_compile")
+
+
+def match_ai_thinking(cap):
+    """Brian's AI-thinking lens: does this capture carry what
+    businesses/operators think about AI solving business
+    problems? A word rule, answered in words — returns
+    {"patterns": [(name, matched), ...], "reason": str} or
+    None. A pattern either hits or it doesn't; the reason
+    names the pattern and quotes the words that hit. No
+    score, no grading of worth."""
+    text = _ai_thinking_scan_text(cap)
+    if not text.strip():
+        return None
+    hits = []
+    for name, rx in _AI_THINKING_PATTERNS:
+        m = rx.search(text)
+        if m:
+            matched = " ".join(m.group(0).split())[:160]
+            if any(x in matched.lower()
+                   for x in _AI_THINKING_EXCLUSIONS):
+                continue
+            hits.append((name, matched))
+        if len(hits) >= 3:
+            break
+    if not hits:
+        return None
+    reason = "; ".join(f"{name} ('{matched}')"
+                       for name, matched in hits)
+    return {"patterns": hits, "reason": reason}
+
+
+def _ensure_ai_thinking_schema(cur):
+    cur.execute(
+        "CREATE TABLE IF NOT EXISTS "
+        "successbrian_os.ai_thinking_tags ("
+        " capture_id integer PRIMARY KEY,"
+        " ai_thinking boolean NOT NULL,"
+        " patterns text NOT NULL DEFAULT '',"
+        " reason text NOT NULL DEFAULT '',"
+        " tagger text NOT NULL,"
+        " tagged_at timestamptz NOT NULL DEFAULT now())")
+
+
+def ai_thinking_backfill(limit=200, dry_run=False):
+    """Standalone backfill: run the AI-thinking lens over the
+    most recent `limit` captures and store each verdict +
+    reason in successbrian_os.ai_thinking_tags, where the
+    monthly pulse reads it. Existing tags for a capture are
+    refreshed in place. Prints the YES count and sample
+    reasons; ends AI_THINKING_BACKFILL_OK."""
+    c = pm_core.conn()
+    cur = c.cursor()
+    cur.execute(
+        "SELECT id, title, coalesce(context,''), "
+        "coalesce(raw_text,'') FROM atlas.scattered_captures "
+        "ORDER BY id DESC LIMIT %s", (limit,))
+    rows = cur.fetchall()
+    if not dry_run:
+        _ensure_ai_thinking_schema(cur)
+    yes = []
+    n_no = 0
+    for r in rows:
+        cap = {"id": r[0], "title": r[1], "context": r[2],
+               "raw": r[3]}
+        hit = match_ai_thinking(cap)
+        if hit:
+            yes.append((r[0], r[1], hit))
+            patterns = ", ".join(n for n, _ in hit["patterns"])
+            reason = hit["reason"]
+        else:
+            n_no += 1
+            patterns = ""
+            reason = "no business-AI-thinking pattern hit"
+        if not dry_run:
+            cur.execute(
+                "INSERT INTO successbrian_os.ai_thinking_tags "
+                "(capture_id, ai_thinking, patterns, reason, "
+                "tagger) VALUES (%s, %s, %s, %s, %s) "
+                "ON CONFLICT (capture_id) DO UPDATE SET "
+                "ai_thinking=EXCLUDED.ai_thinking, "
+                "patterns=EXCLUDED.patterns, "
+                "reason=EXCLUDED.reason, tagger=EXCLUDED.tagger, "
+                "tagged_at=now()",
+                (r[0], bool(hit), patterns, reason,
+                 _AI_TAGGER_ID))
+    if not dry_run:
+        c.commit()
+    c.close()
+    print(f"AI-THINKING BACKFILL: scanned {len(rows)} captures, "
+          f"{len(yes)} tagged ai-thinking, {n_no} not"
+          + (" (dry run — nothing stored)" if dry_run else ""))
+    for cid, title, hit in yes[:5]:
+        print(f"  YES #{cid}: {title}")
+        print(f"    reason: {hit['reason']}")
+    print("AI_THINKING_BACKFILL_OK")
+    return 0
+
+
+def ai_thinking_selftest():
+    """AI-thinking lens test path (Brian's lens, 2026-11-10):
+    IN-MEMORY sample captures through match_ai_thinking() and
+    classify(). Nothing is filed or written. The ASCENT-style
+    announcement and the operator case study must tag YES with
+    their pattern named; the GPU spec sheet and the model
+    release must tag NO. Prints AI_THINKING_SELFTEST_OK when
+    all pass."""
+    samples = [
+        ("ascent-style-vendor-announcement", {
+            "id": None,
+            "title": "INTEL — Aptean launches ASCENT, an "
+                     "outcome-based AI partnership",
+            "context": ("checked 2026-10-07; source "
+                        "https://example.invalid/ascent"),
+            "raw": ("Aptean announced ASCENT at UNITE: baselines "
+                    "agreed up front, measurable goals on a "
+                    "30/60/90 cadence, and part of Aptean's own "
+                    "economics tied to customer outcomes. The "
+                    "first agents cover lead management and "
+                    "self-scheduling for home-services customers, "
+                    "with results reviewed against the agreed "
+                    "baselines every month."),
+        }, True, "outcome-based AI offer"),
+        ("operator-case-study-with-numbers", {
+            "id": None,
+            "title": "How one 40-person home-services shop "
+                     "stopped missing calls",
+            "context": "",
+            "raw": ("We run a 40-person home-services company "
+                    "out of Minneapolis. Last spring we put an "
+                    "AI agent on the phones after hours. It "
+                    "answers every call, books the appointment, "
+                    "and texts the customer a confirmation. We "
+                    "cut missed calls to near zero and booked "
+                    "jobs went up 23% in the first quarter — "
+                    "the crew starts every morning with a full "
+                    "board."),
+        }, True, "operator outcome in their own words"),
+        ("survey-adoption-numbers", {
+            "id": None,
+            "title": "Survey: small businesses lean into AI "
+                     "for support",
+            "context": "",
+            "raw": ("A new survey of 1,200 small businesses "
+                    "finds 61% of respondents use AI for "
+                    "customer support this year, up from 44% "
+                    "last year, and most owners say the tools "
+                    "answer routine questions overnight while "
+                    "the office is closed."),
+        }, True, "survey of business AI thinking"),
+        ("gpu-spec-sheet", {
+            "id": None,
+            "title": "PRICE: Tesla V100 32GB PCIe — $899.95",
+            "context": "checked 2026-11-09; server store listing",
+            "raw": ("Listing check: Tesla V100 32GB, HBM2 "
+                    "memory, 5,120 CUDA cores, 250W TDP, PCIe "
+                    "form factor. Works out to $28.12/GB at "
+                    "this week's ask, unchanged from the prior "
+                    "reading. Two units in stock at the store."),
+        }, False, None),
+        ("model-release-note", {
+            "id": None,
+            "title": "New open-weights model: 128k context, "
+                     "benchmark highs",
+            "context": "",
+            "raw": ("The lab released its newest open-weights "
+                    "model this morning: 70B parameters, a 128k "
+                    "token context window, and top scores on "
+                    "the standard reasoning benchmarks. Weights "
+                    "are on the hub under an Apache license; "
+                    "inference providers list it at $0.40 per "
+                    "million tokens."),
+        }, False, None),
+        ("code-fixture-control", {
+            "id": None,
+            "title": "P40 flip logic KILLED in dormant scripts",
+            "context": "",
+            "raw": ("Cleanup complete: the flip logic is gone "
+                    "from the dormant scripts, including a "
+                    "pipeline self-test fixture titled 'Dual "
+                    "Tesla P40 48GB VRAM AI for LLM Inference "
+                    "Price History' in the valuation selftest."),
+        }, False, None),
+        ("internal-machinery-control", {
+            "id": None,
+            "title": "Podcast handoff #1340 returned a memo, "
+                     "not a script",
+            "context": "",
+            "raw": ("The Friday 19:00 kickoff ran, the handoff "
+                    "queue drained, but the writing step "
+                    "returned a findings memo instead of a "
+                    "dialogue script, so no MP3 was produced. "
+                    "The ten podcast tasks remain pending."),
+        }, False, None),
+    ]
+    failures = 0
+    for label, cap, expected_yes, expected_pattern in samples:
+        hit = match_ai_thinking(cap)
+        got_yes = hit is not None
+        ok = got_yes == expected_yes
+        if expected_pattern:
+            ok = ok and expected_pattern in hit["reason"]
+        failures += 0 if ok else 1
+        print(f"SAMPLE {label}: ai_thinking={got_yes} "
+              f"(expected {expected_yes}) "
+              f"{'PASS' if ok else 'FAIL'}")
+        print(f"  reason: {hit['reason'] if hit else 'no hit'}")
+    probe = dict(samples[1][1])
+    _route, reasons = classify(probe)
+    has = any("business AI thinking" in r for r in reasons)
+    failures += 0 if has else 1
+    print(f"  classify ai-thinking reason: {has} (expected True) "
+          f"{'PASS' if has else 'FAIL'}")
+    probe2 = dict(samples[3][1])
+    _route2, reasons2 = classify(probe2)
+    has2 = any("business AI thinking" in r for r in reasons2)
+    failures += 0 if not has2 else 1
+    print(f"  classify ai-thinking reason (gpu): {has2} "
+          f"(expected False) {'PASS' if not has2 else 'FAIL'}")
+    print("AI_THINKING_SELFTEST_" + ("FAILED" if failures
+                                     else "OK"))
+    return 1 if failures else 0
+
+
+
 
 def assess_shelf_life(cap):
     """THE clerk's one assessment: how long this intel stays
@@ -1991,6 +2326,14 @@ def main(argv=None):
         return blog_selftest()
     if "--price-body-selftest" in argv:
         return price_body_selftest()
+    if "--ai-thinking-selftest" in argv:
+        return ai_thinking_selftest()
+    if "--ai-thinking-backfill" in argv:
+        limit = 200
+        if "--limit" in argv:
+            limit = int(argv[argv.index("--limit") + 1])
+        return ai_thinking_backfill(
+            limit=limit, dry_run="--dry-run" in argv)
     dry = "--dry-run" in argv
     run(dry_run=dry)
     return 0

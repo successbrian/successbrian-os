@@ -21,6 +21,16 @@ Spencer to verify against the source page before it is treated as
 fact. The verification judgment stays agent-side; this script never
 invents a date, city, price, or deadline.
 Cron (alpha, America/Chicago): 41 9 15 * *
+
+SESSION-PICK RULE (Brian's lens, 2026-11-10): when the UNITE
+2027 agenda publishes and sessions are ranked for Brian, AI
+content ranks FIRST — sessions where businesses present how
+AI solves their problems (operator results, measured
+outcomes, the ASCENT line) outrank product-roadmap and spec
+sessions. The rule lives in SESSION_PICK_RULE below, beside
+the watch that will spot the agenda's arrival; the picking
+itself stays Spencer/Brian-side, and the ranking becomes
+executable when an agenda exists to rank.
 """
 import json
 import os
@@ -43,6 +53,27 @@ QUERIES = ["Aptean UNITE 2027", "Aptean UNITE 2027 registration",
            "site:events.aptean.com UNITE"]
 EVENT_URLS = ["https://events.aptean.com/unite2027/home",
               "https://events.aptean.com/unite2027"]
+
+# SESSION-PICK RULE (Brian, 2026-11-10 00:54 CST: "what matters
+# to BRIAN is learning more and more about AI and what
+# businesses are thinking in regards to how AI solves their
+# problems"). When an agenda exists, rank sessions carrying
+# these markers first; a session whose title/abstract matches
+# the clerk's AI-thinking lens (board/scatter_clerk.py
+# match_ai_thinking) outranks one that matches only product
+# markers. Config, not code path: nothing ranks anything
+# until an agenda publishes.
+SESSION_PICK_RULE = {
+    "rank_first": "ai_business_thinking",
+    "why": "Brian's lens (2026-11-10): learning what "
+           "businesses think about how AI solves their "
+           "problems outranks product and spec content",
+    "ai_first_markers": ["ai", "artificial intelligence",
+                         "agent", "automation", "ascent",
+                         "outcome", "case study", "results",
+                         "roi", "customer panel"],
+    "lens": "board/scatter_clerk.py match_ai_thinking",
+}
 
 
 def searx(q):

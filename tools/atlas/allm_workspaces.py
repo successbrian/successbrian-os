@@ -666,6 +666,7 @@ CLI:
 """
 
 import os
+import re
 import sqlite3
 import sys
 
@@ -3293,6 +3294,115 @@ def determine(conn, subject, category=None):
                    "in unsorted until an owner is named (R5)."}
 
 
+# ------------------------------------------------------------------
+# SUBJECT-EXTRACTION ROUTING (2026-11-09, clerk filing-flow
+# repair — Brian: "fix all leaks"). determine() matches the WHOLE
+# subject string against slugs and owner text, so a real capture
+# title ("Google Just Bet Its Cloud on EPYC. The Generation That
+# Started It Costs $48.") can never match and determinable
+# filings piled into unsorted (443 docs by 2026-11-09).
+# route_subject() keeps determine()'s ruled routes at FULL
+# precedence (negative registries, planning, exact/owner match),
+# then extracts the subject from the text itself: distinctive-
+# token scoring against every registered body (slug / owner /
+# purpose vocabulary, document-frequency weighted so generic
+# words cannot route), with the clerk's curated blog match as
+# strong evidence. A route is returned only on a CLEAR winner;
+# anything else stays intake (R5) — never force-fit. The why
+# names the matched evidence in words, clerk-grading style.
+_ROUTE_STOP = set(
+    "the and for with from into about above after before "
+    "between under over per via etc its are was were been has "
+    "have had not you your our their they them then than too "
+    "very can will just".split())
+
+
+def _route_tokens(text):
+    return [t for t in re.findall(r"[a-z0-9]+", (text or "").lower())
+            if len(t) >= 3 and t not in _ROUTE_STOP]
+
+
+def _body_vocab(row):
+    return {"slug": _route_tokens((row[0] or "").replace("-", " ")),
+            "owner": _route_tokens(row[2] or ""),
+            "purpose": _route_tokens(row[4] or "")}
+
+
+def route_subject(conn, subject, extra_text="", blog_slug=None):
+    """determine() first; on intake, subject-extraction scoring.
+    Returns a determine()-shaped verdict dict (plus 'candidates'
+    — the top scored bodies — when extraction ran)."""
+    d = determine(conn, subject)
+    if d["verdict"] != "intake":
+        return d
+    rows = registry_rows(conn)
+    vocabs = {}
+    df = {}
+    for r in rows:
+        v = _body_vocab(r)
+        vocabs[r[0]] = v
+        for t in set(v["slug"] + v["owner"] + v["purpose"]):
+            df[t] = df.get(t, 0) + 1
+    from collections import Counter
+    subj_c = Counter(_route_tokens(subject))
+    extra_c = Counter(_route_tokens(extra_text))
+
+    def occ(t):
+        return min(subj_c.get(t, 0), 3) * 2 + min(extra_c.get(t, 0), 3)
+
+    scored = []
+    for r in rows:
+        slug = r[0]
+        if slug == "unsorted":
+            continue
+        v = vocabs[slug]
+        score = 0.0
+        hits = []
+        if v["slug"] and all(t in subj_c for t in v["slug"]):
+            score += 6.0
+            hits.append("subject names the body (%s)" % slug)
+        for t in set(v["slug"]):
+            n = occ(t)
+            if n and df.get(t, 99) <= 4:
+                score += 2.0 * n
+                hits.append("slug term '%s'" % t)
+        for t in set(v["owner"]):
+            n = occ(t)
+            if n and df.get(t, 99) <= 3:
+                score += 1.0 * n
+                hits.append("owner term '%s'" % t)
+        for t in set(v["purpose"]):
+            n = min(subj_c.get(t, 0), 2) * 2 + min(extra_c.get(t, 0), 2)
+            if n and df.get(t, 99) <= 2:
+                score += 0.5 * n
+        if blog_slug and slug == blog_slug:
+            score += 8.0
+            hits.append("clerk blog-context match")
+        if score > 0:
+            scored.append((score, slug, hits))
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    cands = [(sl, round(sc, 1)) for sc, sl, _ in scored[:3]]
+    if scored:
+        top = scored[0]
+        second = scored[1][0] if len(scored) > 1 else 0.0
+        if top[0] >= 8.0 and top[0] > second:
+            row = next(r for r in rows if r[0] == top[1])
+            return {"verdict": "existing", "workspace": top[1],
+                    "status": row[6],
+                    "why": "Subject extraction (2026-11-09 "
+                           "routing repair): %s — score %.1f "
+                           "vs next %.1f."
+                           % ("; ".join(top[2][:4])
+                              or "distinctive-term match",
+                              top[0], second),
+                    "candidates": cands}
+    return {"verdict": "intake", "workspace": "unsorted",
+            "why": "No owning workspace determined even after "
+                   "subject extraction. Material waits in "
+                   "unsorted until an owner is named (R5).",
+            "candidates": cands}
+
+
 def audit(conn):
     lines = []
     reg = {r[0]: r for r in registry_rows(conn)}
@@ -4298,6 +4408,17 @@ def selftest(conn):
     d = determine(conn, "unlabeled-scan-dump")
     check(d["verdict"] == "intake" and d["workspace"] == "unsorted",
           "ownerless material -> unsorted intake")
+
+    r1 = route_subject(
+        conn, "Weekly notes on the GotBackup comp plan and "
+              "sponsor onboarding numbers")
+    check(r1.get("workspace") == "gotbackup",
+          "subject extraction: a long real-world title routes "
+          "to its body, not unsorted (2026-11-09 repair)")
+    r2 = route_subject(conn, "unlabeled-scan-dump")
+    check(r2["verdict"] == "intake",
+          "subject extraction: no signal stays intake — never "
+          "force-fit (2026-11-09 repair)")
 
     lines = audit(conn)
     joined = "\n".join(lines)

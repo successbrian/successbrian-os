@@ -1508,9 +1508,24 @@ def file_wf3(cap, dry_run=False, sort_info=None):
         return file_price_intel(cap, kind, base, valid_until,
                                 dry_run=dry_run)
     subject = _wf3_subject(cap["title"])
+    if cap.get("_blog_context") is None:
+        try:
+            cap["_blog_context"] = match_blog(cap)
+        except Exception:
+            cap["_blog_context"] = None
+    _blog_slug = (cap.get("_blog_context") or {}).get("slug")
     c = pm_core.conn()
     try:
-        d = allm.determine(c, subject)
+        # Subject-extraction routing (2026-11-09 filing-flow
+        # repair): determine()'s ruled routes keep full
+        # precedence; on intake the subject is extracted from
+        # the capture's own text (and the clerk's blog match)
+        # before anything is allowed to land in unsorted.
+        d = allm.route_subject(
+            c, subject,
+            extra_text=(cap["context"] or "") + "\n"
+                       + (cap["raw"] or "")[:4000],
+            blog_slug=_blog_slug)
     finally:
         c.close()
     slug = d.get("workspace") or d.get("proposed_slug")
@@ -1538,18 +1553,15 @@ def file_wf3(cap, dry_run=False, sort_info=None):
         f"valuable until {valid_until.date().isoformat()} — "
         f"recheck after that date.")
     _blog_ctx = cap.get("_blog_context")
-    if _blog_ctx is None and sort_info is None:
-        try:
-            _blog_ctx = match_blog(cap)
-            cap["_blog_context"] = _blog_ctx
-        except Exception:
-            _blog_ctx = None
     blog_line = (("\nBlog context (attached by the clerk): "
                   + blog_context_line(_blog_ctx) + "\n")
                  if _blog_ctx else "")
+    route_line = ""
+    if d.get("candidates") is not None:
+        route_line = f"Clerk routing: {d.get('why', '')}\n"
     text = (f"# {cap['title']}\n\n"
             f"Intel Bridge capture #{cap['id']}, filed by Workflow "
-            f"#3 (the keeping workflow).\n{sort_line}\n{assess_line}\n"
+            f"#3 (the keeping workflow).\n{sort_line}\n{route_line}{assess_line}\n"
             f"{blog_line}\n"
             f"## Context\n{cap['context'] or ''}\n\n"
             f"## Intel\n{cap['raw'] or ''}\n")

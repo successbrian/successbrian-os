@@ -286,6 +286,20 @@ def push_to_anythingllm(title: str, content: str, slug: str) -> bool:
                 with urllib.request.urlopen(req2, timeout=60) as resp2:
                     resp2.read()
                 print(f'  [ok] Embedded into workspace {WORKSPACE_SLUG}: {locs}')
+                # EMBED AND INDEX ARE ONE ACT (2026-11-09
+                # filing-flow repair): catalog-register so the
+                # pushed decision doc is in the master index.
+                try:
+                    import os as _os
+                    import sys as _sys
+                    _sys.path.insert(0, _os.path.expanduser(
+                        '~/successbrian-os/tools/atlas'))
+                    import allm_embed as _ae
+                    _ae.register_catalog(
+                        WORKSPACE_SLUG, f'{slug}.md', title)
+                except Exception as _ce:
+                    print(f'  [warn] catalog registration failed '
+                          f'for {slug}: {_ce}')
             except Exception as e2:  # noqa: BLE001
                 print(f'  [warn] upload ok but embed failed for {slug}: {e2}')
         return True

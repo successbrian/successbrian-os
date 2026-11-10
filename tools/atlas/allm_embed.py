@@ -18,6 +18,7 @@ exists locally, and the next run retries).
 import json
 import os
 import sqlite3
+import sys
 import urllib.request
 import uuid
 
@@ -63,6 +64,60 @@ def _post(path, payload, key, timeout=60):
         return json.loads(resp.read().decode())
 
 
+def register_catalog(slug, filename, title=None):
+    """EMBED AND INDEX ARE ONE ACT (2026-11-09 clerk filing-flow
+    repair, Intel Bridge order 'fix all leaks'): every document
+    embedded through the fleet's paths is also registered in the
+    master index (successbrian_os.knowledge_index) as a catalog
+    row (kind 'embedded-doc'), so no embedded document is
+    invisible to the index or to the Agent Knowledge Gateway.
+
+    A catalog row asserts EXISTENCE + LOCATION only. Curated
+    registrations (kindex.register with a real subject -- the
+    clerk's WF3 filings, doctrine docs) remain the knowledge
+    items and carry the full reconcile checks; reconcile treats
+    catalog rows as existence checks only. Lazy import: kindex
+    imports this module. Guarded: returns the canonical id or
+    None; a failure is LOUD on stderr but never breaks the
+    embed -- the daily QA check counts unindexed documents, so
+    a miss cannot hide."""
+    try:
+        sys.path.insert(
+            0, os.path.expanduser('~/successbrian-os/board'))
+        import kindex as _kx
+        _subj = 'doc:%s/%s' % (slug, filename)
+        # Canonical ids are slugified (mint_id): two distinct
+        # documents can slugify to the same id ('ECOSYSTEM-SOP'
+        # vs 'ecosystem-sop', 'AGENTS.md' vs 'agents-md'). If
+        # the id is already owned by a DIFFERENT (workspace,
+        # filename), disambiguate deterministically so both
+        # documents keep a row.
+        _cid = _kx.mint_id(_subj)
+        _c = _kx.conn()
+        try:
+            _ex = _kx.get_item(_c, _cid)
+        finally:
+            _c.close()
+        if _ex and (_ex['allm_workspace'], _ex['allm_filename']) \
+                != (slug, filename):
+            import hashlib as _hl
+            _subj += ' [%s]' % _hl.sha1(
+                ('%s/%s' % (slug, filename)).encode()
+            ).hexdigest()[:6]
+        return _kx.register(
+            subject=_subj,
+            title=title or filename, kind='embedded-doc',
+            workspace=slug, filename=filename,
+            pointer_note='catalog registration: existence/'
+                         'location row written by the embed '
+                         'path (2026-11-09 filing-flow repair)')
+    except Exception as e:
+        print('[allm_embed] CATALOG REGISTRATION FAILED for '
+              '%s/%s: %s: %s'
+              % (slug, filename, type(e).__name__, e),
+              file=sys.stderr)
+        return None
+
 def embed_latest(slug, filename, text):
     """Upload text as filename into slug's workspace,
     replacing any prior edition. Returns the new
@@ -87,6 +142,12 @@ def embed_latest(slug, filename, text):
     loc = payload["documents"][0]["location"]
     _post("/api/v1/workspace/%s/update-embeddings" % slug,
           {"adds": [loc], "deletes": olds}, key)
+    _title = None
+    for _ln in (text or '').splitlines():
+        if _ln.startswith('# '):
+            _title = _ln[2:].strip()[:200]
+            break
+    register_catalog(slug, filename, _title)
     return loc
 
 

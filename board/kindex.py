@@ -451,6 +451,15 @@ def reconcile(dry_run=False, log=print):
                 problems.append(("missing_doc",
                                   "document unregistered or file missing "
                                   f"({item['allm_workspace']}/{item['allm_filename']})"))
+            elif item["kind"] == "embedded-doc":
+                # CATALOG ROW (2026-11-09 filing-flow repair):
+                # written by the embed path; its whole claim is
+                # existence + location, checked above. The text
+                # checks below (canonical-ID link, superseded
+                # stamp) apply to curated knowledge items only
+                # -- stamping thousands of cataloged documents
+                # with ID lines is not their contract.
+                pass
             elif item["status"] == "superseded" and "SUPERSEDED" not in text:
                 problems.append(("superseded_served",
                                  "superseded item still served without a stamp"))

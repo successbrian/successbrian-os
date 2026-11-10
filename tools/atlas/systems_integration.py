@@ -541,6 +541,17 @@ def embed_map(conn):
                      "Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=60) as resp:
             resp.read()
+        try:
+            import os as _os
+            import sys as _sys
+            _sys.path.insert(0, _os.path.dirname(
+                _os.path.abspath(__file__)))
+            import allm_embed as _ae
+            _ae.register_catalog("successbrian-os",
+                                 "systems-map.md",
+                                 "Systems map")
+        except Exception:
+            pass
         return "map: uploaded + embedded in successbrian-os"
     except Exception as exc:
         return "map: FAILED (%s) — graph unaffected" % exc

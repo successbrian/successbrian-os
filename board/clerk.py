@@ -431,6 +431,19 @@ def _biblecheck_problems():
             f"superseded attached filing(s) not archived — "
             f"used-but-superseded is archived, never deleted, "
             f"never left serving")
+    rows = _pg_rows(
+        "SELECT count(*), COALESCE(max(EXTRACT(EPOCH FROM "
+        "(now() - created_at)) / 3600), 0) FROM "
+        "atlas.scattered_captures WHERE status = 'raw' AND "
+        "created_at < now() - interval '26 hours'")
+    if rows and rows[0][0]:
+        problems.append(
+            f"raw capture backlog aging: {rows[0][0]} "
+            f"capture(s) still raw after 26 hours (oldest "
+            f"{float(rows[0][1]):.0f}h) -- the hourly sweep "
+            f"packets/files and the daily triage scores; a "
+            f"capture raw past that cycle is stuck, not "
+            f"waiting (2026-11-09 filing-flow repair)")
     bible = _bible_problems()
     if bible is None:
         notes.append("Bible workspace itself unverifiable "
@@ -597,6 +610,31 @@ def job_status(_args=None):
         (wm,),
     )
     unswept = cur.fetchone()[0]
+    # VISIBILITY (2026-11-09 filing-flow repair, Leak 3): raw
+    # captures BELOW the watermark used to be invisible here --
+    # file_packet never marks its captures triaged, so they sit
+    # raw-but-packeted until the daily SSB triage, and status
+    # only counted raw ABOVE the watermark. Count them, and
+    # count the subset with NO disposition at all (the true
+    # stuck set: neither packeted nor WF3-filed).
+    cur.execute(
+        "SELECT COUNT(*) FROM atlas.scattered_captures "
+        "WHERE status='raw' AND id <= %s",
+        (wm,),
+    )
+    raw_below = cur.fetchone()[0]
+    cur.execute(
+        "SELECT COUNT(*) FROM atlas.scattered_captures c "
+        "WHERE c.status='raw' AND c.id <= %s "
+        "AND NOT EXISTS (SELECT 1 FROM atlas.nodes n WHERE "
+        "n.node_key LIKE 'task:ssb-packet-%%' AND "
+        "n.details->'source_captures' @> to_jsonb(c.id)) "
+        "AND NOT EXISTS (SELECT 1 FROM "
+        "successbrian_os.wf3_filings f WHERE "
+        "f.capture_id = c.id)",
+        (wm,),
+    )
+    raw_undispositioned = cur.fetchone()[0]
     cur.execute(
         "SELECT COUNT(*) FROM atlas.nodes WHERE node_key LIKE 'task:ssb-packet-%%' "
         "AND created_at::date = %s",
@@ -610,6 +648,8 @@ def job_status(_args=None):
     packets_queued = cur.fetchone()[0]
     con.close()
     print(f"clerk status: watermark capture #{wm}; unswept raw captures: {unswept}; "
+          f"raw below watermark (packeted, awaiting daily triage): {raw_below}; "
+          f"raw below watermark with NO disposition: {raw_undispositioned}; "
           f"packets filed today: {packets_today}; packets queued for the board: {packets_queued}")
 
 

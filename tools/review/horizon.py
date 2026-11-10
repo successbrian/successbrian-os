@@ -36,6 +36,15 @@ week-briefing, horizon-selftest.
 State added (Postgres, successbrian_os schema):
   review_agenda          — the week's priorities, as data
   review_build_verdicts  — persisted build-verification verdicts
+
+Pace-data repair (2026-11-09, capture #1148): pace also reads the
+goal-driver stores as DATA — successbrian_os.monthly_goals (Brian-ruled
+monthly targets) + successbrian_os.goal_month_scores (actuals entered
+from program back offices ONLY, via tools/goal_driver.py score; an
+unreported month is NOT REPORTED, never estimated) +
+successbrian_os.goal_income_ladder (Brian's fixed dollar ladders,
+entered as data by tools/goal_pace_data_migration_2026-11-09.sql —
+amounts are Brian's data, never hardcoded here).
 """
 
 import calendar as _cal
@@ -114,6 +123,138 @@ def ensure_horizon_tables():
 # Sources: alpha stores only. A goal whose actuals are not machine-
 # readable is a coverage-gap line, never an invented figure.
 # ---------------------------------------------------------------------------
+def monthly_scorecard(today):
+    """Brian-ruled monthly goals (monthly_goals) vs the counts entered
+    from program back offices (goal_month_scores). An unreported month
+    is NOT REPORTED — never estimated (goal-driver doctrine)."""
+    first = date(today.year, today.month, 1)
+    dim = _cal.monthrange(today.year, today.month)[1]
+    rows = pg_rows("""
+        SELECT g.goal_key, g.product, g.target, g.unit, g.kind,
+               cur.achieved, cur.source, last.month, last.achieved
+        FROM successbrian_os.monthly_goals g
+        LEFT JOIN successbrian_os.goal_month_scores cur
+          ON cur.goal_key = g.goal_key AND cur.month = %s
+        LEFT JOIN LATERAL (
+            SELECT month, achieved
+            FROM successbrian_os.goal_month_scores s
+            WHERE s.goal_key = g.goal_key
+            ORDER BY month DESC LIMIT 1) last ON true
+        ORDER BY g.target DESC""", (first,))
+    out = []
+    for key, product, target, unit, kind, achieved, src, lm, la in rows:
+        fast = (kind == "fast_track")
+        if achieved is None:
+            verdict, state, rec = "no-data", "NOT REPORTED", None
+            required = None if fast else round(
+                float(target) * today.day / dim, 1)
+            rate = None
+        else:
+            state, rec = "reported", float(achieved)
+            if fast:
+                verdict = ("ahead" if rec >= float(target)
+                           else "holding")
+                required, rate = None, None
+            else:
+                required = float(target) * today.day / dim
+                ratio = rec / required if required > 0 else None
+                verdict = ("no-data" if ratio is None else
+                           "ahead" if ratio >= 1.1 else
+                           "slipping" if ratio < 0.7 else "holding")
+                required = round(required, 1)
+                rate = (round((float(target) - rec)
+                              / max(dim - today.day, 1), 2)
+                        if float(target) > rec else 0)
+        note = None
+        if state == "NOT REPORTED":
+            note = ("current month NOT REPORTED — counts enter from "
+                    "the program back office only "
+                    "(tools/goal_driver.py score); unreported months "
+                    "are never estimated.")
+            if lm is None:
+                note += (" No month has ever been reported for this "
+                         "goal.")
+        if fast:
+            note = ((note + " ") if note else "") + (
+                "Product pick still OPEN (Brian's ruling pending); "
+                "0 evidenced sales recorded — nothing fabricated.")
+        out.append({
+            "goal": product, "goal_key": key,
+            "store": "successbrian_os.monthly_goals + "
+                     "goal_month_scores",
+            "method": "monthly target (monthly_goals, Brian-ruled) "
+                      "vs entered back-office counts "
+                      "(goal_month_scores)",
+            "kind": kind, "target_per_month": float(target),
+            "target_unit": unit,
+            "actual_recorded_this_month": rec,
+            "actuals_state": state,
+            "actuals_source": src,
+            "required_by_today": required,
+            "rate_needed_rest_of_month": rate,
+            "last_reported": ({"month": lm.isoformat(),
+                               "achieved": float(la)}
+                              if lm is not None else None),
+            "verdict": verdict, "note": note})
+    return out
+
+
+def ladder_report(today):
+    """Brian's fixed dollar ladder for GotBackup, read from
+    successbrian_os.goal_income_ladder (data, entered 2026-11-09 by
+    tools/goal_pace_data_migration_2026-11-09.sql from Brian's
+    2026-10-29 ruling). The ladder never moves."""
+    rows = pg_rows("""
+        SELECT rung_month, target_monthly_usd
+        FROM successbrian_os.goal_income_ladder
+        WHERE goal_key = 'gotbackup-40' ORDER BY rung_month""")
+    if not rows:
+        return None
+    rungs = [{"month": r[0].isoformat(),
+              "target_monthly_usd": float(r[1])} for r in rows]
+    nxt = next((r for r in rows if r[0] >= date(today.year,
+                                                today.month, 1)), None)
+    months_to = None
+    if nxt is not None:
+        months_to = ((nxt[0].year - today.year) * 12
+                     + (nxt[0].month - today.month))
+    actual = _num(pg_one(
+        "SELECT actual_monthly_usd FROM successbrian_os.income_streams "
+        "WHERE name = 'GotBackup'"))
+    if actual is None:
+        verdict = "no-data"
+    elif nxt is not None and actual >= float(nxt[1]):
+        verdict = "ahead"
+    else:
+        verdict = "no-data"
+    return {
+        "goal": "GotBackup fixed dollar ladder",
+        "goal_key": "gotbackup-40",
+        "store": "successbrian_os.goal_income_ladder",
+        "method": "rungs as data vs the recorded GotBackup run-rate "
+                  "(income_streams.actual_monthly_usd)",
+        "rungs": rungs,
+        "next_rung": ({"month": nxt[0].isoformat(),
+                       "target_monthly_usd": float(nxt[1])}
+                      if nxt is not None else None),
+        "months_to_next_rung": months_to,
+        "recorded_run_rate_usd": actual,
+        "run_rate_state": ("NOT REPORTED" if actual is None
+                           else "recorded"),
+        "verdict": verdict,
+        "note": ("recorded run-rate: none on record — "
+                 "income_streams.actual_monthly_usd is unset for "
+                 "GotBackup, so ladder position is no-data, stated "
+                 "plainly; the rungs themselves are now data."
+                 if actual is None else
+                 "run-rate recorded; the instrument reports ladder "
+                 "position only against the next rung (no growth "
+                 "model is encoded)."),
+        "rule": "the ladder never moves; if the 40/mo pace is being "
+                "hit the PACE may be raised — the dollar rungs stay "
+                "(Brian, 2026-10-29)"}
+
+
 def pace_report():
     today = R.now_ct().date()
     cov, goals, gaps = [], [], []
@@ -135,7 +276,13 @@ def pace_report():
                 dim = _cal.monthrange(today.year, today.month)[1]
                 required = mt * today.day / dim
                 actual = _num(r[6]) or 0.0
-                ratio = (actual / required) if required > 0 else None
+                # A counter that has NEVER been updated is not a
+                # measurement (pace-data repair, 2026-11-09): verdict
+                # off it would be fiction. The maintained actuals home
+                # is goal_month_scores — see the monthly scorecard.
+                counter_live = r[8] is not None
+                ratio = ((actual / required)
+                         if (counter_live and required > 0) else None)
                 verdict = ("no-data" if ratio is None else
                            "ahead" if ratio >= 1.1 else
                            "slipping" if ratio < 0.7 else "holding")
@@ -143,16 +290,28 @@ def pace_report():
                     "goal": r[1], "store": "successbrian_os.sbos_goals",
                     "goal_id": r[0], "method": "monthly target vs "
                     "current_month_deals, pro-rated to today",
+                    "counter_state": ("live" if counter_live else
+                                      "never updated — not a "
+                                      "measurement"),
+                    "note": (None if counter_live else
+                             "this store's actuals counter "
+                             "(current_month_deals) has never been "
+                             "updated — it is not a measurement. "
+                             "Monthly actuals live in "
+                             "successbrian_os.goal_month_scores "
+                             "(program back-office counts only); see "
+                             "the monthly scorecard entries below."),
                     "target_per_month": mt,
                     "weekly_target": _num(sm.get("weekly_target")),
                     "daily_target": _num(sm.get("daily_target")),
-                    "actual_recorded_this_month": actual,
+                    "actual_recorded_this_month": (actual if counter_live
+                    else None),
                     "required_by_today": round(required, 1),
                     "ratio": round(ratio, 2) if ratio is not None else None,
                     "days_left_in_month": dim - today.day,
-                    "rate_needed_rest_of_month": round(
+                    "rate_needed_rest_of_month": (round(
                         (mt - actual) / max(dim - today.day, 1), 2)
-                    if mt > actual else 0,
+                    if mt > actual else 0) if counter_live else None,
                     "actuals_last_updated": r[8].isoformat() if r[8]
                     else None,
                     "verdict": verdict})
@@ -278,19 +437,30 @@ def pace_report():
     if m:
         goals.append(m)
     scores = _attempt(cov, "pace:goal_month_scores", ladder_probe)
-    gaps.append(
-        "GotBackup fixed dollar ladder: the monthly signup target is "
-        "machine-readable (sbos_goals), but the ladder's dollar rungs "
-        "are not stored as data in any alpha store searched "
-        "(sbos_goals.success_metrics holds targets only; "
-        f"goal_month_scores holds {scores} rows; atlas nodes carry "
-        "the standing-goal plan as prose). Ladder pace = coverage gap "
-        "until the rungs are entered as data.")
-    gaps.append(
-        "Quick-$1,000 track: no machine-readable actuals on alpha "
-        "(searched sbos_goals, brian_goals, goal_month_scores) — the "
-        "track lives in Brian's Muse-side goal record and chat. "
-        "Pace = coverage gap.")
+    sc = _attempt(cov, "pace:monthly_scorecard",
+                  lambda: monthly_scorecard(today))
+    if sc:
+        goals.extend(sc)
+    lad = _attempt(cov, "pace:goal_income_ladder",
+                   lambda: ladder_report(today))
+    unreported = [g["goal_key"] for g in (sc or [])
+                  if g.get("actuals_state") == "NOT REPORTED"]
+    if unreported:
+        gaps.append(
+            "Monthly-goal actuals feeding duty: counts enter "
+            "successbrian_os.goal_month_scores ONLY from program "
+            "back offices via tools/goal_driver.py score — never "
+            "estimated; unreported months print NOT REPORTED. "
+            f"goal_month_scores holds {scores} rows total; currently "
+            "unreported for this month: " + ", ".join(unreported)
+            + ". The review passes nag until a count is reported.")
+    if not lad:
+        gaps.append(
+            "GotBackup fixed dollar ladder: "
+            "successbrian_os.goal_income_ladder holds no rungs — "
+            "ladder pace cannot be computed until the rungs are "
+            "entered as data (tools/goal_pace_data_migration_"
+            "2026-11-09.sql).")
     gaps.append(
         "Muse-side tracked goals (user_action_required / "
         "new_information flags) are not readable from alpha; pace "
@@ -301,7 +471,8 @@ def pace_report():
             "task items (brian_todo sync); the date/progress rows are "
             "reported as recorded, store quality noted.")
     return {"taken_at": datetime.now(timezone.utc).isoformat(),
-            "goals": goals, "coverage_gaps": gaps, "coverage": cov}
+            "goals": goals, "ladder": lad,
+            "coverage_gaps": gaps, "coverage": cov}
 
 
 def pace_text(rep):
@@ -314,12 +485,25 @@ def pace_text(rep):
                 continue
         bits = [f"{g['goal']} [{g['verdict']}]"]
         if "target_per_month" in g:
-            bits.append(f"target {g['target_per_month']}/mo; recorded "
-                        f"this month {g['actual_recorded_this_month']}; "
-                        f"required by today {g['required_by_today']}; "
-                        f"rate needed rest of month "
-                        f"{g['rate_needed_rest_of_month']}/day")
-            if not g.get("actuals_last_updated"):
+            unit = g.get("target_unit")
+            bits.append(f"target {g['target_per_month']}/mo"
+                        + (f" ({unit})" if unit else ""))
+            rec = g.get("actual_recorded_this_month")
+            bits.append("recorded this month NOT REPORTED"
+                        if rec is None else
+                        f"recorded this month {rec}")
+            if g.get("required_by_today") is not None:
+                bits.append(f"required by today "
+                            f"{g['required_by_today']}")
+            if g.get("rate_needed_rest_of_month") is not None:
+                bits.append(f"rate needed rest of month "
+                            f"{g['rate_needed_rest_of_month']}/day")
+            lr = g.get("last_reported")
+            if lr:
+                bits.append(f"last reported {lr['month']}: "
+                            f"{lr['achieved']}")
+            if ("actuals_last_updated" in g
+                    and not g.get("actuals_last_updated")):
                 bits.append("actuals counter never updated in this "
                             "store (staleness noted)")
         elif "deadline" in g:
@@ -338,6 +522,24 @@ def pace_text(rep):
                  f"({g.get('store', '')})")
         if g.get("note"):
             L.append(f"    note: {g['note']}")
+    lad = rep.get("ladder")
+    if lad:
+        L.append(f"  LADDER — {lad['goal']} [{lad['verdict']}] "
+                 f"(data: {lad['store']})")
+        for r in lad["rungs"]:
+            L.append(f"    rung {r['month']}: "
+                     f"${r['target_monthly_usd']:,.0f}/mo")
+        nr = lad.get("next_rung")
+        if nr:
+            rr = lad.get("recorded_run_rate_usd")
+            L.append(f"    next rung {nr['month']}: "
+                     f"${nr['target_monthly_usd']:,.0f}/mo in "
+                     f"{lad['months_to_next_rung']} months; recorded "
+                     f"GotBackup run-rate: "
+                     + ("NOT REPORTED" if rr is None else f"${rr:,.2f}"))
+        L.append(f"    rule: {lad['rule']}")
+        if lad.get("note"):
+            L.append(f"    note: {lad['note']}")
     nb = sum(1 for g in rep["goals"]
              if g.get("store") == "public.brian_goals")
     if nb > 12:
@@ -775,8 +977,11 @@ def money_report():
     rep["builds"] = _attempt(cov, "money:builds", builds)
     rep["items"] = _attempt(cov, "money:items", items)
     rep["coverage_gaps"] = [
-        "quick-$1,000 track: no machine-readable spend or revenue "
-        "actuals on alpha (see pace) — money state = coverage gap."]
+        "quick-$1,000 track: data home exists on alpha "
+        "(successbrian_os.monthly_goals 'quick-1000', ruled "
+        "2026-10-29; actuals home goal_month_scores) but no spend "
+        "or revenue actuals are recorded yet (see pace) — money "
+        "state = no-data."]
     return rep
 
 
@@ -1492,8 +1697,24 @@ def horizon_selftest():
               if "GotBackup" in (g.get("goal") or "")]
         check("pace finds GotBackup monthly target",
               bool(gb) and gb[0].get("target_per_month") == 40.0)
+        check("pace never verdicts off a never-updated counter",
+              bool(gb) and gb[0].get("verdict") != "slipping")
+        lad = rep.get("ladder") or {}
+        rungs = lad.get("rungs") or []
+        check("pace reads the GotBackup dollar ladder as data",
+              len(rungs) == 4
+              and rungs[0]["target_monthly_usd"] == 1250.0
+              and rungs[-1]["target_monthly_usd"] == 3250.0)
+        sc_gb = [g for g in rep["goals"]
+                 if g.get("goal_key") == "gotbackup-40"]
+        check("pace scorecard carries GotBackup from goal_month_scores",
+              bool(sc_gb))
+        sc_q = [g for g in rep["goals"]
+                if g.get("goal_key") == "quick-1000"]
+        check("pace carries the quick-$1,000 track from its data home",
+              bool(sc_q))
         check("pace reports coverage gaps",
-              len(rep["coverage_gaps"]) >= 2)
+              len(rep["coverage_gaps"]) >= 1)
     except Exception as ex:  # noqa: BLE001
         check(f"pace runs ({ex})", False)
     # trend honesty on thin history

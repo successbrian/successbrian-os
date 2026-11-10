@@ -148,6 +148,31 @@ weekly checks horizon-* (one per verb, plus the selftest).
    not stored as data anywhere on alpha (goal_month_scores holds 0
    rows); the quick-$1,000 track has no alpha actuals; Claude-side
    tracked goals are not readable from alpha.
+   PACE-DATA REPAIR (2026-11-09, capture #1148): the ladder and the
+   monthly scorecard are now DATA. Stores: `monthly_goals`
+   (Brian-ruled monthly targets: gotbackup-40 / oliabo-30 /
+   systeme-50 / captures-3000, plus quick-1000 kind=fast_track —
+   the quick-$1,000 track's data home; product pick still OPEN),
+   `goal_month_scores` (the actuals home), and `goal_income_ladder`
+   (Brian's fixed dollar ladders — GotBackup rungs $1,250/mo by
+   2027-10, $2,000 by 2028-10, $2,750 by 2029-10, $3,250 by 2030-10;
+   entered by tools/goal_pace_data_migration_2026-11-09.sql from
+   Brian's 2026-10-29 ruling; THE LADDER NEVER MOVES — the signup
+   pace may be raised if hit, the rungs stay). FEEDING DUTY:
+   monthly-goal actuals enter `goal_month_scores` ONLY from program
+   back offices, via `tools/goal_driver.py score --goal KEY
+   --month YYYY-MM --achieved N --source S` — never estimated,
+   never backfilled from prose. An unreported month prints NOT
+   REPORTED and the pace verdict for it is no-data; a verdict is
+   never computed off a counter that was never updated (the
+   sbos_goals current_month_deals counter is one such — pace names
+   it not-a-measurement). Until Brian reports a back-office count,
+   EVERY monthly goal reads NOT REPORTED (at repair time no month
+   had ever been reported); the passes nag for the count via the
+   friction ledger. The GotBackup ladder position reads the
+   recorded run-rate from income_streams.actual_monthly_usd
+   (unset at repair time = NOT REPORTED). Remaining pace gap:
+   Claude-side tracked goals are not readable from alpha.
 2. **trend** — week-over-week over review_snapshots (history began
    2026-11-09; until a full week exists the report says
    "accumulating" and shows first-vs-latest), recurring QA failures

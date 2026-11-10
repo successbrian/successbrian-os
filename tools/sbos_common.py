@@ -267,6 +267,90 @@ def pg_exec_bool(sql: str, user: str = None, dbname: str = None) -> bool:
 
 # ---------------------------------------------------------------- llm
 
+# ------------------------------------------------------- budget state
+# Writer-side budget sync (2026-11-10; from the budget package,
+# Intel Bridge capture #1150): successbrian_os.project_budgets
+# carried a spent column NOTHING ever wrote (the October 2026
+# hardware master read $0.00 while dealsdesk.builds recorded
+# $625.37 of spend) and lapsed budgets still read status
+# 'active'. The two functions below are the missing writer.
+# DealsDesk's budget_sync.py is the rollover pass that calls
+# them; any other reader (the review toolkit's money verb, a
+# desk) may call the same derivation instead of re-deriving it.
+
+def budget_period_state(period_start, period_end, today=None):
+    """Where a budget period stands, in words: 'upcoming',
+    'current', or 'lapsed'. A pure derivation from the period
+    bounds: period_end before today means lapsed, whatever a
+    stored status column still says. Accepts dates or ISO
+    strings; a missing bound leaves that side open."""
+    from datetime import date as _date
+
+    def _as_date(v):
+        if v is None or isinstance(v, _date):
+            return v
+        return _date.fromisoformat(str(v)[:10])
+
+    today = today or _date.today()
+    start, end = _as_date(period_start), _as_date(period_end)
+    if start is not None and today < start:
+        return "upcoming"
+    if end is not None and today > end:
+        return "lapsed"
+    return "current"
+
+
+def budget_build_spend_total():
+    """Total spend recorded on dealsdesk builds — the figure a
+    MASTER budget's spent syncs from. The schema carries no
+    budget<->build link (verified 2026-11-10 against capture
+    #1150's figures): the master row in project_budgets is the
+    build program's spend envelope, so its spent is DEFINED as
+    this total until a link exists. Non-master budgets have no
+    membership rule and are never summed into."""
+    from decimal import Decimal
+    total = pg_one("SELECT COALESCE(SUM(spent), 0) "
+                   "FROM dealsdesk.builds")
+    return Decimal(str(total))
+
+
+def sync_project_budgets(apply=True):
+    """Recompute successbrian_os.project_budgets from the
+    record: spent for MASTER rows from budget_build_spend_total(),
+    and status aligned with budget_period_state() (an 'active'
+    row whose period has lapsed becomes 'lapsed'; other stored
+    statuses are left alone). Caps, amounts, and periods are
+    NEVER touched — renewal is Brian's ruling, not a sync's.
+    Returns a list of change dicts (empty when already in
+    agreement); with apply=False nothing is written."""
+    from decimal import Decimal
+    rows = pg_rows(
+        "SELECT id, budget_name, spent, status, period_start, "
+        "period_end, is_master FROM successbrian_os.project_budgets "
+        "ORDER BY id")
+    total = budget_build_spend_total()
+    changes = []
+    for (bid, name, spent, status, p_start, p_end,
+         is_master) in rows:
+        state = budget_period_state(p_start, p_end)
+        new_spent = total if is_master else Decimal(str(spent))
+        new_status = ("lapsed" if state == "lapsed"
+                      and status == "active" else status)
+        if Decimal(str(spent)) != new_spent or new_status != status:
+            changes.append({
+                "id": bid, "budget_name": name,
+                "old_spent": Decimal(str(spent)),
+                "new_spent": new_spent,
+                "old_status": status, "new_status": new_status,
+                "period_state": state, "is_master": bool(is_master)})
+            if apply:
+                pg_exec(
+                    "UPDATE successbrian_os.project_budgets "
+                    "SET spent = %s, status = %s, updated_at = now() "
+                    "WHERE id = %s",
+                    (new_spent, new_status, bid))
+    return changes
+
 def _int_or_none(v):
     try:
         return int(v)

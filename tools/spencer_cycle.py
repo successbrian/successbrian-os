@@ -110,6 +110,37 @@ def file_finding(title: str, context: str, raw: str) -> str:
     return (r.stdout or r.stderr or "").strip()[:200]
 
 
+def pg_log(report: dict, findings: list) -> None:
+    """Best-effort: mirror this run + findings into the shared Agent Cycle
+    tables (successbrian_os.agent_cycle_runs / agent_findings) so Altair,
+    the CEO agent, and the review passes see one shared picture. Never
+    fails the cycle."""
+    def esc(x: str) -> str:
+        return x.replace("'", "''")
+    stmts = [
+        "insert into successbrian_os.agent_cycle_runs "
+        "(agent_key, finished_at, checks_run, findings_new, findings_active, summary) "
+        f"values ('spencer', now(), 5, {len(report['findings_new_filed'])}, "
+        f"{len(findings)}, '{esc(json.dumps(report))}'::jsonb);"
+    ]
+    for key, title, _ctx, detail in findings:
+        full = f"spencer:{key}"
+        stmts.append(
+            "insert into successbrian_os.agent_findings "
+            "(dedup_key, agent_key, check_key, title, detail) "
+            f"values ('{esc(full)}', 'spencer', '{esc(key.split(':')[0])}', "
+            f"'{esc(title)}', '{esc(detail)}') "
+            "on conflict (dedup_key) do update set last_seen = now(), "
+            "times_seen = agent_findings.times_seen + 1, "
+            "status = 'open', detail = excluded.detail;")
+    sql = "\n".join(stmts)
+    try:
+        subprocess.run(SSH + [f'psql ecosystem_central -Atc "{sql}"'],
+                       capture_output=True, text=True, timeout=60)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-file", action="store_true",
@@ -192,6 +223,7 @@ def main() -> int:
         "findings_new_filed": new_filed,
         "cycles_total": state["cycles"],
     }
+    pg_log(report, findings)
     if args.json:
         print(json.dumps(report, indent=1))
     else:

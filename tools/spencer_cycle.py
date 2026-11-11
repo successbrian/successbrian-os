@@ -134,8 +134,9 @@ def pg_log(report: dict, findings: list) -> None:
             "times_seen = agent_findings.times_seen + 1, "
             "status = 'open', detail = excluded.detail;")
     sql = "\n".join(stmts)
+    cmd_sql = sql.replace("\\", "\\\\").replace('"', '\\"')
     try:
-        subprocess.run(SSH + [f'psql ecosystem_central -Atc "{sql}"'],
+        subprocess.run(SSH + [f'psql ecosystem_central -Atc "{cmd_sql}"'],
                        capture_output=True, text=True, timeout=60)
     except Exception:  # noqa: BLE001
         pass

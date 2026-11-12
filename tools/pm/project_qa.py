@@ -208,6 +208,29 @@ def run_http_check(spec):
         return "fail", {"why": f"{type(e).__name__}: {e}", "url": url}
 
 
+def _judgment_verdict(result):
+    """Honor a judge's verdict when the reply carries one.
+
+    The Morpheus worker finishes a step 'done' whenever the reply
+    is well-formed JSON holding the required keys — it never reads
+    the verdict. A verdict of fail recorded as pass would be a
+    false green, so the runner reads it here. No verdict key means
+    the check's contract is the output itself (e.g. a snapshot),
+    and done still passes, as before.
+    """
+    parsed = None
+    if isinstance(result, dict):
+        inner = result.get("parsed")
+        parsed = inner if isinstance(inner, dict) else result
+    if not isinstance(parsed, dict) or "verdict" not in parsed:
+        return None
+    v = parsed.get("verdict")
+    if isinstance(v, bool):
+        return "pass" if v else "fail"
+    return ("pass" if str(v).strip().lower()
+            in ("pass", "passed", "ok", "true", "yes") else "fail")
+
+
 def run_judgment_check(check, spec):
     """Judgment checks manage their own short-lived connection and
     persist their own outcome; returns (status, detail) where status
@@ -215,12 +238,14 @@ def run_judgment_check(check, spec):
     c = dict_conn()
     cur = c.cursor()
     cur.execute(
-        """SELECT pm_step_key FROM successbrian_os.pm_project_qa_runs
+        """SELECT id, pm_step_key FROM successbrian_os.pm_project_qa_runs
             WHERE check_id=%s AND status='queued' AND pm_step_key IS NOT NULL
             ORDER BY id DESC LIMIT 1""", (check["id"],))
     row = cur.fetchone()
     if row:
-        step_key = row["pm_step_key"] if isinstance(row, dict) else row[0]
+        run_id = row["id"] if isinstance(row, dict) else row[0]
+        step_key = (row["pm_step_key"] if isinstance(row, dict)
+                    else row[1])
         cur.execute("SELECT status, result FROM successbrian_os.pm_steps "
                     "WHERE step_key=%s", (step_key,))
         s = cur.fetchone()
@@ -231,9 +256,22 @@ def run_judgment_check(check, spec):
                 c.close()
                 return "pending", {}
             result = s["result"] if isinstance(s, dict) else s[1]
-            status = "pass" if st == "done" else "fail"
+            verdict = _judgment_verdict(result)
+            if st == "done" and verdict is not None:
+                status = verdict
+            else:
+                status = "pass" if st == "done" else "fail"
             detail = {"judgment_step": step_key, "result": result}
-            record_run(cur, check["id"], status, detail)
+            # Close out the queued run row in place. Inserting a
+            # fresh outcome row leaves the queued row behind, and
+            # the next due run re-collects the same finished step
+            # forever instead of filing a new judgment (checks
+            # 575 and 133 did exactly this for days).
+            cur.execute(
+                """UPDATE successbrian_os.pm_project_qa_runs
+                      SET status=%s, detail=%s::jsonb, ran_at=now()
+                    WHERE id=%s""",
+                (status, json.dumps(detail), run_id))
             if status == "fail":
                 on_fail(cur, check, detail)
             else:
@@ -242,14 +280,39 @@ def run_judgment_check(check, spec):
             c.commit()
             c.close()
             return status, detail
+        # Step row vanished: close the queued run as failed so
+        # the next due run files a fresh step instead of
+        # re-collecting a ghost.
+        detail = {"judgment_step": step_key,
+                  "why": "judgment step vanished"}
+        cur.execute(
+            """UPDATE successbrian_os.pm_project_qa_runs
+                  SET status='fail', detail=%s::jsonb, ran_at=now()
+                WHERE id=%s""",
+            (json.dumps(detail), run_id))
+        on_fail(cur, check, detail)
+        mark_check(cur, check, "fail", advance=True)
+        c.commit()
+        c.close()
+        return "fail", detail
+    # Specs were written over months with three spellings for the
+    # same instruction (instruction/judge/prompt), and most never
+    # named output_keys. Map the spellings; default the house
+    # contract verdict+evidence (what the passing judgment
+    # checks return). Specs with no instruction spelling at
+    # all still file empty and fail loudly — they need a
+    # written instruction, not a silent default.
+    instruction = (spec.get("instruction") or spec.get("judge")
+                   or spec.get("prompt") or "")
+    output_keys = spec.get("output_keys") or ["verdict", "evidence"]
     step_key = f"qa-{check['project_key']}-{check['check_key']}-{int(time.time())}"
     pm_core.add_step(
         cur, step_key,
         f"QA judgment: {check['project_key']}/{check['check_key']} — "
         f"{check['title']}", kind="judgment", origin="system", priority=45,
-        payload={"instruction": spec.get("instruction", ""),
+        payload={"instruction": instruction,
                  "context": spec.get("context", ""),
-                 "output_keys": spec.get("output_keys", []),
+                 "output_keys": output_keys,
                  "max_tokens": int(spec.get("max_tokens", 800))})
     record_run(cur, check["id"], "queued", {"filed_step": step_key},
                pm_step_key=step_key)

@@ -24,11 +24,16 @@ Rotation rules, encoded here (Brian-correctable defaults):
     never clobbered by a re-sync.
   - Engine tier (hard-work rule, 2026-11-12): planner = shaping/ordering
     the work; morpheus = routine/medium synthesis; sonic/reap = the
-    hardest judgment (final verdicts, ambiguous/thin evidence). v1
-    RECORDS the tier the look's spawned work belongs to; actually
-    dispatching look work to an engine is the B12b follow-up, not this
-    item. A look that finds work it cannot do files it as a named
-    blocker on the goal - never a silent skip.
+    hardest judgment (final verdicts, ambiguous/thin evidence). B12 v1
+    RECORDED the tier; B12b DISPATCHES it (--dispatch): planner ->
+    a pm_steps task step, morpheus -> a judgment step the
+    morpheus-worker claims, reap -> a B2 feeder packet on the bus
+    for gamma's REAP seat. Sonic has NO judgment claimant yet
+    (morpheus-worker claims every judgment step; serving sonic work
+    on Morpheus would be downward overflow, forbidden) so a
+    sonic-tier look files a named blocker instead - never a silent
+    skip, never a misroute. A look that finds work it cannot do
+    files it as a named blocker on the goal - never a silent skip.
   - Coverage line (report by exception): active goals, looked, never
     looked, oldest un-looked goal. All-clear rotations stay silent.
 
@@ -48,6 +53,11 @@ Usage:
                       [--tier planner|morpheus|sonic|reap]
                       [--blocker TEXT] [--clear-blocker] [--seat TEXT]
                                    file one real look
+  planner_rotation.py --dispatch [N] [--dry-run]
+                                   dispatch the N oldest undispatched
+                                   looks to their recorded engine tier
+                                   (default 10); --dry-run builds but
+                                   sends no REAP packet
 """
 import argparse
 import json
@@ -57,8 +67,11 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), "pm"))
 import sbos_common  # noqa: E402
 import goal_nodes as gn  # noqa: E402
+import pm_core  # noqa: E402
 
 ROTATION_EXCLUDED_STATUSES = ("done", "cancelled")
 ENGINE_TIERS = ("planner", "morpheus", "sonic", "reap")
@@ -195,6 +208,172 @@ def look(slug, findings, work="", tier=DEFAULT_TIER, blocker=None,
         conn.close()
 
 
+# ------------------------------------------------------------- B12b dispatch
+
+NO_WORK_PREFIXES = ("none", "no work", "no spawnable")
+
+
+def has_spawnable_work(work):
+    """True when a look's work_spawned names real work. The B12 look
+    convention writes 'none ...' when a look spawns nothing - that
+    is a statement, not work, and must never become a step."""
+    w = (work or "").strip()
+    if not w:
+        return False
+    return not w.lower().startswith(NO_WORK_PREFIXES)
+
+
+def _set_node_blocker(cur, slug, text):
+    """Set a blocker on a goal node only when it has none (never
+    clobber an existing blocker). Returns True when it wrote."""
+    cur.execute(
+        "SELECT details FROM atlas.nodes WHERE node_key = %s "
+        "AND node_type = 'goal'", [gn.node_key_for_slug(slug)])
+    row = cur.fetchone()
+    if row is None:
+        return False
+    details = dict(row[0] or {})
+    if details.get("blocker"):
+        return False
+    details["blocker"] = text
+    derrs = gn.validate_details(details)
+    if derrs:
+        raise ValueError(f"blocker would break the goal contract: {derrs}")
+    cur.execute(
+        "UPDATE atlas.nodes SET details = %s::jsonb WHERE node_key = %s",
+        [json.dumps(details), gn.node_key_for_slug(slug)])
+    return True
+
+
+def _mark_dispatched(cur, look_id, ref):
+    cur.execute(
+        "UPDATE successbrian_os.goal_coverage SET dispatched_at = now(), "
+        "dispatch_ref = %s WHERE id = %s", [ref, look_id])
+
+
+def do_dispatch(cur, look, dry_run=False):
+    """Dispatch ONE look row on an open cursor/transaction.
+    look: (id, goal_slug, findings, work_spawned, engine_tier,
+    blocker, priority). Returns (dispatch_ref, note). Raises on a
+    bad tier or a failed node write; the caller rolls that look
+    back and moves on. The reap bus insert commits on its own
+    connection before the ledger mark, so a crash between the two
+    leaves the look undispatched and a retry re-sends with the
+    same deterministic probe_id (dedup aid, never a silent loss)."""
+    lid, slug, findings, work, tier, blocker, prio = look
+    work = (work or "").strip()
+    if not has_spawnable_work(work):
+        if not (blocker or "").strip():
+            _set_node_blocker(
+                cur, slug,
+                f"dispatch: look {lid} named no spawnable work")
+        _mark_dispatched(cur, lid, "no-work:blocker-held")
+        return ("no-work:blocker-held",
+                "no spawnable work; blocker held, nothing created")
+    step_key = f"goal-look-{lid}-dispatch"
+    context = f"goal {slug} look {lid}: {(findings or '').strip()}"
+    if tier == "planner":
+        pm_core.add_step(
+            cur, step_key, f"[{slug}] {work[:100]}", kind="task",
+            source=f"goal_coverage:{lid}", priority=int(prio or 50),
+            payload={"instruction": work, "context": context,
+                     "source": f"goal_coverage:{lid}",
+                     "engine_tier": "planner"})
+        ref = f"pm_steps:{step_key}"
+        _mark_dispatched(cur, lid, ref)
+        return (ref, "planner task step created")
+    if tier == "morpheus":
+        pm_core.add_step(
+            cur, step_key, f"[{slug}] {work[:100]}", kind="judgment",
+            source=f"goal_coverage:{lid}", priority=int(prio or 50),
+            payload={"instruction": work, "context": context,
+                     "output_keys": ["verdict", "evidence"],
+                     "max_tokens": 800, "engine_tier": "morpheus"})
+        ref = f"pm_steps:{step_key}"
+        _mark_dispatched(cur, lid, ref)
+        return (ref, "morpheus judgment step created")
+    if tier == "sonic":
+        # No sonic judgment claimant exists: morpheus-worker claims
+        # every judgment step, and serving sonic work on Morpheus
+        # would be DOWNWARD overflow (forbidden). File the blocker;
+        # the sonic claimant is the B12c follow-up.
+        if not (blocker or "").strip():
+            _set_node_blocker(
+                cur, slug,
+                f"sonic-tier dispatch needs a sonic judgment "
+                f"claimant (look {lid})")
+        _mark_dispatched(cur, lid, "blocked:sonic-no-claimant")
+        return ("blocked:sonic-no-claimant",
+                "no sonic claimant yet; named blocker filed")
+    if tier == "reap":
+        prompt = (f"Goal {slug} (look {lid}): {work}\n\n"
+                  f"Findings: {(findings or '').strip()}")
+        if sbos_common.estimate_tokens(prompt) > 2000:
+            if not (blocker or "").strip():
+                _set_node_blocker(
+                    cur, slug,
+                    f"work too large for one feeder packet - needs "
+                    f"breakdown (look {lid})")
+            _mark_dispatched(cur, lid, "blocked:packet-too-large")
+            return ("blocked:packet-too-large",
+                    "prompt over the packet budget; blocker filed")
+        packet = sbos_common.build_reap_packet(
+            prompt, source=f"goal_coverage:{lid}",
+            probe_id=step_key, max_tokens=500)
+        if dry_run:
+            _mark_dispatched(cur, lid, "dry-run:reap-packet-ready")
+            return ("dry-run:reap-packet-ready",
+                    "packet builds within the 500-token ceiling; "
+                    "no bus insert in dry-run")
+        event_id = sbos_common.dispatch_reap_packet(
+            packet, source=f"goal_coverage:{lid}")
+        ref = f"bus.reap_infer:{event_id}"
+        _mark_dispatched(cur, lid, ref)
+        return (ref, f"REAP packet on the bus (event {event_id})")
+    raise ValueError(f"unknown engine_tier: {tier}")
+
+
+def fetch_undispatched(limit):
+    return sbos_common.pg_rows(
+        "SELECT c.id, c.goal_slug, c.findings, c.work_spawned, "
+        "c.engine_tier, c.blocker, COALESCE(g.priority, 50) "
+        "FROM successbrian_os.goal_coverage c "
+        "LEFT JOIN atlas.goal_nodes g ON g.goal_slug = c.goal_slug "
+        "WHERE c.dispatched_at IS NULL ORDER BY c.id ASC LIMIT %s",
+        [limit])
+
+
+def dispatch(limit=10, dry_run=False):
+    """Dispatch the oldest undispatched looks, one transaction
+    each: a failure rolls that look back and the run moves on."""
+    looks = fetch_undispatched(limit)
+    if not looks:
+        print("dispatch: no undispatched looks")
+        return 0
+    done, failed = 0, 0
+    for look in looks:
+        conn = sbos_common.connect()
+        try:
+            cur = conn.cursor()
+            cur.execute("BEGIN")
+            try:
+                ref, note = do_dispatch(cur, look, dry_run=dry_run)
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                print(f"  look {look[0]} ({look[1]}): FAILED {e}")
+                failed += 1
+                continue
+            print(f"  look {look[0]} ({look[1]}, tier {look[4]}): "
+                  f"{ref} - {note}")
+            done += 1
+        finally:
+            conn.close()
+    print(f"dispatch: {done} dispatched, {failed} failed "
+          f"({'dry-run' if dry_run else 'live'})")
+    return 0 if failed == 0 else 1
+
+
 def selftest():
     steps = []
 
@@ -305,6 +484,113 @@ def selftest():
     finally:
         conn.close()
 
+    # B12b dispatch: pure classification, then a live transactional
+    # probe (rolled back, no residue). The reap branch runs in
+    # dry-run inside the probe: a real bus insert would queue live
+    # gamma work and cannot be rolled back (own connection).
+    check("no-work text recognized (empty / none-prefixed)",
+          not has_spawnable_work("")
+          and not has_spawnable_work(
+              "none this look - next work named")
+          and not has_spawnable_work("No work spawned")
+          and has_spawnable_work("draft the offer page"))
+    probe_slug = "__selftest__b12b__"
+    probe = {"goal_slug": probe_slug, "priority": 50,
+             "coverage_window_days": 4}
+    conn = sbos_common.connect()
+    try:
+        cur = conn.cursor()
+        cur.execute("BEGIN")
+        cur.execute(
+            "INSERT INTO atlas.nodes "
+            "(node_key, node_type, name, status, details, ref_kind, "
+            "ref_id) VALUES (%s, 'goal', 'SELFTEST disposable', "
+            "'planned', %s::jsonb, 'sbos_goal', '0')",
+            [gn.node_key_for_slug(probe_slug), json.dumps(probe)])
+        probe_looks = []
+        for tier, work, blocker in [
+                ("planner", "shape the offer ladder", None),
+                ("morpheus",
+                 "judge whether the offer fits the audience", None),
+                ("sonic", "final verdict on the offer", None),
+                ("reap", "deep pass on the offer evidence", None),
+                ("reap", "x" * 9000, None),
+                ("planner", "none this look - nothing spawned",
+                 "probe blocker held")]:
+            cur.execute(
+                "INSERT INTO successbrian_os.goal_coverage "
+                "(goal_slug, planner_seat, findings, work_spawned, "
+                "engine_tier, blocker) VALUES (%s, 'planner', "
+                "'SELFTEST probe findings', %s, %s, %s) RETURNING id",
+                [probe_slug, work, tier, blocker])
+            lid = cur.fetchone()[0]
+            probe_looks.append((lid, probe_slug,
+                                "SELFTEST probe findings", work, tier,
+                                blocker, 50))
+        refs = [do_dispatch(cur, lk, dry_run=True)
+                for lk in probe_looks]
+        # NOTE: pg_one/pg_rows open their own connection, so they
+        # cannot see this transaction's uncommitted rows; all probe
+        # assertions below read through this transaction's cursor.
+        cur.execute("SELECT step_key, kind FROM successbrian_os.pm_steps "
+                    "WHERE step_key LIKE %s AND source = %s "
+                    "ORDER BY step_key",
+                    ["goal-look-%-dispatch",
+                     f"goal_coverage:{probe_looks[0][0]}"])
+        check("planner look created exactly one task step",
+              cur.fetchall() == [
+                  (f"goal-look-{probe_looks[0][0]}-dispatch", "task")])
+        cur.execute("SELECT kind FROM successbrian_os.pm_steps "
+                    "WHERE step_key = %s",
+                    [f"goal-look-{probe_looks[1][0]}-dispatch"])
+        check("morpheus look -> judgment step",
+              refs[1][0] == f"pm_steps:goal-look-{probe_looks[1][0]}"
+              "-dispatch"
+              and cur.fetchone() == ("judgment",))
+        check("sonic look -> named blocker, no step",
+              refs[2][0] == "blocked:sonic-no-claimant")
+        cur.execute("SELECT details->>'blocker' FROM atlas.nodes "
+                    "WHERE node_key = %s",
+                    [gn.node_key_for_slug(probe_slug)])
+        check("sonic blocker landed on the goal node",
+              cur.fetchone()[0] == "sonic-tier dispatch needs a "
+              "sonic judgment claimant "
+              f"(look {probe_looks[2][0]})")
+        check("reap look dry-run -> packet ready, no bus insert",
+              refs[3][0] == "dry-run:reap-packet-ready")
+        check("oversize reap work -> packet-too-large blocker",
+              refs[4][0] == "blocked:packet-too-large")
+        check("no-work look -> blocker held, no step",
+              refs[5][0] == "no-work:blocker-held")
+        cur.execute("SELECT count(*) FROM successbrian_os.pm_steps "
+                    "WHERE step_key IN (%s, %s, %s, %s, %s, %s)",
+                    [f"goal-look-{l[0]}-dispatch"
+                     for l in probe_looks])
+        check("only planner + morpheus looks created steps",
+              cur.fetchone()[0] == 2)
+        cur.execute("SELECT count(*) FROM successbrian_os.goal_coverage "
+                    "WHERE goal_slug = %s AND dispatched_at IS NOT NULL",
+                    [probe_slug])
+        check("all six probe looks marked dispatched",
+              cur.fetchone()[0] == 6)
+        cur.execute("ROLLBACK")
+        check("probe goal node rolled back, no residue",
+              sbos_common.pg_one(
+                  "SELECT count(*) FROM atlas.nodes WHERE node_key = %s",
+                  [gn.node_key_for_slug(probe_slug)]) == 0)
+        check("probe ledger rows rolled back, no residue",
+              sbos_common.pg_one(
+                  "SELECT count(*) FROM successbrian_os.goal_coverage "
+                  "WHERE goal_slug = %s", [probe_slug]) == 0)
+        check("probe pm_steps rolled back, no residue",
+              sbos_common.pg_one(
+                  "SELECT count(*) FROM successbrian_os.pm_steps "
+                  "WHERE step_key LIKE 'goal-look-%-dispatch' "
+                  "AND source LIKE 'goal_coverage:%' "
+                  "AND created_at > now() - interval '1 hour'") == 0)
+    finally:
+        conn.close()
+
     print(f"PLANNER_ROTATION_OK ({len(steps)} checks)")
     return 0
 
@@ -322,7 +608,13 @@ def main():
     ap.add_argument("--blocker")
     ap.add_argument("--clear-blocker", action="store_true")
     ap.add_argument("--seat", default=DEFAULT_SEAT)
+    ap.add_argument("--dispatch", nargs="?", const=10, type=int,
+                    metavar="N")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="with --dispatch: build but send no REAP packet")
     a = ap.parse_args()
+    if a.dispatch is not None:
+        return dispatch(a.dispatch, dry_run=a.dry_run)
     if a.selftest:
         return selftest()
     if a.plan is not None:

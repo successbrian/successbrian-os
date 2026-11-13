@@ -44,6 +44,12 @@ SOURCES: v1 = dealsdesk.ram_sightings sellers (Jawa names today; eBay
          seller names are not in the PicClick parse yet — v2) +
          dealsdesk.suppliers (the standing supplier list). New scanners
          feed the same shape: aggregate_sellers() is source-agnostic.
+         v3 (2026-11-12, Brian: 'feed intel only you see daily into
+         dealsdesk'): dealsdesk.spencer_sightings — sightings Spencer
+         files from surfaces only he sees (Facebook Marketplace, eBay
+         hunts) — aggregated by aggregate_spencer_sightings() into the
+         same capture shape, so those sellers land in people.companies
+         and the registry alongside scanner-found sellers.
 CALLED BY: ram_deals.scan() at the end of every scan (guarded — a capture
          failure never fails the scan), or standalone: `seller_capture.py run`.
 MODES:   run | selftest
@@ -145,6 +151,51 @@ def aggregate_suppliers():
             "supplier_meta": {"region": region, "reliability": reliability,
                               "relationship": relationship}})
     return out
+
+
+
+def aggregate_spencer_sightings():
+    """Aggregate dealsdesk.spencer_sightings by (seller, platform).
+
+    Spencer-fed sightings (Brian 2026-11-12): surfaces only Spencer
+    sees — Facebook Marketplace, eBay hunts. A sighting counts as a
+    deal when it clears Brian's gate: documented health >90% AND
+    price at/under the standing 60 target (dealsdesk need 47)."""
+    agg = {}
+    rows = psql(ECODB,
+                """SELECT seller, platform, listing_title, price,
+                          capacity_gb, health_pct, url, seen_at::text
+                   FROM dealsdesk.spencer_sightings WHERE seller <> ''""")
+    for seller, platform, title, price, gb, health, url, seen in rows:
+        k = dedupe_key(seller, platform)
+        b = agg.setdefault(k, {
+            "name": seller.strip(), "platform": platform,
+            "category": "marketplace_seller", "classes": set(),
+            "sightings": 0, "deals": 0, "best_per_gb": None,
+            "first_seen": seen, "last_seen": seen, "samples": []})
+        b["classes"].add("NVMe/SSD sightings")
+        b["sightings"] += 1
+        try:
+            price_f = float(price); gb_f = float(gb)
+        except (TypeError, ValueError):
+            price_f = gb_f = None
+        if price_f and gb_f:
+            per = price_f / gb_f
+            if b["best_per_gb"] is None or per < b["best_per_gb"]:
+                b["best_per_gb"] = per
+        if health and price_f:
+            try:
+                if int(health) > 90 and price_f <= 460:
+                    b["deals"] += 1
+            except (TypeError, ValueError):
+                pass
+        if seen < b["first_seen"]:
+            b["first_seen"] = seen
+        if seen > b["last_seen"]:
+            b["last_seen"] = seen
+        if url and len(b["samples"]) < 3:
+            b["samples"].append(url)
+    return list(agg.values())
 
 
 def build_business(b):
@@ -305,7 +356,8 @@ def embed(text, filename):
 
 def run(embed_docs=True):
     businesses = [build_business(b)
-                  for b in aggregate_sellers() + aggregate_suppliers()]
+                  for b in aggregate_sellers() + aggregate_suppliers()
+                  + aggregate_spencer_sightings()]
     ins = upd = 0
     for rec in businesses:
         r = upsert_company(rec)

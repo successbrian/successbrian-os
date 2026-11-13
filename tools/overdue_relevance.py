@@ -97,6 +97,8 @@ ALTER TABLE successbrian_os.overdue_relevance
     ADD COLUMN IF NOT EXISTS reap_text text;
 ALTER TABLE successbrian_os.overdue_relevance
     ADD COLUMN IF NOT EXISTS reap_event_id2 bigint;
+ALTER TABLE successbrian_os.overdue_relevance
+    ADD COLUMN IF NOT EXISTS reap_passes int DEFAULT 0;
 CREATE INDEX IF NOT EXISTS overdue_relevance_item_idx
     ON successbrian_os.overdue_relevance
     (source_type, source_id, created_at);
@@ -319,54 +321,79 @@ def dispatch_reap(item, hits):
     return eid
 
 
-def plan_prompt(row, hits):
-    """Second REAP pass for a verdict-only row: the MONEY /
-    AUDIENCE / PLAN / FUTURE sections, given the verdict
-    the first pass already reached."""
-    rid, source, sid, title, days, blog, verdict = row
+SECTION_ORDER = ["MONEY", "AUDIENCE", "PLAN", "FUTURE"]
+MAX_CHAIN = 5
+
+
+def missing_sections(text, blog):
+    """Sections the deep pass still owes. Empirically the
+    gamma REAP seat returns ONE section per run (its
+    500-token runs end after the first section), so the
+    full document is assembled as a chain of
+    single-section passes."""
+    want = ["MONEY"] + (["AUDIENCE"] if blog else []) + \
+        ["PLAN", "FUTURE"]
+    have = (text or "").upper()
+    return [x for x in want if (x + ":") not in have]
+
+
+def section_prompt(row, section):
+    rid, source, sid, title, days, blog, prior = row
     parts = [
-        "You are the DeepSeek REAP 150B deep-planning seat "
-        "for Brian Lathe's SuccessBrian OS ecosystem. A "
-        "first deep pass on this overdue item reached the "
-        "verdict below. Your job is the second half: the "
-        "money and the future plan. Be dense: 2-4 sentences "
-        "per section, concrete, no filler. Your run is "
-        "time-boxed — a complete short plan beats an "
-        "unfinished long one.",
+        "You are the DeepSeek REAP 150B deep-planning "
+        "seat for Brian Lathe's SuccessBrian OS "
+        "ecosystem. A deep pass on this overdue item "
+        "produced the text below. Write ONLY the one "
+        "section named - nothing else, no preamble. 3-5 "
+        "dense sentences, concrete, no filler. Your run "
+        "is time-boxed.",
         "",
         MONEY_CONTEXT,
         "",
         f"THE ITEM: [{source}#{sid}] {title} "
         f"({days} days overdue).",
-        f"FIRST-PASS VERDICT: {verdict}",
+        "TEXT SO FAR:",
+        prior or "",
         "",
-        "Reply in exactly these sections:",
-        "MONEY: how this item makes money — what is sold, "
-        "to whom, through which capture door, at what kind "
-        "of price — or an honest 'no money path here' with "
-        "the reason.",
     ]
-    if blog:
+    if section == "MONEY":
         parts.append(
-            "AUDIENCE: which core audience this builds, the "
-            "capture offer, and the article's job: SELL or "
-            "DRAW. (What others have written needs a live "
-            "web check — name the searches to run rather "
-            "than inventing coverage.)")
-    parts += [
-        "PLAN: FIRST / SECOND / THIRD — concrete steps, "
-        "each with its owner (the system, or Brian).",
-        "FUTURE: where this leads in 30-90 days if the "
-        "plan is worked — and what it unlocks next.",
-    ]
+            "Write the MONEY section (start with "
+            "'MONEY:'): how this item makes money - what "
+            "is sold, to whom, through which capture "
+            "door, at what kind of price - or an honest "
+            "'no money path here' with the reason.")
+    elif section == "AUDIENCE":
+        parts.append(
+            "Write the AUDIENCE section (start with "
+            "'AUDIENCE:'): which core audience this "
+            "builds, the capture offer, and the "
+            "article's job: SELL or DRAW. What others "
+            "have written needs a live web check - name "
+            "the searches to run rather than inventing "
+            "coverage.")
+    elif section == "PLAN":
+        parts.append(
+            "Write the PLAN section (start with "
+            "'PLAN:'): FIRST / SECOND / THIRD - concrete "
+            "steps, each with its owner (the system, or "
+            "Brian).")
+    else:
+        parts.append(
+            "Write the FUTURE section (start with "
+            "'FUTURE:'): where this leads in 30-90 days "
+            "if the plan is worked - and what it unlocks "
+            "next.")
     return "\n".join(parts)
 
 
-def dispatch_plan(row, hits):
-    payload = {"prompt": plan_prompt(row, hits),
+def dispatch_section(row, section, hits):
+    payload = {"prompt": section_prompt(row, section),
                "max_tokens": REAP_MAX_TOKENS,
                "thinking": False,
-               "probe_id": f"overdue-plan-{row[1]}-{row[2]}"}
+               "probe_id":
+                   f"overdue-sec-{section.lower()}-"
+                   f"{row[1]}-{row[2]}"}
     return sbos_common.pg_one(
         "INSERT INTO bus.events (event_type, source, "
         "target, payload, priority) VALUES ('reap_infer', "
@@ -375,59 +402,40 @@ def dispatch_plan(row, hits):
 
 
 def parse_reap_body(body):
-    """Gamma's outbox body (JSON) -> the result text."""
+    """Gamma's outbox body is a JSON envelope; the REAP
+    text lives at result.text. Tolerates a pre-parsed
+    dict. Returns None on anything unparseable."""
+    if not body:
+        return None
     try:
-        data = json.loads(body)
-        return data["result"]["text"]
+        data = body if isinstance(body, dict) else \
+            json.loads(body)
+        text = (data.get("result") or {}).get("text")
+        return text.strip() if text else None
     except Exception:
         return None
 
 
-def file_capture(title, raw, context):
-    """One Intel Bridge capture, deduped by exact title
-    within 7 days. Returns the capture id or None."""
-    import base64 as b64
-    import subprocess
-
-    def b64sql(s):
-        return ("convert_from(decode('%s','base64'),'UTF8')"
-                % b64.b64encode(s.encode()).decode())
-
-    exists = sbos_common.pg_one(
-        "SELECT count(*) FROM atlas.scattered_captures "
-        "WHERE title = %s AND created_at > now() - interval "
-        "'7 days'", (title,))
-    if exists:
-        return None
-    sql = ("insert into atlas.scattered_captures "
-           "(title, raw_text, context, status) values "
-           f"({b64sql(title)}, {b64sql(raw)}, "
-           f"{b64sql(context)}, 'raw') returning id")
-    p = subprocess.run(["psql", "-d", "ecosystem_central",
-                        "-t", "-A", "-c", sql],
-                       capture_output=True, text=True, timeout=60)
-    out = (p.stdout or "").strip().splitlines()
-    return out[0] if out else ""
-
-
-def collect_plans():
-    """Land finished plan passes: append MONEY/PLAN/FUTURE
-    to the verdict text, mark the row done-full."""
+def collect_sections():
+    """Land a finished section pass: append it; the row
+    re-opens for its next missing section until the
+    document is complete ('done-full')."""
     rows = sbos_common.pg_rows(
-        "SELECT id, reap_event_id2, title, reap_text FROM "
-        "successbrian_os.overdue_relevance WHERE "
-        "reap_status = 'plan-pending' AND reap_event_id2 "
-        "IS NOT NULL")
+        "SELECT id, reap_event_id2, title, reap_text, "
+        "is_blog FROM successbrian_os.overdue_relevance "
+        "WHERE reap_status = 'chaining' AND "
+        "reap_event_id2 IS NOT NULL")
     landed = 0
-    for rid, eid, title, verdict in rows:
+    for rid, eid, title, text, blog in rows:
         estatus = sbos_common.pg_one(
             "SELECT status FROM bus.events WHERE id = %s",
             (eid,))
         if estatus in ("failed", "dead_letter"):
             sbos_common.pg_exec(
                 "UPDATE successbrian_os.overdue_relevance "
-                "SET reap_status = 'plan-failed' WHERE "
-                "id = %s", (rid,))
+                "SET reap_status = 'chain-open', "
+                "reap_event_id2 = NULL WHERE id = %s",
+                (rid,))
             continue
         body = sbos_common.pg_one(
             "SELECT body FROM successbrian_os.outbox "
@@ -437,48 +445,64 @@ def collect_plans():
             (f"gamma: event {eid} done (reap_infer)",))
         if not body:
             continue
-        text = parse_reap_body(body)
-        if not text:
+        sec = parse_reap_body(body)
+        if not sec:
             continue
-        full = (verdict or "") + "\n\n" + text
+        full = (text or "") + "\n\n" + sec
+        done = not missing_sections(full, blog)
         sbos_common.pg_exec(
             "UPDATE successbrian_os.overdue_relevance "
-            "SET reap_status = 'done-full', reap_text = %s "
-            "WHERE id = %s", (full, rid))
-        cid = file_capture(
-            "REAP DEEP (overdue, full): "
-            + (title or "")[:84], full,
-            "Complete REAP 150B deep pass on an overdue "
-            "item: verdict + money + plan + future "
-            "(Brian's ruling 2026-11-12 19:56 CST).")
+            "SET reap_status = %s, reap_text = %s, "
+            "reap_event_id2 = NULL WHERE id = %s",
+            ("done-full" if done else "chain-open",
+             full, rid))
         landed += 1
-        print(f"REAP plan landed for event #{eid} "
+        print(f"REAP section landed for event #{eid} "
               f"({title})"
-              + (f" — filed as capture #{cid}" if cid
-                 else ""))
+              + (" - document complete" if done else
+                 " - chain continues"))
+        if done:
+            file_capture(
+                "REAP DEEP (overdue, full): "
+                + (title or "")[:84], full,
+                "Complete REAP 150B deep pass on an "
+                "overdue item: verdict + money + plan + "
+                "future (Brian's ruling 2026-11-12 "
+                "19:56 CST).")
     return landed
 
 
-def dispatch_plans(limit=MAX_PER_RUN):
-    """Rows whose REAP text is verdict-only get their
-    second pass. Returns count dispatched."""
+def dispatch_sections(limit=MAX_PER_RUN):
+    """Rows with an incomplete document and chain budget
+    left get their next single-section pass."""
     rows = sbos_common.pg_rows(
         "SELECT id, source_type, source_id, title, "
-        "days_overdue, is_blog, reap_text FROM "
-        "successbrian_os.overdue_relevance WHERE "
-        "reap_status = 'done' AND reap_text NOT ILIKE "
-        "'%%PLAN:%%' ORDER BY id LIMIT %s", (limit,))
+        "days_overdue, is_blog, reap_text, reap_passes "
+        "FROM successbrian_os.overdue_relevance WHERE "
+        "reap_status IN ('done', 'chain-open') AND "
+        "reap_event_id2 IS NULL AND reap_passes < %s "
+        "ORDER BY id LIMIT %s", (MAX_CHAIN, limit))
     n = 0
     for row in rows:
-        hits = internal_data(row[3], with_text=True)
-        eid = dispatch_plan(row, hits)
+        rid, source, sid, title, days, blog, text, \
+            passes = row
+        miss = missing_sections(text, blog)
+        if not miss:
+            sbos_common.pg_exec(
+                "UPDATE successbrian_os.overdue_relevance "
+                "SET reap_status = 'done-full' WHERE "
+                "id = %s", (rid,))
+            continue
+        hits = internal_data(title, with_text=True)
+        eid = dispatch_section(row[:7], miss[0], hits)
         sbos_common.pg_exec(
-            "UPDATE successbrian_os.overdue_relevance SET "
-            "reap_event_id2 = %s, reap_status = "
-            "'plan-pending' WHERE id = %s", (eid, row[0]))
+            "UPDATE successbrian_os.overdue_relevance "
+            "SET reap_event_id2 = %s, reap_status = "
+            "'chaining', reap_passes = %s WHERE id = %s",
+            (eid, (passes or 0) + 1, rid))
         n += 1
-        print(f"dispatched REAP plan pass [{row[1]}"
-              f"#{row[2]}] — bus event #{eid}")
+        print(f"dispatched REAP {miss[0]} section "
+              f"[{source}#{sid}] - bus event #{eid}")
     return n
 
 
@@ -543,10 +567,10 @@ def run(do_file=True):
     landed = collect_reap()
     if landed:
         print(f"collected {landed} REAP deep pass(es)")
-    pl = collect_plans()
+    pl = collect_sections()
     if pl:
-        print(f"collected {pl} REAP plan pass(es)")
-    dispatch_plans()
+        print(f"collected {pl} REAP section pass(es)")
+    dispatch_sections()
     today = dt.date.today()
     hour, items = overdue_items(today)
     if hour is None:

@@ -58,8 +58,13 @@ from datetime import date, datetime, timedelta, timezone
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _TOOLS = os.path.dirname(_HERE)
 for _p in (_TOOLS, _HERE):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+    # Deterministic order: _HERE must precede _TOOLS, else import review
+    # resolves to the tools/review/ package (empty init) instead of
+    # review.py when _HERE is already sys.path[0] (standalone run).
+    # Fixed 2026-11-13 AM review pass.
+    if _p in sys.path:
+        sys.path.remove(_p)
+    sys.path.insert(0, _p)
 
 from sbos_common import pg_exec, pg_one, pg_rows  # noqa: E402
 import review as R  # noqa: E402  (the daily toolkit: gauges, snapshots)

@@ -15,6 +15,10 @@ B8b-3 adds a per-depth capture count line (depth_lines): all six
 registry depths, zeros included, so a review sees each depth's size
 at a glance.
 
+B16 adds the budget metering roll-up (budget_metering.py): model
+token usage per window, project $ budgets, and the staleness of the
+api-usage and budget-config feeds — read-only, no $ rate invented.
+
 Usage: assembly_status.py [--selftest]
 """
 import os, shutil, subprocess, sys
@@ -85,6 +89,18 @@ def depth_lines():
     return ["captures by intel depth: " + ", ".join(rows)]
 
 
+def budget_lines():
+    # B16: the budget metering roll-up lives in budget_metering.py
+    # (the single source of truth); show its summary here.
+    tool = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "budget_metering.py")
+    out = subprocess.run([sys.executable, tool, "--summary"],
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        raise RuntimeError("budget_metering failed: " + out.stderr.strip())
+    return [l for l in out.stdout.splitlines() if l.strip()]
+
+
 def selftest():
     # every query runs and returns at least one row
     for label, sql in QUERIES:
@@ -109,6 +125,12 @@ def selftest():
         "select count(*)::text from atlas.scattered_captures")[0])
     assert sum(int(p.rsplit("=", 1)[1]) for p in parts) == total, \
         f"depth counts {parts} do not sum to {total}"
+    # B16: budget metering runs and reports a token line + flags
+    blines = budget_lines()
+    assert any(l.startswith("budget metering: model tokens in")
+               for l in blines), f"no token line in: {blines}"
+    assert any("no per-token $ rate on record" in l for l in blines), \
+        f"no-rate disclaimer missing in: {blines}"
     # disk probe works
     total, used, free = shutil.disk_usage("/")
     assert total > 0 and 0 <= used <= total
@@ -126,6 +148,8 @@ def main():
         rows = run(sql)
         print(f"{label}: " + (", ".join(rows) if rows else "none"))
     for line in depth_lines():
+        print(line)
+    for line in budget_lines():
         print(line)
     print("residue inventory (waiting on Brian):")
     for line in residue_lines():

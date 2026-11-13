@@ -618,7 +618,7 @@ def run(do_file=True):
             "created_at > now() - interval '7 days' AND "
             "reap_event_id IS NOT NULL AND reap_status IN "
             "('pending', 'done', 'plan-pending', "
-            "'done-full')",
+            "'done-full', 'chaining', 'chain-open')",
             (item["source"], item["id"]))
         if recent:
             continue

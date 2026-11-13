@@ -107,7 +107,15 @@ CREATE INDEX IF NOT EXISTS overdue_relevance_item_idx
 BLOG_WORDS = ["article", "blog", "substack", "post", "draft",
               "approve", "publish", "seo", "episode"]
 MAX_PER_RUN = 5
+# Gamma's REAP handler kills any job past 900s. 1600-token passes completed
+# 0 of 10 (events 217-220 timed out 2026-11-12); 500 is the PROVEN ceiling.
+# Do not raise without re-measuring against the 900s runway.
 REAP_MAX_TOKENS = 500
+# Deep passes are bottom-rung filler in the never-idle ladder: they ride
+# BELOW the clerk lane (5) and the chat lanes (10/20/30), so an hourly batch
+# can never clog the road or starve live work. (Was hardcoded 40 — above
+# Brian's own ASAP ASAP tier — until 2026-11-13.)
+REAP_PRIORITY = 4
 MONEY_CONTEXT = (
     "Brian's money context (his record): the big goal is "
     "sponsoring 40 people a month into GotBackup on a fixed "
@@ -316,8 +324,8 @@ def dispatch_reap(item, hits):
     eid = sbos_common.pg_one(
         "INSERT INTO bus.events (event_type, source, target, "
         "payload, priority) VALUES ('reap_infer', "
-        "'overdue-relevance', 'gamma', %s::jsonb, 40) "
-        "RETURNING id", (json.dumps(payload),))
+        "'overdue-relevance', 'gamma', %s::jsonb, %s) "
+        "RETURNING id", (json.dumps(payload), REAP_PRIORITY))
     return eid
 
 
@@ -397,8 +405,8 @@ def dispatch_section(row, section, hits):
     return sbos_common.pg_one(
         "INSERT INTO bus.events (event_type, source, "
         "target, payload, priority) VALUES ('reap_infer', "
-        "'overdue-relevance', 'gamma', %s::jsonb, 40) "
-        "RETURNING id", (json.dumps(payload),))
+        "'overdue-relevance', 'gamma', %s::jsonb, %s) "
+        "RETURNING id", (json.dumps(payload), REAP_PRIORITY))
 
 
 def file_capture(title, raw, context):
@@ -751,6 +759,10 @@ def selftest():
           "reap_event_id" in RELEVANCE_DDL
           and "reap_text" in RELEVANCE_DDL)
     check("per-run cap is bounded", 0 < MAX_PER_RUN <= 10)
+    check("reap token budget fits the 900s runway",
+          REAP_MAX_TOKENS <= 500)
+    check("reap jobs ride below the clerk lane",
+          REAP_PRIORITY < 5)
     print("SELFTEST", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 

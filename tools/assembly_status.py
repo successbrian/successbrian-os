@@ -11,6 +11,10 @@ nothing. Plan: builds/sbos-assembly/PLAN.md.
 B6 adds the residue inventory (residue_inventory.py): the count of
 everything waiting on Brian plus the oldest item, shown at the end.
 
+B8b-3 adds a per-depth capture count line (depth_lines): all six
+registry depths, zeros included, so a review sees each depth's size
+at a glance.
+
 Usage: assembly_status.py [--selftest]
 """
 import os, shutil, subprocess, sys
@@ -66,6 +70,21 @@ def residue_lines():
     return [l for l in out.stdout.splitlines() if l.strip()]
 
 
+def depth_lines():
+    # B8b-3: per-depth capture counts from the intel_depth_levels
+    # registry, all six depths shown (zeros included). Counts are ALL
+    # captures at that depth (ruled or not); the residue total printed
+    # next to it is the unruled stream, so brian_decision here may
+    # exceed it by ruled rows (e.g. selftest disposables).
+    rows = run(
+        "select l.depth||'='||count(c.id) from "
+        "successbrian_os.intel_depth_levels l left join "
+        "atlas.scattered_captures c "
+        "on coalesce(c.depth,'unclassified')=l.depth "
+        "group by l.depth order by l.depth")
+    return ["captures by intel depth: " + ", ".join(rows)]
+
+
 def selftest():
     # every query runs and returns at least one row
     for label, sql in QUERIES:
@@ -79,6 +98,17 @@ def selftest():
         f"no residue total in: {lines}"
     assert any(l.startswith("oldest:") for l in lines), \
         f"no oldest item in: {lines}"
+    # B8b-3: per-depth line lists all six depths and sums to the
+    # total capture count
+    dlines = depth_lines()
+    assert len(dlines) == 1 and dlines[0].startswith(
+        "captures by intel depth:"), f"no depth line in: {dlines}"
+    parts = [p.strip() for p in dlines[0].split(":", 1)[1].split(",")]
+    assert len(parts) == 6, f"expected 6 depths, got: {parts}"
+    total = int(run(
+        "select count(*)::text from atlas.scattered_captures")[0])
+    assert sum(int(p.rsplit("=", 1)[1]) for p in parts) == total, \
+        f"depth counts {parts} do not sum to {total}"
     # disk probe works
     total, used, free = shutil.disk_usage("/")
     assert total > 0 and 0 <= used <= total
@@ -95,6 +125,8 @@ def main():
     for label, sql in QUERIES:
         rows = run(sql)
         print(f"{label}: " + (", ".join(rows) if rows else "none"))
+    for line in depth_lines():
+        print(line)
     print("residue inventory (waiting on Brian):")
     for line in residue_lines():
         print(f"  {line}")

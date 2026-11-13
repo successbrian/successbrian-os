@@ -86,6 +86,98 @@ def budget_prompt(text, tier_tokens=SONIC_KV_AUTO):
             + text[-tail:])
 
 
+# ------------------------------------------------- feeder packet standard
+# B2 (assembly Phase 1; Brian's sizing law, 2026-11-13): every REAP
+# deep pass is ONE section, <=500 completion tokens — the PROVEN
+# ceiling on gamma's 900s runway (1600-token passes completed 0/10,
+# 500-token passes 16/16, 2026-11-12). Facts travel WHOLE: evidence
+# is trimmed at sentence boundaries, never cut mid-fact. Every
+# packet carries its provenance, so a returned result traces back
+# to the item, section, and chain position that produced it.
+# The first consumer is overdue_relevance; agent_board follows in
+# a later queue item (its payload already carries section +
+# commons_item_id in the same spirit).
+REAP_MAX_TOKENS = 500
+REAP_PACKET_STANDARD = "feeder-packet-v1"
+
+
+def estimate_tokens(text):
+    """Rough size in tokens: ~4 chars per token. Conservative on
+    purpose — the packet standard budgets against this, never
+    against a tokenizer the road seats don't share."""
+    return max(1, -(-len(text or "") // 4))
+
+
+def trim_fact_whole(text, max_chars=350):
+    """Trim one evidence fact to <= max_chars at a sentence
+    boundary — never cut mid-sentence, never cut mid-word. A fact
+    with no sentence boundary inside the budget is dropped whole
+    (returns "") rather than shipped cut: a cut fact is worse than
+    a missing one, because REAP reasons over what it is given
+    and cannot see the cut."""
+    s = " ".join((text or "").split())
+    if len(s) <= max_chars:
+        return s
+    cut = s[:max_chars]
+    for end in (". ", "! ", "? "):
+        i = cut.rfind(end)
+        if i > 0:
+            return cut[: i + 1]
+    if cut.endswith((".", "!", "?")):
+        return cut
+    return ""
+
+
+def build_reap_packet(prompt, *, source, probe_id, section=None,
+                      chain_index=0, chain_total=None, item_ref=None,
+                      max_tokens=None, thinking=False):
+    """Build one feeder packet in the standard shape; returns the
+    bus payload dict gamma's REAP handler consumes.
+
+    The envelope is fixed: prompt + max_tokens (<= REAP_MAX_TOKENS,
+    enforced — a bigger ask raises instead of silently shipping a
+    pass the 900s runway cannot finish) + thinking + probe_id,
+    plus provenance fields (source, section, chain position, item
+    ref, standard version, build time). Extra keys are tolerated
+    by the handler (agent_board already sends commons_item_id /
+    section); the handler reads prompt, max_tokens, thinking,
+    probe_id."""
+    if max_tokens is None:
+        max_tokens = REAP_MAX_TOKENS
+    if max_tokens > REAP_MAX_TOKENS:
+        raise ValueError(
+            f"max_tokens {max_tokens} exceeds the feeder packet "
+            f"ceiling {REAP_MAX_TOKENS} (gamma 900s runway; "
+            f"split the pass into sections instead)")
+    return {
+        "prompt": prompt,
+        "max_tokens": max_tokens,
+        "thinking": thinking,
+        "probe_id": probe_id,
+        "packet_standard": REAP_PACKET_STANDARD,
+        "source": source,
+        "section": section,
+        "chain_index": chain_index,
+        "chain_total": chain_total,
+        "item_ref": item_ref,
+        "built_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def dispatch_reap_packet(packet, *, source, target="gamma",
+                         priority=4):
+    """Insert one standard packet on the node bus for gamma's REAP
+    seat. Returns the bus event id. The packet must come from
+    build_reap_packet (or carry the same keys) — the numeric
+    max_tokens invariant is enforced by reap_loop_status's
+    selftest on every reap_infer payload."""
+    return pg_one(
+        "INSERT INTO bus.events (event_type, source, target, "
+        "payload, priority) VALUES ('reap_infer', "
+        "%s, %s, %s::jsonb, %s) RETURNING id",
+        (source, target, json.dumps(packet), priority))
+
+
 # ---------------------------------------------------------------- basics
 
 def esc(s) -> str:
@@ -647,6 +739,35 @@ def selftest() -> int:
           normalize_usage({"usage": {"prompt_tokens": 3,
                                      "completion_tokens": 4},
                            "model": "m"})["total_tokens"] == 7)
+
+    # Feeder packet standard (B2): one section, <=500 tokens,
+    # facts whole, provenance on every packet.
+    pkt = build_reap_packet("do the thing", source="selftest",
+                            probe_id="selftest-1", item_ref="task#1")
+    check("packet defaults to the 500-token ceiling",
+          pkt["max_tokens"] == REAP_MAX_TOKENS == 500)
+    check("packet carries provenance",
+          pkt["packet_standard"] == REAP_PACKET_STANDARD
+          and pkt["source"] == "selftest"
+          and pkt["probe_id"] == "selftest-1"
+          and pkt["item_ref"] == "task#1"
+          and pkt["built_at"] and pkt["chain_index"] == 0)
+    try:
+        build_reap_packet("p", source="t", probe_id="t",
+                          max_tokens=501)
+        check("packet above the ceiling raises", False)
+    except ValueError:
+        check("packet above the ceiling raises", True)
+    check("estimate_tokens is ~4 chars per token",
+          estimate_tokens("x" * 400) == 100
+          and estimate_tokens("") == 1)
+    check("trim_fact_whole keeps a short fact whole",
+          trim_fact_whole("Short fact here.") == "Short fact here.")
+    check("trim_fact_whole cuts at a sentence boundary",
+          trim_fact_whole("First sentence here. " + "word " * 100)
+          == "First sentence here.")
+    check("trim_fact_whole drops a boundary-less fact whole",
+          trim_fact_whole("word " * 100) == "")
 
     # Queue dedupe: add a unique test job twice inside the live table,
     # second call must return the SAME id and add no row; then clean up.

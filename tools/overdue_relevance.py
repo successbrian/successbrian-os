@@ -107,10 +107,13 @@ CREATE INDEX IF NOT EXISTS overdue_relevance_item_idx
 BLOG_WORDS = ["article", "blog", "substack", "post", "draft",
               "approve", "publish", "seo", "episode"]
 MAX_PER_RUN = 5
-# Gamma's REAP handler kills any job past 900s. 1600-token passes completed
-# 0 of 10 (events 217-220 timed out 2026-11-12); 500 is the PROVEN ceiling.
-# Do not raise without re-measuring against the 900s runway.
-REAP_MAX_TOKENS = 500
+# The feeder packet ceiling lives in sbos_common (B2, the shared
+# packet standard) — one source of truth, enforced by
+# build_reap_packet. Gamma's REAP handler kills any job past 900s.
+# 1600-token passes completed 0 of 10 (events 217-220 timed out
+# 2026-11-12); 500 is the PROVEN ceiling. Do not raise without
+# re-measuring against the 900s runway.
+REAP_MAX_TOKENS = sbos_common.REAP_MAX_TOKENS
 # Deep passes are bottom-rung filler in the never-idle ladder: they ride
 # BELOW the clerk lane (5) and the chat lanes (10/20/30), so an hourly batch
 # can never clog the road or starve live work. (Was hardcoded 40 — above
@@ -278,9 +281,9 @@ def deep_prompt(item, hits):
     if hits:
         for cid, t, raw in hits[:4]:
             parts.append(f"- capture #{cid}: {t}")
-            if raw:
-                parts.append("  " + " ".join(
-                    (raw or "").split())[:350])
+            fact = sbos_common.trim_fact_whole(raw, 350)
+            if fact:
+                parts.append("  " + fact)
     else:
         parts.append("- nothing matched — say what data "
                      "should be built first.")
@@ -315,18 +318,17 @@ def deep_prompt(item, hits):
 
 def dispatch_reap(item, hits):
     """Insert the deep-pass job on the node bus for gamma's
-    REAP 150B. Returns the bus event id."""
-    payload = {"prompt": deep_prompt(item, hits),
-               "max_tokens": REAP_MAX_TOKENS,
-               "thinking": False,
-               "probe_id": f"overdue-relevance-"
-                           f"{item['source']}-{item['id']}"}
-    eid = sbos_common.pg_one(
-        "INSERT INTO bus.events (event_type, source, target, "
-        "payload, priority) VALUES ('reap_infer', "
-        "'overdue-relevance', 'gamma', %s::jsonb, %s) "
-        "RETURNING id", (json.dumps(payload), REAP_PRIORITY))
-    return eid
+    REAP 150B, built through the shared feeder packet standard
+    (sbos_common.build_reap_packet). Returns the bus event id."""
+    packet = sbos_common.build_reap_packet(
+        deep_prompt(item, hits),
+        source="overdue-relevance",
+        probe_id=f"overdue-relevance-{item['source']}-{item['id']}",
+        item_ref=f"{item['source']}#{item['id']}",
+        max_tokens=REAP_MAX_TOKENS,
+        thinking=False)
+    return sbos_common.dispatch_reap_packet(
+        packet, source="overdue-relevance", priority=REAP_PRIORITY)
 
 
 SECTION_ORDER = ["MONEY", "AUDIENCE", "PLAN", "FUTURE"]
@@ -395,18 +397,19 @@ def section_prompt(row, section):
     return "\n".join(parts)
 
 
-def dispatch_section(row, section, hits):
-    payload = {"prompt": section_prompt(row, section),
-               "max_tokens": REAP_MAX_TOKENS,
-               "thinking": False,
-               "probe_id":
-                   f"overdue-sec-{section.lower()}-"
-                   f"{row[1]}-{row[2]}"}
-    return sbos_common.pg_one(
-        "INSERT INTO bus.events (event_type, source, "
-        "target, payload, priority) VALUES ('reap_infer', "
-        "'overdue-relevance', 'gamma', %s::jsonb, %s) "
-        "RETURNING id", (json.dumps(payload), REAP_PRIORITY))
+def dispatch_section(row, section, hits, chain_index=1):
+    packet = sbos_common.build_reap_packet(
+        section_prompt(row, section),
+        source="overdue-relevance",
+        probe_id=f"overdue-sec-{section.lower()}-"
+                 f"{row[1]}-{row[2]}",
+        section=section,
+        chain_index=chain_index,
+        item_ref=f"{row[1]}#{row[2]}",
+        max_tokens=REAP_MAX_TOKENS,
+        thinking=False)
+    return sbos_common.dispatch_reap_packet(
+        packet, source="overdue-relevance", priority=REAP_PRIORITY)
 
 
 def file_capture(title, raw, context):
@@ -530,7 +533,8 @@ def dispatch_sections(limit=MAX_PER_RUN):
                 "id = %s", (rid,))
             continue
         hits = internal_data(title, with_text=True)
-        eid = dispatch_section(row[:7], miss[0], hits)
+        eid = dispatch_section(row[:7], miss[0], hits,
+                               chain_index=(passes or 0) + 1)
         sbos_common.pg_exec(
             "UPDATE successbrian_os.overdue_relevance "
             "SET reap_event_id2 = %s, reap_status = "
@@ -749,6 +753,14 @@ def selftest():
           "-> revenue" in prompt)
     check("deep prompt forbids inventing facts",
           "instead of inventing" in prompt)
+    check("reap token budget is the shared packet standard",
+          REAP_MAX_TOKENS == sbos_common.REAP_MAX_TOKENS)
+    long_fact = deep_prompt(
+        fake, [(9, "held capture",
+                "Short fact here. " + "word " * 100)])
+    check("deep prompt trims facts whole, never mid-sentence",
+          "Short fact here." in long_fact
+          and "word word word" not in long_fact)
     body = json.dumps({"result": {"text": "VERDICT: "
                                             "still-live"}})
     check("outbox body parses to result text",

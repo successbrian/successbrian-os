@@ -28,11 +28,10 @@ Rotation rules, encoded here (Brian-correctable defaults):
     RECORDED the tier; B12b DISPATCHES it (--dispatch): planner ->
     a pm_steps task step, morpheus -> a judgment step the
     morpheus-worker claims, reap -> a B2 feeder packet on the bus
-    for gamma's REAP seat. Sonic has NO judgment claimant yet
-    (morpheus-worker claims every judgment step; serving sonic work
-    on Morpheus would be downward overflow, forbidden) so a
-    sonic-tier look files a named blocker instead - never a silent
-    skip, never a misroute. A look that finds work it cannot do
+    for gamma's REAP seat. Sonic -> a judgment step the sonic-worker
+    claims (B12c: tier='sonic' in the payload; morpheus-worker
+    excludes sonic-tier steps, so serving one can never fall down
+    to Morpheus). A look that finds work it cannot do
     files it as a named blocker on the goal - never a silent skip.
   - Coverage line (report by exception): active goals, looked, never
     looked, oldest un-looked goal. All-clear rotations stay silent.
@@ -293,18 +292,18 @@ def do_dispatch(cur, look, dry_run=False):
         _mark_dispatched(cur, lid, ref)
         return (ref, "morpheus judgment step created")
     if tier == "sonic":
-        # No sonic judgment claimant exists: morpheus-worker claims
-        # every judgment step, and serving sonic work on Morpheus
-        # would be DOWNWARD overflow (forbidden). File the blocker;
-        # the sonic claimant is the B12c follow-up.
-        if not (blocker or "").strip():
-            _set_node_blocker(
-                cur, slug,
-                f"sonic-tier dispatch needs a sonic judgment "
-                f"claimant (look {lid})")
-        _mark_dispatched(cur, lid, "blocked:sonic-no-claimant")
-        return ("blocked:sonic-no-claimant",
-                "no sonic claimant yet; named blocker filed")
+        # B12c: the sonic-worker claims judgment steps with
+        # payload.engine_tier='sonic'; morpheus-worker excludes them,
+        # so this can never fall down to Morpheus.
+        pm_core.add_step(
+            cur, step_key, f"[{slug}] {work[:100]}", kind="judgment",
+            source=f"goal_coverage:{lid}", priority=int(prio or 50),
+            payload={"instruction": work, "context": context,
+                     "output_keys": ["verdict", "evidence"],
+                     "max_tokens": 800, "engine_tier": "sonic"})
+        ref = f"pm_steps:{step_key}"
+        _mark_dispatched(cur, lid, ref)
+        return (ref, "sonic judgment step created")
     if tier == "reap":
         prompt = (f"Goal {slug} (look {lid}): {work}\n\n"
                   f"Findings: {(findings or '').strip()}")
@@ -547,15 +546,20 @@ def selftest():
               refs[1][0] == f"pm_steps:goal-look-{probe_looks[1][0]}"
               "-dispatch"
               and cur.fetchone() == ("judgment",))
-        check("sonic look -> named blocker, no step",
-              refs[2][0] == "blocked:sonic-no-claimant")
+        cur.execute("SELECT kind, payload->>'engine_tier' "
+                    "FROM successbrian_os.pm_steps WHERE step_key = %s",
+                    [f"goal-look-{probe_looks[2][0]}-dispatch"])
+        check("sonic look -> sonic-tier judgment step",
+              refs[2][0] == f"pm_steps:goal-look-{probe_looks[2][0]}"
+              "-dispatch"
+              and cur.fetchone() == ("judgment", "sonic"))
         cur.execute("SELECT details->>'blocker' FROM atlas.nodes "
                     "WHERE node_key = %s",
                     [gn.node_key_for_slug(probe_slug)])
-        check("sonic blocker landed on the goal node",
-              cur.fetchone()[0] == "sonic-tier dispatch needs a "
-              "sonic judgment claimant "
-              f"(look {probe_looks[2][0]})")
+        check("sonic branch filed no blocker (oversize reap did)",
+              cur.fetchone()[0] == "work too large for one feeder "
+              "packet - needs breakdown "
+              f"(look {probe_looks[4][0]})")
         check("reap look dry-run -> packet ready, no bus insert",
               refs[3][0] == "dry-run:reap-packet-ready")
         check("oversize reap work -> packet-too-large blocker",
@@ -566,8 +570,8 @@ def selftest():
                     "WHERE step_key IN (%s, %s, %s, %s, %s, %s)",
                     [f"goal-look-{l[0]}-dispatch"
                      for l in probe_looks])
-        check("only planner + morpheus looks created steps",
-              cur.fetchone()[0] == 2)
+        check("planner + morpheus + sonic looks created steps",
+              cur.fetchone()[0] == 3)
         cur.execute("SELECT count(*) FROM successbrian_os.goal_coverage "
                     "WHERE goal_slug = %s AND dispatched_at IS NOT NULL",
                     [probe_slug])

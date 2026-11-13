@@ -119,16 +119,26 @@ def add_step(cur, key, title, kind="task", source=None, origin="ecosystem",
     return step_id, created
 
 
-def claim(cur, actor, limit=1, location=None, kinds=None):
+def claim(cur, actor, limit=1, location=None, kinds=None, tier=None,
+          exclude_tier=None):
     """Hand out ready steps: queued, all deps done, highest effective
     priority first. Effective priority = priority + age boost (+5 per day
     queued, capped at +25) — the starvation guard, so low-priority work
-    cannot rot forever behind newer high-priority work."""
+    cannot rot forever behind newer high-priority work.
+    Tier routing (B12c): payload.engine_tier names the engine a step is
+    FOR. tier=X claims only steps FOR X; exclude_tier=X claims
+    everything EXCEPT steps for X (a NULL tier counts as unassigned,
+    so legacy steps stay claimable by the default worker). Without
+    either, behavior is unchanged."""
     cur.execute(
         """SELECT s.id, s.step_key, s.title, s.kind, s.priority, s.origin
              FROM successbrian_os.pm_steps s
             WHERE s.status = 'queued'
               AND (%s::text[] IS NULL OR s.kind = ANY(%s::text[]))
+              AND (%s::text IS NULL
+                   OR s.payload->>'engine_tier' = %s)
+              AND (%s::text IS NULL
+                   OR s.payload->>'engine_tier' IS DISTINCT FROM %s)
               AND NOT EXISTS (
                     SELECT 1 FROM successbrian_os.pm_step_deps d
                       JOIN successbrian_os.pm_steps dep ON dep.id = d.depends_on_id
@@ -136,7 +146,8 @@ def claim(cur, actor, limit=1, location=None, kinds=None):
             ORDER BY (s.priority + LEAST(25, (EXTRACT(EPOCH FROM (now() - s.created_at))
                         / 86400)::int * 5)) DESC, s.created_at ASC
             LIMIT %s
-            FOR UPDATE OF s SKIP LOCKED""", (kinds, kinds, limit))
+            FOR UPDATE OF s SKIP LOCKED""",
+        (kinds, kinds, tier, tier, exclude_tier, exclude_tier, limit))
     raw = cur.fetchall()
     def v(r, i, k):
         return r[k] if isinstance(r, dict) else r[i]

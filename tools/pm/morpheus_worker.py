@@ -203,7 +203,11 @@ def run_once(limit=1):
         return []
     c = pm_core.conn()
     cur = c.cursor()
-    rows = pm_core.claim(cur, ACTOR, limit=limit, kinds=["judgment"])
+    # B12c: Morpheus NEVER claims sonic-tier judgment steps. Serving
+    # sonic work on Morpheus would be downward overflow (forbidden);
+    # the sonic-worker owns those (tier='sonic' in the payload).
+    rows = pm_core.claim(cur, ACTOR, limit=limit, kinds=["judgment"],
+                         exclude_tier="sonic")
     c.commit()
     c.close()
     if not rows:

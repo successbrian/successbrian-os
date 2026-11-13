@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""standing_compile.py - Standing compile v1, piece 1 (BUILD_QUEUE B15-1).
+"""standing_compile.py - Standing compile v1 (BUILD_QUEUE B15).
 
 Per money line (GotBackup 40/mo, TrafficStreemz $30, ContactFlowCRM $20,
 the ~$1k/30-day stranger track) compile visits -> contacts -> revenue
@@ -8,6 +8,31 @@ standard: <=500 max_tokens, facts whole, provenance fields), and file
 each compile to successbrian_os.knowledge_index with kind='compile'
 (the B6 residue contract - residue_inventory.py reads that kind, so a
 filed compile lights up the decision stream automatically).
+
+Piece 2 (B15-2): dispatch. --dispatch sends each line's packet to
+gamma's REAP seat via sbos_common.dispatch_reap_packet, rebuilding the
+packet from the FILED compile row (doc_text is the brief), so the
+dispatched prompt wraps exactly what B15-1 filed. Dispatch is
+idempotent per line per day: a probe_id already on the bus is never
+re-sent. --roundtrip dispatches one line if needed, waits for gamma's
+verdict in the outbox, runs the knowledge_return collector, and
+verifies the return leg: ROUTING: intel lands as
+ki:reap-infer-<event>; any other routing verifies as a counted skip
+(the collector counts discards/boards/kick-asides, never silently).
+
+Packet shape (learned live 2026-11-13, cycle 180): the REAP loop's
+only verdict shape is the classify template - a bare brief with no
+instruction gets a degenerate echo, not a verdict. v1 packets
+(events 362-365, unwrapped briefs) proved it: event 362 burned all
+500 max_tokens and returned 42 chars ("Here's the STANDING COMPILE
+for GotBackup:") - ok=True but no ROUTING line, so the round trip
+could NOT verify. v2 (PACKET_FORMAT 2) wraps the brief in the exact
+classify template the queue-keeper's packets carry (copied verbatim
+from bus event 361's stored prompt): the compile is the Item, REAP
+answers one ROUTING line, the knowledge_return leg processes it.
+The filed doc_text stays the bare brief (the compile record); the
+dispatched prompt is the wrapped form. Probe ids carry the format
+(-f2) so a corrected packet is never blocked by a superseded send.
 
 Honesty rules, enforced in code, not prose:
   - A leg with no live source is UNKNOWN / OWED, never zero and never
@@ -23,23 +48,25 @@ Honesty rules, enforced in code, not prose:
     ki:compile-<line>-<YYYY-MM-DD>; re-runs the same day land nothing
     new (ON CONFLICT DO NOTHING).
 
-REAP dispatch is B15-2, not here: this piece builds the packet and
-files the compile. The packet prompt is stored in doc_text with its
-probe_id + token estimate in pointer_note, so dispatch can rebuild
-the identical packet from the filed row.
-
 Usage: standing_compile.py [--compile [--dry-run] [--line KEY]]
+         [--dispatch [--dry-run] [--line KEY]]
+         [--roundtrip [--line KEY] [--timeout SEC]]
          [--status] [--selftest]
 Plan: builds/sbos-assembly/PLAN.md Phase 5.
 """
 import argparse
+import importlib.util
+import json
+import re
 import sys
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from sbos_common import (  # noqa: E402
     build_reap_packet,
+    dispatch_reap_packet,
     estimate_tokens,
     pg_exec,
     pg_one,
@@ -105,6 +132,37 @@ LINES = {
 
 def today_chicago() -> str:
     return datetime.now(CHICAGO).strftime("%Y-%m-%d")
+
+
+PACKET_FORMAT = 2
+
+# The REAP loop's only verdict shape: the classify template, copied
+# verbatim from bus event 361's stored prompt (the queue-keeper's
+# packet shape). {title} / {text} are the only substitutions.
+CLASSIFY_TEMPLATE = """Classify this one item into exactly one routing. Reply with exactly one single line, nothing else, in this shape: ROUTING: <one word: board, kick-aside, intel, or discard> - <one short sentence saying why, tied to a specific fact in the item>. Do not add a second line.
+
+What the words mean:
+- board: the item needs a decision or action by a person — something to buy, sell, join, approve, or reply to. A marketplace want-to-buy or for-sale post for hardware we track counts as board.
+- intel: the item is outside-world knowledge worth keeping — news, market or price data, company or crypto developments, security warnings about outside products. File it.
+- kick-aside: the item might matter but does not fit board or intel and should not be thrown away — park it for a second look. Use only when you cannot place it in board or intel.
+- discard: the item has no lasting value — internal system messages, status or error notices about our own internal processes, routine internal scheduling snapshots that repeat and are replaced by the next one, duplicates.
+
+Rules:
+1. News about the outside world is intel, even when it mixes topics. Never call a news item fake or discard it just because it covers two topics.
+2. Internal notices that one of our own packages or processes failed or could not reach agreement are discard — always, every time.
+3. Routine daily statistics or price reports about a real company or asset are intel — always, every time, for every company.
+4. Security warnings and emergency patches for outside crypto or software products are intel.
+5. Internal hourly scheduling lists (priority resort / hourly order) are discard: they repeat every hour and the next one replaces them.
+6. If torn between intel and kick-aside, choose intel. If torn between discard and kick-aside for an internal system notice, choose discard.
+
+Examples:
+- Title: 'Miniflux: BitGo Q3 profit nearly doubles' (news about a company's results) -> ROUTING: intel - Outside company financial news worth filing.
+- Title: 'DECIDER ESCALATION: package #52 could not reach agreement' -> ROUTING: discard - Internal notice about our own process failing, no lasting value.
+- Title: '[WTB] DDR4 ECC memory, 2 GPUs' -> ROUTING: board - A buy post for tracked hardware needs a person to decide and act.
+- Title: 'HOURLY ORDER — priority resort' (our hourly task list) -> ROUTING: discard - Internal schedule snapshot that repeats hourly and is replaced by the next.
+
+Item title: {title}
+Item text: {text}"""
 
 
 def gather(key: str) -> dict:
@@ -259,12 +317,22 @@ def build_brief(g: dict, day: str) -> tuple[str, str, list[str]]:
     return brief, verdict, owed
 
 
+def probe_id_for(key: str, day: str) -> str:
+    return f"standing-compile-{key}-{day}-f{PACKET_FORMAT}"
+
+
 def build_packet_for(g: dict, day: str, brief: str) -> dict:
-    """One B2-standard REAP packet for the line's compile."""
+    """One B2-standard REAP packet for the line's compile.
+
+    The prompt is the classify template with the compile as the Item
+    (v2): a bare brief gets a degenerate echo, not a verdict.
+    """
     canonical = f"ki:compile-{g['key']}-{day}"
+    title = f"Standing compile: {LINES[g['key']]['name']} - {day}"
+    prompt = CLASSIFY_TEMPLATE.format(title=title, text=brief)
     return build_reap_packet(
-        brief, source="standing-compile",
-        probe_id=f"standing-compile-{g['key']}-{day}",
+        prompt, source="standing-compile",
+        probe_id=probe_id_for(g["key"], day),
         section="compile", item_ref=canonical)
 
 
@@ -324,6 +392,163 @@ def compile_lines(keys, dry: bool = False) -> dict:
     return out
 
 
+def _check_budget(brief: str, key: str) -> int:
+    """Prompt budget (B12b, 2000 tok): over it is a blocker, never a send."""
+    est = estimate_tokens(brief)
+    if est > PROMPT_TOKEN_BUDGET:
+        raise ValueError(
+            f"{key}: compile prompt ~{est} tok exceeds the "
+            f"{PROMPT_TOKEN_BUDGET} prompt budget - split the line")
+    return est
+
+
+def find_dispatch(probe_id: str):
+    """Existing bus reap_infer event for a probe_id, or None.
+
+    The idempotency key: one dispatch per line per day, ever.
+    """
+    rows = pg_rows(
+        "select id, status, created_at from bus.events "
+        "where event_type = 'reap_infer' and payload->>'probe_id' = %s "
+        "order by id desc limit 1", (probe_id,))
+    return rows[0] if rows else None
+
+
+def rebuild_packet(key: str, day: str) -> dict:
+    """Rebuild the identical packet from the filed compile row.
+
+    Dispatch never re-gathers: the filed doc_text is the brief, and
+    the packet wraps that exact brief in the classify template. A
+    line with no filed compile for the day refuses - run --compile
+    first.
+    """
+    canonical = f"ki:compile-{key}-{day}"
+    rows = pg_rows(
+        f"select doc_text from {KI} where canonical_id = %s",
+        (canonical,))
+    if not rows or not rows[0][0]:
+        raise ValueError(
+            f"{key}: no filed compile {canonical} - run --compile first")
+    return build_packet_for({"key": key}, day, rows[0][0])
+
+
+def dispatch_lines(keys, dry: bool = False, day: str | None = None) -> dict:
+    """Dispatch each line's packet to gamma REAP. Idempotent per day."""
+    day = day or today_chicago()
+    out = {"day": day, "dispatched": 0, "already": 0, "would_dispatch": 0,
+           "lines": {}}
+    for key in keys:
+        packet = rebuild_packet(key, day)
+        est = _check_budget(packet["prompt"], key)
+        existing = find_dispatch(packet["probe_id"])
+        if existing:
+            eid, st, at = existing
+            out["already"] += 1
+            out["lines"][key] = {"event_id": int(eid), "status": st,
+                                 "already": True, "prompt_tokens": est}
+            print(f"{key}: already dispatched (bus event {eid}, "
+                  f"status {st}, {at})")
+            continue
+        if dry:
+            out["would_dispatch"] += 1
+            out["lines"][key] = {"would_dispatch": True,
+                                 "prompt_tokens": est}
+            print(f"{key}: would dispatch {packet['probe_id']} "
+                  f"(~{est} tok, max_tokens {packet['max_tokens']})")
+            continue
+        eid = dispatch_reap_packet(packet, source="standing-compile")
+        out["dispatched"] += 1
+        out["lines"][key] = {"event_id": int(eid), "status": "pending",
+                             "prompt_tokens": est}
+        print(f"{key}: dispatched bus event {eid} "
+              f"({packet['probe_id']}, ~{est} tok)")
+    return out
+
+
+def _parse_routing_word(text: str):
+    """First-line ROUTING word from a gamma result, or None."""
+    if not text:
+        return None
+    first = text.strip().splitlines()[0]
+    m = re.match(r"^ROUTING:\s*([A-Za-z-]+)", first, re.IGNORECASE)
+    return m.group(1).lower() if m else None
+
+
+def _load_knowledge_return():
+    """knowledge_return.py as a module (its collector, not its CLI)."""
+    here = __file__.rsplit("/", 1)[0]
+    spec = importlib.util.spec_from_file_location(
+        "knowledge_return", f"{here}/knowledge_return.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def check_roundtrip(key: str, timeout_s: int = 600,
+                    poll_s: int = 15, day: str | None = None) -> dict:
+    """Dispatch one line if needed, wait for gamma's verdict, verify
+    the return leg.
+
+    The verdict's road back is the outbox inference_result row for
+    our bus event; the knowledge_return collector then lands
+    ROUTING: intel verdicts as ki:reap-infer-<event> rows and counts
+    the rest as skips. Verified means: the outbox result exists, the
+    result parsed (ok, one ROUTING line), and the collector processed
+    it - landed row present, or a non-intel routing (counted skip).
+    An intel verdict with no landed row is NOT verified.
+    """
+    day = day or today_chicago()
+    probe = probe_id_for(key, day)
+    existing = find_dispatch(probe)
+    if existing:
+        event_id = int(existing[0])
+        print(f"{key}: using existing dispatch bus event {event_id}")
+    else:
+        res = dispatch_lines([key], day=day)
+        event_id = int(res["lines"][key]["event_id"])
+    deadline = time.time() + timeout_s
+    result = None
+    while time.time() < deadline:
+        for (oid, body) in pg_rows(
+                "select id, body from successbrian_os.outbox "
+                "where source_agent = 'gamma' "
+                "and message_type = 'inference_result' "
+                "order by id desc limit 200"):
+            try:
+                env = json.loads(body)
+            except (ValueError, TypeError):
+                continue
+            if isinstance(env, dict) and env.get("event_id") == event_id:
+                result = env
+                break
+        if result is not None:
+            break
+        time.sleep(poll_s)
+    if result is None:
+        print(f"{key}: ROUNDTRIP NOT VERIFIED - no outbox result for "
+              f"bus event {event_id} within {timeout_s}s")
+        return {"verified": False, "event_id": event_id,
+                "reason": "no outbox result within timeout"}
+    res_dict = result.get("result") or {}
+    text = res_dict.get("text") if isinstance(res_dict, dict) else None
+    routing = _parse_routing_word(text or "")
+    counts = _load_knowledge_return().collect_knowledge_returns(
+        verbose=False)
+    landed = pg_one(
+        f"select count(*) from {KI} where canonical_id = %s",
+        (f"ki:reap-infer-{event_id}",))
+    landed = int(landed or 0)
+    verified = bool(result.get("ok")) and routing is not None and (
+        landed >= 1 or routing != "intel")
+    print(f"{key}: bus event {event_id} -> outbox ok={result.get('ok')} "
+          f"ROUTING: {routing or '(unparsed)'}; collector landed={landed} "
+          f"(scanned {counts.get('scanned')}); "
+          f"{'ROUNDTRIP VERIFIED' if verified else 'ROUNDTRIP NOT VERIFIED'}")
+    return {"verified": verified, "event_id": event_id,
+            "routing": routing, "landed": landed,
+            "ok": bool(result.get("ok")), "collector": counts}
+
+
 def status() -> dict:
     total = pg_one(f"select count(*) from {KI} where kind = %s", (KIND,))
     rows = pg_rows(
@@ -335,7 +560,12 @@ def status() -> dict:
              where kind = %s""", (KIND,))
     print(f"compile rows: {total} (oldest {oldest})")
     for cid, verdict, at in rows:
-        print(f"  {cid} [{at}] {verdict[:160]}")
+        probe = ("standing-compile-" + cid[len("ki:compile-"):]
+                 + f"-f{PACKET_FORMAT}")
+        disp = find_dispatch(probe)
+        d = (f" dispatched event {disp[0]} [{disp[1]}]" if disp
+             else " not dispatched")
+        print(f"  {cid} [{at}] {verdict[:120]}{d}")
     return {"total": int(total or 0), "rows": rows}
 
 
@@ -375,10 +605,15 @@ def selftest() -> None:
     assert len(owed) == 3, f"three owed legs (got {owed})"
     pkt = build_packet_for(fake, "2026-11-13", brief)
     assert pkt["max_tokens"] == 500 and \
-        pkt["probe_id"] == "standing-compile-stranger-1k-2026-11-13", \
+        pkt["probe_id"] == "standing-compile-stranger-1k-2026-11-13-f2", \
         "packet shape + probe_id"
-    assert estimate_tokens(brief) <= PROMPT_TOKEN_BUDGET, \
-        "brief inside prompt budget"
+    assert pkt["prompt"].startswith("Classify this one item"), \
+        "packet is the classify template, not a bare brief"
+    assert brief in pkt["prompt"] and \
+        "Item title: Standing compile: Stranger $1k track - 2026-11-13" \
+        in pkt["prompt"], "template carries the compile as the Item"
+    assert estimate_tokens(pkt["prompt"]) <= PROMPT_TOKEN_BUDGET, \
+        "wrapped brief inside prompt budget"
     steps.append("all-UNKNOWN brief names OWED, invents nothing")
 
     # 4. Live landing probe on a disposable row, then idempotency,
@@ -425,6 +660,57 @@ def selftest() -> None:
             f"{key}: live gather returns a pool"
     steps.append("live gather runs on all four lines")
 
+    # 6. Dispatch rebuilds from the filed row, dry-run inserts
+    #    nothing, and the budget refuses an oversized prompt.
+    #    (No real bus insert in selftest: the live --roundtrip run
+    #    is what proves a packet reaches gamma.)
+    probe_day2 = "selftest-" + datetime.now(CHICAGO).strftime(
+        "%Y%m%d%H%M%S") + "-d"
+    g2 = dict(fake, key="gotbackup")
+    brief3, verdict3, owed3 = build_brief(g2, probe_day2)
+    pkt3 = build_packet_for(g2, probe_day2, brief3)
+    canonical3 = f"ki:compile-gotbackup-{probe_day2}"
+    probe3 = probe_id_for("gotbackup", probe_day2)
+    try:
+        assert find_dispatch(probe3) is None, \
+            "probe never dispatched before"
+        n3 = file_compile(g2, probe_day2, brief3, verdict3, owed3, pkt3)
+        assert n3 == 1, "probe row lands"
+        rebuilt = rebuild_packet("gotbackup", probe_day2)
+        assert brief3 in rebuilt["prompt"], \
+            "rebuilt prompt wraps the filed brief"
+        assert rebuilt["prompt"].startswith("Classify this one item"), \
+            "rebuilt prompt is the classify template"
+        assert rebuilt["probe_id"] == probe3 and \
+            rebuilt["max_tokens"] == 500, "rebuilt packet shape"
+        assert rebuilt["item_ref"] == canonical3, "rebuilt item_ref"
+        dry = dispatch_lines(["gotbackup"], dry=True, day=probe_day2)
+        assert dry["would_dispatch"] == 1, "dry-run would dispatch"
+        assert find_dispatch(probe3) is None, \
+            "dry-run inserts no bus event"
+        steps.append("dispatch rebuilds from filed row; dry-run "
+                     "inserts nothing")
+        try:
+            _check_budget("x " * 5000, "gotbackup")
+            raise AssertionError("over-budget prompt must raise")
+        except ValueError:
+            pass
+        steps.append("prompt budget refuses oversized dispatch")
+        try:
+            rebuild_packet("trafficstreemz", probe_day2)
+            raise AssertionError("unfiled line must refuse dispatch")
+        except ValueError:
+            pass
+        steps.append("unfiled line refuses dispatch (compile first)")
+    finally:
+        pg_exec(f"delete from {KI} where canonical_id = %s",
+                (canonical3,))
+        gone = pg_one(f"select count(*) from {KI} where canonical_id "
+                      "= %s", (canonical3,))
+        assert int(gone or 0) == 0, "probe row cleaned up"
+        assert find_dispatch(probe3) is None, "no bus residue"
+    steps.append("zero residue (probe row deleted, bus untouched)")
+
     print(f"SELFTEST PASS ({len(steps)} steps)")
     for s in steps:
         print(f"  - {s}")
@@ -433,6 +719,10 @@ def selftest() -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--compile", action="store_true")
+    ap.add_argument("--dispatch", action="store_true")
+    ap.add_argument("--roundtrip", action="store_true")
+    ap.add_argument("--timeout", type=int, default=600,
+                    help="roundtrip wait for gamma's verdict (seconds)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--line", choices=list(LINES))
     ap.add_argument("--status", action="store_true")
@@ -448,6 +738,14 @@ def main() -> int:
         keys = [a.line] if a.line else list(LINES)
         compile_lines(keys, dry=a.dry_run)
         return 0
+    if a.dispatch:
+        keys = [a.line] if a.line else list(LINES)
+        dispatch_lines(keys, dry=a.dry_run)
+        return 0
+    if a.roundtrip:
+        key = a.line or "gotbackup"
+        res = check_roundtrip(key, timeout_s=a.timeout)
+        return 0 if res["verified"] else 1
     ap.print_help()
     return 2
 

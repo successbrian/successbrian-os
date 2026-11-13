@@ -8,9 +8,12 @@ how much is waiting on Brian, is the Atlas goal gap still open,
 how full is alpha's disk, how big is the second brain. It writes
 nothing. Plan: builds/sbos-assembly/PLAN.md.
 
+B6 adds the residue inventory (residue_inventory.py): the count of
+everything waiting on Brian plus the oldest item, shown at the end.
+
 Usage: assembly_status.py [--selftest]
 """
-import shutil, subprocess, sys
+import os, shutil, subprocess, sys
 
 DB = ["psql", "-d", "ecosystem_central", "-At"]
 
@@ -51,6 +54,18 @@ def run(sql):
     return [l for l in out.stdout.splitlines() if l.strip()]
 
 
+def residue_lines():
+    # B6: the residue inventory lives in residue_inventory.py (the single
+    # source of truth for the UNION); show its summary here, count + oldest.
+    tool = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "residue_inventory.py")
+    out = subprocess.run([sys.executable, tool, "--summary"],
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        raise RuntimeError("residue_inventory failed: " + out.stderr.strip())
+    return [l for l in out.stdout.splitlines() if l.strip()]
+
+
 def selftest():
     # every query runs and returns at least one row
     for label, sql in QUERIES:
@@ -58,6 +73,12 @@ def selftest():
         assert rows, f"no rows for: {label}"
     # a guaranteed-empty probe stays empty (queries are scoped)
     assert run("select 1 where 1=0") == []
+    # B6: residue inventory runs and reports a total + oldest item
+    lines = residue_lines()
+    assert any(l.startswith("residue total:") for l in lines), \
+        f"no residue total in: {lines}"
+    assert any(l.startswith("oldest:") for l in lines), \
+        f"no oldest item in: {lines}"
     # disk probe works
     total, used, free = shutil.disk_usage("/")
     assert total > 0 and 0 <= used <= total
@@ -74,6 +95,9 @@ def main():
     for label, sql in QUERIES:
         rows = run(sql)
         print(f"{label}: " + (", ".join(rows) if rows else "none"))
+    print("residue inventory (waiting on Brian):")
+    for line in residue_lines():
+        print(f"  {line}")
     return 0
 
 

@@ -6,7 +6,9 @@ right intel in runway-sized packets and return its knowledge to
 the ecosystem. This tool only MEASURES the loop: bus health,
 sizing watch (oversized senders surface as high avg max_tokens
 in failed/dead_letter rows), the stalled reap_queue side path,
-and the outbox return flow. It writes nothing.
+and the outbox return flow, plus the knowledge_index growth
+from REAP returns (BUILD_QUEUE B4: the collector now runs on
+cadence, and this status shows what it landed). It writes nothing.
 
 Usage: reap_loop_status.py [--selftest]
 """
@@ -40,6 +42,22 @@ QUERIES = [
      "select count(*)::text from successbrian_os.outbox "
      "where source_agent='gamma' and message_type='gamma_unhandled' "
      "and created_at > now()-interval '7 days'"),
+    ("knowledge_index REAP returns landed",
+     "select count(*)::text from successbrian_os.knowledge_index "
+     "where kind='reap-inference'"),
+    ("knowledge_index REAP returns last 24h",
+     "select count(*)::text from successbrian_os.knowledge_index "
+     "where kind='reap-inference' "
+     "and created_at > now()-interval '24 hours'"),
+    ("knowledge_index REAP returns latest landed",
+     "select coalesce(max(created_at)::text,'none') "
+     "from successbrian_os.knowledge_index where kind='reap-inference'"),
+    ("knowledge_return unlanded intel verdicts",
+     "select ((select count(*) from successbrian_os.outbox "
+     "where source_agent='gamma' and message_type='inference_result' "
+     "and body like '%ROUTING: intel%') - "
+     "(select count(*) from successbrian_os.knowledge_index "
+     "where kind='reap-inference'))::text"),
 ]
 
 def run(sql):
@@ -66,7 +84,18 @@ def selftest():
     bad = int(run("select count(*)::text from bus.events where event_type='reap_infer' "
                   "and (payload->>'max_tokens') !~ '^[0-9]+$'")[0])
     assert bad == 0, f"{bad} payloads lack numeric max_tokens"
-    print(f"SELFTEST OK (done==outbox=={done}; sizing fields numeric)")
+    # B4: landed REAP returns never exceed outbox results, and every
+    # landed row carries the collector's canonical_id shape
+    landed = int(run("select count(*)::text from successbrian_os.knowledge_index "
+                     "where kind='reap-inference'")[0])
+    assert landed <= outb, f"landed({landed}) > outbox results({outb})"
+    misshapen = int(run("select count(*)::text from successbrian_os.knowledge_index "
+                        "where kind='reap-inference' "
+                        "and canonical_id not like 'ki:reap-infer-%'")[0])
+    assert misshapen == 0, f"{misshapen} landed rows lack ki:reap-infer- id"
+    print(f"SELFTEST OK (done==outbox=={done}; sizing fields numeric; "
+          f"landed={landed} REAP returns, ids shaped)")
+
 
 if __name__ == "__main__":
     if "--selftest" in sys.argv:

@@ -75,6 +75,39 @@ def extract_json(text):
         return None
 
 
+_PASS_WORDS = ("pass", "passed", "ok", "true", "yes")
+
+
+def _normalize_verdict(parsed):
+    """Map a judge reply in a known dialect onto the house contract
+    {verdict, evidence}. Returns the normalized dict, or None when the
+    reply carries no recognizable verdict. Dialects seen in the wild:
+    {verdict: ...} (house) and {status: PASS/FAIL, reasons: [...]}.
+    A judge that rendered a verdict must not be executed for dialect:
+    until 2026-11-13 the worker failed those steps as 'missing output
+    keys' and 29 QA checks recorded machinery failures instead of the
+    real verdicts their judges had already given."""
+    if not isinstance(parsed, dict):
+        return None
+    verdict = None
+    if "verdict" in parsed:
+        v = parsed["verdict"]
+        verdict = ("pass" if (v is True or str(v).strip().lower()
+                              in _PASS_WORDS) else "fail")
+    elif "status" in parsed:
+        s = str(parsed["status"]).strip().lower()
+        if s:
+            verdict = "pass" if s in _PASS_WORDS else "fail"
+    if verdict is None:
+        return None
+    out = dict(parsed)
+    out["verdict"] = verdict
+    if "evidence" not in out:
+        out["evidence"] = (out.get("reasons") or out.get("reason")
+                           or "")
+    return out
+
+
 def _finish(key, status, result):
     """Finish a step on a FRESH connection (see connection discipline)."""
     c = pm_core.conn()
@@ -117,6 +150,15 @@ def run_step(row):
         _finish(key, "failed",
                 {"why": "no JSON object in reply", "raw_tail": raw[-1000:]})
         return f"{key}: FAILED (no JSON)"
+    normalized = _normalize_verdict(parsed)
+    if normalized is not None:
+        omitted = [k for k in keys if k not in normalized]
+        if omitted:
+            normalized["missing_keys"] = omitted
+        _finish(key, "done", {"parsed": normalized,
+                              "raw_tail": raw[-500:]})
+        return (f"{key}: DONE (verdict {normalized['verdict']}, "
+                f"dialect-normalized)")
     missing = [k for k in keys if k not in parsed]
     if missing:
         _finish(key, "failed",

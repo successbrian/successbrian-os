@@ -84,6 +84,7 @@ Usage (CLI):
   python3 agent_board.py board [--operator OP] [--json]
   python3 agent_board.py items [--operator OP] [--status S] [--agent A] [--json]
   python3 agent_board.py selftest
+  python3 agent_board.py collect-investigations [--dry]
 
 Exit codes: 0 ok; 1 refused / not permitted / not found; 2 usage or
 store errors. Nothing in this module sends, buys, publishes, or contacts
@@ -332,32 +333,19 @@ def missing_investigation_sections(note: str | None) -> list[str]:
     return [s for s in INVESTIGATION_SECTIONS if (s + ":") not in have]
 
 
-def _start_investigation(item_id: int, by_agent: str, dry: bool = False,
-                         force: bool = False) -> dict | None:
-    """Start the REAP 150B investigation for an issue. ONE live
-    investigation per issue: while one is queued/running, the existing
-    job is returned unchanged (started=False) — notes, touches, and
-    re-flags never spawn duplicates. Section-chained (B1a): only the
-    FIRST section is dispatched here, at REAP_MAX_TOKENS; the collector
-    (B1b) lands it and dispatches the next missing section."""
-    row = pg_one(
-        f"""select title, detail, operator_key, created_by_agent,
-                   investigation_status, investigation_job_ref
-              from {SCHEMA}.agent_work_items
-             where id = %s and kind = 'issue'""",
-        (item_id,))
-    if row is None:
-        return None
-    title, detail, op, creator, cur_status, cur_ref = row
-    if cur_status in ("queued", "running") and cur_ref and not force:
-        return {"item_id": item_id, "investigation_status": cur_status,
-                "job_ref": cur_ref, "started": False}
+def _dispatch_investigation_section(item_id: int, title: str,
+                                    detail: str | None, op: str,
+                                    creator: str, section: str,
+                                    prior: str | None = None,
+                                    note: str | None = None,
+                                    dry: bool = False) -> dict:
+    """Dispatch ONE section pass of an investigation on the live gamma
+    bus at REAP_MAX_TOKENS (or record it dry). The caller owns the chain
+    state: it lands finished sections on the note and calls this for the
+    next missing one. When `note` is given, the accumulated note is saved
+    with the dispatch, so a landed section and its follow-up dispatch are
+    never separated."""
     if dry:
-        if cur_status == "requested" and cur_ref and not force:
-            return {"item_id": item_id,
-                    "investigation_status": "requested",
-                    "job_ref": cur_ref, "started": False}
-        section = INVESTIGATION_SECTIONS[0]
         ref = f"dry-run:item-{item_id}:{section.lower()}"
         pg_exec(
             f"""update {SCHEMA}.agent_work_items
@@ -365,14 +353,17 @@ def _start_investigation(item_id: int, by_agent: str, dry: bool = False,
                        investigation_requested_at = now(),
                        investigation_requested_by = %s,
                        investigation_job_ref = %s,
+                       investigation_result_note = coalesce(
+                           %s, investigation_result_note),
                        updated_at = now()
                  where id = %s""",
-            (creator, ref, item_id))
+            (creator, ref, note, item_id))
         return {"item_id": item_id, "investigation_status": "requested",
                 "job_ref": ref, "started": True,
-                "section": section, "sections_total": len(INVESTIGATION_SECTIONS)}
-    section = INVESTIGATION_SECTIONS[0]
-    brief = _section_brief(item_id, title, detail, op, creator, section)
+                "section": section,
+                "sections_total": len(INVESTIGATION_SECTIONS)}
+    brief = _section_brief(item_id, title, detail, op, creator, section,
+                           prior=prior)
     payload = {"prompt": brief, "probe_id": INVESTIGATION_PROBE_ID,
                "commons_item_id": item_id, "section": section,
                "thinking": True, "max_tokens": REAP_MAX_TOKENS}
@@ -387,12 +378,241 @@ def _start_investigation(item_id: int, by_agent: str, dry: bool = False,
                    investigation_requested_at = now(),
                    investigation_requested_by = %s,
                    investigation_job_ref = %s,
+                   investigation_result_note = coalesce(
+                       %s, investigation_result_note),
                    updated_at = now()
              where id = %s""",
-        (creator, ref, item_id))
+        (creator, ref, note, item_id))
     return {"item_id": item_id, "investigation_status": "queued",
             "job_ref": ref, "started": True,
             "section": section, "sections_total": len(INVESTIGATION_SECTIONS)}
+
+
+def _start_investigation(item_id: int, by_agent: str, dry: bool = False,
+                         force: bool = False) -> dict | None:
+    """Start the REAP 150B investigation for an issue. ONE live
+    investigation per issue: while one is queued/running, the existing
+    job is returned unchanged (started=False) — notes, touches, and
+    re-flags never spawn duplicates. Section-chained (B1a): only the
+    FIRST section is dispatched here, at REAP_MAX_TOKENS, via
+    _dispatch_investigation_section; the collector (B1b) lands it and
+    dispatches the next missing section."""
+    row = pg_one(
+        f"""select title, detail, operator_key, created_by_agent,
+                   investigation_status, investigation_job_ref
+              from {SCHEMA}.agent_work_items
+             where id = %s and kind = 'issue'""",
+        (item_id,))
+    if row is None:
+        return None
+    title, detail, op, creator, cur_status, cur_ref = row
+    if cur_status in ("queued", "running") and cur_ref and not force:
+        return {"item_id": item_id, "investigation_status": cur_status,
+                "job_ref": cur_ref, "started": False}
+    if dry and cur_status == "requested" and cur_ref and not force:
+        return {"item_id": item_id, "investigation_status": "requested",
+                "job_ref": cur_ref, "started": False}
+    return _dispatch_investigation_section(
+        item_id, title, detail, op, creator, INVESTIGATION_SECTIONS[0],
+        dry=dry)
+
+
+def _parse_reap_body(body):
+    """Gamma's outbox body is a JSON envelope; the REAP text lives at
+    result.text. Same envelope as overdue_relevance.parse_reap_body.
+    Tolerates a pre-parsed dict. Returns None on anything unparseable."""
+    if not body:
+        return None
+    try:
+        data = body if isinstance(body, dict) else json.loads(body)
+        text = (data.get("result") or {}).get("text")
+        return text.strip() if text else None
+    except Exception:
+        return None
+
+
+def _reset_investigation(item_id: int, agent_key: str, note: str) -> None:
+    """Reset a stalled investigation so the issue can be re-investigated
+    (raise-flag / reinvestigate): status back to 'none', live ref
+    cleared, landed sections kept on the note, and the reason logged on
+    the shared progress log so the team sees why the chain stopped."""
+    pg_exec(
+        f"""update {SCHEMA}.agent_work_items
+               set investigation_status = 'none',
+                   investigation_job_ref = null,
+                   updated_at = now()
+             where id = %s""",
+        (item_id,))
+    _log_progress(item_id, agent_key, note, False)
+
+
+def collect_investigation_sections(dry: bool = False) -> dict:
+    """Collector/advancer (BUILD_QUEUE B1b): land each finished
+    investigation section from gamma's outbox onto the issue's
+    investigation_result_note, dispatch the next missing section, and
+    mark the investigation 'done' at 4/4. Mirrors the
+    overdue_relevance section-chain collector: a finished bus event is
+    followed by its outbox inference_result (subject 'gamma: event <id>
+    done (reap_infer)'); a failed/dead-letter/missing event or an
+    unparseable result resets the investigation (status 'none', ref
+    cleared, reason on the shared log) so the team can re-trigger it; a
+    live event with no outbox row yet is left alone. dry=True rehearses
+    only: it reports what would land/dispatch/reset and writes nothing."""
+    rows = pg_rows(
+        f"""select id, title, detail, operator_key, created_by_agent,
+                   investigation_status, investigation_job_ref,
+                   investigation_result_note, investigation_requested_by
+              from {SCHEMA}.agent_work_items
+             where kind = 'issue'
+               and investigation_status in ('requested', 'queued', 'running')
+             order by id""")
+    # 'requested' rows are dry-run records only (live dispatch sets
+    # 'queued'); they are picked up here so the dry-ref skip below is
+    # explicit and counted, never invisible.
+    out = {"landed": 0, "dispatched": 0, "completed": 0, "reset": 0,
+           "skipped_dry": 0, "still_running": 0, "waiting_outbox": 0}
+    for (item_id, title, detail, op, creator, cur_status, cur_ref,
+         note, requested_by) in rows:
+        who = requested_by or creator or "spencer"
+        if not cur_ref:
+            # Chain-open recovery: a section was landed but the next
+            # dispatch never recorded (crash / dry run). Advance from
+            # the note alone.
+            missing = missing_investigation_sections(note)
+            if not missing:
+                if not dry:
+                    pg_exec(
+                        f"""update {SCHEMA}.agent_work_items
+                               set investigation_status = 'done',
+                                   updated_at = now()
+                             where id = %s""", (item_id,))
+                out["completed"] += 1
+                print(f"commons item #{item_id}: note already complete — "
+                      f"marked done")
+                continue
+            if dry:
+                out["dispatched"] += 1
+                print(f"commons item #{item_id}: would dispatch "
+                      f"{missing[0]} (chain-open)")
+                continue
+            _dispatch_investigation_section(
+                item_id, title, detail, op, creator, missing[0],
+                prior=note)
+            out["dispatched"] += 1
+            print(f"commons item #{item_id}: chain-open — dispatched "
+                  f"{missing[0]}")
+            continue
+        if cur_ref.startswith("dry-run:"):
+            out["skipped_dry"] += 1
+            continue
+        try:
+            eid = int(cur_ref.split(":", 1)[1])
+        except (ValueError, IndexError):
+            if not dry:
+                _reset_investigation(
+                    item_id, who,
+                    "150B investigation: job ref unreadable "
+                    f"({cur_ref}) — investigation reset; re-flag or "
+                    "reinvestigate to retry.")
+            out["reset"] += 1
+            print(f"commons item #{item_id}: unreadable job ref "
+                  f"{cur_ref} — reset")
+            continue
+        estatus = pg_one("select status from bus.events where id = %s",
+                         (eid,))
+        if estatus is None or estatus in ("failed", "dead_letter"):
+            if not dry:
+                _reset_investigation(
+                    item_id, who,
+                    "150B investigation: REAP section "
+                    + (f"bus event #{eid} no longer on the road"
+                       if estatus is None
+                       else f"failed on gamma (bus event #{eid}: "
+                            f"{estatus})")
+                    + " — investigation reset; re-flag or reinvestigate "
+                      "to retry.")
+            out["reset"] += 1
+            print(f"commons item #{item_id}: bus event #{eid} "
+                  f"{estatus} — reset")
+            continue
+        if estatus != "done":
+            out["still_running"] += 1
+            continue
+        section = pg_one(
+            "select payload->>'section' from bus.events where id = %s",
+            (eid,))
+        body = pg_one(
+            "select body from successbrian_os.outbox "
+            "where source_agent = 'gamma' "
+            "and message_type = 'inference_result' and subject = %s",
+            (f"gamma: event {eid} done (reap_infer)",))
+        if not body:
+            out["waiting_outbox"] += 1
+            continue
+        sec_text = _parse_reap_body(body)
+        if not sec_text:
+            if not dry:
+                _reset_investigation(
+                    item_id, who,
+                    "150B investigation: gamma's outbox result for bus "
+                    f"event #{eid} is unparseable — investigation reset; "
+                    "re-flag or reinvestigate to retry.")
+            out["reset"] += 1
+            print(f"commons item #{item_id}: outbox result for event "
+                  f"#{eid} unparseable — reset")
+            continue
+        missing_before = missing_investigation_sections(note)
+        section = section or (missing_before[0] if missing_before else None)
+        if section is None:
+            # Note already complete; the finished event adds nothing.
+            if not dry:
+                pg_exec(
+                    f"""update {SCHEMA}.agent_work_items
+                           set investigation_status = 'done',
+                               investigation_job_ref = null,
+                               updated_at = now()
+                         where id = %s""", (item_id,))
+            out["completed"] += 1
+            print(f"commons item #{item_id}: event #{eid} finished, "
+                  f"note already complete — marked done")
+            continue
+        sec = sec_text.strip()
+        if not sec.upper().startswith(section + ":"):
+            sec = f"{section}: {sec}"
+        new_note = ((note or "") + "\n\n" + sec).strip()
+        missing = missing_investigation_sections(new_note)
+        if not missing:
+            if not dry:
+                pg_exec(
+                    f"""update {SCHEMA}.agent_work_items
+                           set investigation_result_note = %s,
+                               investigation_status = 'done',
+                               investigation_job_ref = null,
+                               updated_at = now()
+                         where id = %s""", (new_note, item_id))
+                _log_progress(
+                    item_id, who,
+                    "150B investigation complete — WHAT / EVIDENCE / "
+                    "TRIED / FIXES all landed on the note.", False)
+            out["landed"] += 1
+            out["completed"] += 1
+            print(f"commons item #{item_id}: REAP section {section} "
+                  f"landed — investigation complete")
+            continue
+        if dry:
+            out["landed"] += 1
+            out["dispatched"] += 1
+            print(f"commons item #{item_id}: would land {section} and "
+                  f"dispatch {missing[0]} next")
+            continue
+        _dispatch_investigation_section(
+            item_id, title, detail, op, creator, missing[0],
+            prior=new_note, note=new_note)
+        out["landed"] += 1
+        out["dispatched"] += 1
+        print(f"commons item #{item_id}: REAP section {section} landed "
+              f"— dispatched {missing[0]} next")
+    return out
 
 
 def reinvestigate(agent_key: str, item_id: int,
@@ -795,6 +1015,126 @@ def selftest() -> int:
             "reinvestigate while one is requested starts no duplicate"
         steps.append("reinvestigate dedup (one investigation per issue)")
 
+        # ---- B1b: the collector/advancer ----
+        assert _parse_reap_body('{"result": {"text": "WHAT: x"}}') == "WHAT: x", \
+            "outbox envelope parses to result text"
+        assert _parse_reap_body('{"result": {}}') is None, \
+            "envelope without text parses to None"
+        assert _parse_reap_body("not json") is None, \
+            "bad outbox body parses to None"
+        dry_coll = collect_investigation_sections(dry=True)
+        assert dry_coll["skipped_dry"] >= 1, \
+            "dry rehearsal skips the dry-run investigation, writes nothing"
+        ref_still = pg_one(
+            f"select investigation_job_ref from {SCHEMA}.agent_work_items "
+            f"where id = %s", (issue_id,))
+        assert ref_still == fl["job_ref"], \
+            "dry collector leaves the dry ref untouched"
+        steps.append("collector dry rehearsal (skips dry refs, writes nothing)")
+
+        # Live landing, end-to-end on disposable rows: fabricated bus
+        # events + outbox rows (gamma never ran) prove the landing path;
+        # no real REAP job is ever queued by this test.
+        fl2 = raise_flag(op, a, "SELFTEST flag 2: collector landing",
+                         detail="disposable collector proof",
+                         investigate="dry")
+        issue2 = fl2["item_id"]
+        fake_ev = fake_ev2 = None
+        try:
+            fake_ev = pg_one(
+                "insert into bus.events (event_type, source, target, "
+                "priority, payload, status) values ('reap_infer', %s, "
+                "'gamma', %s, %s, 'done') returning id",
+                (a, INVESTIGATION_PRIORITY,
+                 Json({"probe_id": INVESTIGATION_PROBE_ID,
+                       "commons_item_id": issue2, "section": "EVIDENCE",
+                       "thinking": True,
+                       "max_tokens": REAP_MAX_TOKENS})))
+            pg_exec(
+                "insert into successbrian_os.outbox (source_agent, "
+                "message_type, subject, body) values ('gamma', "
+                "'inference_result', %s, %s)",
+                (f"gamma: event {fake_ev} done (reap_infer)",
+                 json.dumps({"result": {"text": "EVIDENCE: seen in logs"}})))
+            pg_exec(
+                f"""update {SCHEMA}.agent_work_items
+                       set investigation_status = 'queued',
+                           investigation_job_ref = %s,
+                           investigation_result_note = %s,
+                           updated_at = now()
+                     where id = %s""",
+                (f"bus.events:{fake_ev}", "WHAT: w", issue2))
+            dry2 = collect_investigation_sections(dry=True)
+            assert dry2["landed"] >= 1 and dry2["dispatched"] >= 1, \
+                "dry rehearsal reports the landable section + next dispatch"
+            row2 = pg_rows(
+                f"""select investigation_status, investigation_job_ref,
+                           investigation_result_note
+                      from {SCHEMA}.agent_work_items where id = %s""",
+                (issue2,))[0]
+            assert row2[0] == "queued" \
+                and row2[1] == f"bus.events:{fake_ev}" \
+                and row2[2] == "WHAT: w", \
+                "dry collector writes nothing to a landable row"
+            steps.append("collector dry rehearsal (would land + dispatch, "
+                         "row untouched)")
+
+            # Now the live landing at 4/4: 3 sections on the note, a
+            # finished FIXES pass lands, investigation completes, and no
+            # further bus event is dispatched.
+            fake_ev2 = pg_one(
+                "insert into bus.events (event_type, source, target, "
+                "priority, payload, status) values ('reap_infer', %s, "
+                "'gamma', %s, %s, 'done') returning id",
+                (a, INVESTIGATION_PRIORITY,
+                 Json({"probe_id": INVESTIGATION_PROBE_ID,
+                       "commons_item_id": issue2, "section": "FIXES",
+                       "thinking": True,
+                       "max_tokens": REAP_MAX_TOKENS})))
+            pg_exec(
+                "insert into successbrian_os.outbox (source_agent, "
+                "message_type, subject, body) values ('gamma', "
+                "'inference_result', %s, %s)",
+                (f"gamma: event {fake_ev2} done (reap_infer)",
+                 json.dumps({"result": {"text": "FIXES: do the thing first"}})))
+            pg_exec(
+                f"""update {SCHEMA}.agent_work_items
+                       set investigation_status = 'queued',
+                           investigation_job_ref = %s,
+                           investigation_result_note = %s,
+                           updated_at = now()
+                     where id = %s""",
+                (f"bus.events:{fake_ev2}",
+                 "WHAT: w\n\nEVIDENCE: e\n\nTRIED: t", issue2))
+            live_coll = collect_investigation_sections()
+            assert live_coll["landed"] >= 1 \
+                and live_coll["completed"] >= 1, \
+                "collector lands the finished section and completes at 4/4"
+            row2 = pg_rows(
+                f"""select investigation_status, investigation_job_ref,
+                           investigation_result_note
+                      from {SCHEMA}.agent_work_items where id = %s""",
+                (issue2,))[0]
+            assert row2[0] == "done" and row2[1] is None, \
+                "4/4 note marks the investigation done, ref cleared"
+            assert "FIXES: do the thing first" in (row2[2] or ""), \
+                "landed FIXES section is on the note"
+            n_ev = pg_one(
+                "select count(*) from bus.events where "
+                "payload->>'commons_item_id' = %s", (str(issue2),))
+            assert n_ev == 2, \
+                "completing at 4/4 dispatches no further bus event"
+            steps.append("collector live landing (FIXES lands, 4/4 done, "
+                         "no further dispatch)")
+        finally:
+            for ev in (fake_ev, fake_ev2):
+                if ev:
+                    pg_exec("delete from bus.events where id = %s", (ev,))
+                    pg_exec(
+                        "delete from successbrian_os.outbox where "
+                        "subject = %s",
+                        (f"gamma: event {ev} done (reap_infer)",))
+
         lead = claim_item(a, issue_id)
         assert lead and lead["claimed_by_agent"] == a, "A takes lead"
         att_a = progress_item(a, issue_id, note="lead: second way tried",
@@ -949,6 +1289,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--kind", choices=["task", "issue"])
     p.add_argument("--json", action="store_true")
 
+    p = sub.add_parser("collect-investigations")
+    p.add_argument("--dry", action="store_true",
+                   help="rehearse only: report what would land / "
+                        "dispatch / reset, write nothing")
+
     sub.add_parser("selftest")
     args = ap.parse_args(argv)
 
@@ -1037,6 +1382,8 @@ def main(argv: list[str] | None = None) -> int:
                           f"(by {it['created_by']}, held by {holder}, "
                           f"attempts {it['attempts']}){flag}")
             return 0
+        elif args.verb == "collect-investigations":
+            out = collect_investigation_sections(dry=args.dry)
         elif args.verb == "selftest":
             return selftest()
         else:  # pragma: no cover

@@ -46,7 +46,10 @@ can see when the gate is reached.
 Raising a flag also starts a DeepSeek REAP 150B deep-investigation on
 the live gamma bus (one per issue; it joins the reap queue as an
 ordinary citizen and never preempts the road) — see "the 150B
-investigator" in docs/agent-commons.md.
+investigator" in docs/agent-commons.md. Sized by the sender-owns-sizing
+law: the report is a section chain (WHAT / EVIDENCE / TRIED / FIXES),
+one 500-token pass per section; the issue carries the chain state and
+the collector lands each section and dispatches the next.
 
 Tables (DDL: tools/agent_commons.sql):
   successbrian_os.agent_presence     — who's here, working on what
@@ -268,17 +271,38 @@ def raise_flag(operator: str, agent_key: str, title: str,
 # 2026-11-11). An investigation is an ordinary citizen of that queue:
 # same event type, same priority class. It JOINS the reap queue under
 # the road's existing rules and never preempts paying REAP work — feed
-# the road first. The worker-side report post-back (gamma writing its
-# report onto the issue as a team note, via probe_id routing) is
-# FOLLOW-ON wiring; until then the issue carries the investigation
-# state and the board reads the job's live status from bus.events.
+# the road first. SIZING LAW (Brian, 2026-11-13: "let's not oversize
+# jobs, even for reap 150b" — 1,600-token REAP passes completed 0/10,
+# 500-token passes 16/16): an investigation is a SECTION CHAIN, not one
+# 2,000-token run. The report is four sections — WHAT / EVIDENCE /
+# TRIED / FIXES — one 500-token REAP pass per section, in order. The
+# issue carries the chain state: investigation_job_ref points at the
+# live section's bus event, investigation_result_note accumulates the
+# landed sections ("SECTION:" headers), and missing sections are read
+# off the note. Dispatch sends the FIRST section only; the collector
+# (collect_investigation_sections, BUILD_QUEUE B1b) lands each finished
+# section onto the note and dispatches the next one until the report is
+# complete. Until the collector lands, the board reads the live
+# section's status from bus.events.
 
 INVESTIGATION_PROBE_ID = "agent-commons-investigation"
 INVESTIGATION_PRIORITY = 5
+REAP_MAX_TOKENS = 500
+INVESTIGATION_SECTIONS = ("WHAT", "EVIDENCE", "TRIED", "FIXES")
+INVESTIGATION_SECTION_TASKS = {
+    "WHAT": "what is actually wrong — the fault, in concrete terms",
+    "EVIDENCE": "what evidence supports it — what was observed, where",
+    "TRIED": "what has likely already been tried, and what it showed",
+    "FIXES": "the most promising fixes, in order, each with its first step",
+}
 
 
-def _investigation_brief(item_id: int, title: str, detail: str | None,
-                         operator: str, raised_by: str) -> str:
+def _section_brief(item_id: int, title: str, detail: str | None,
+                   operator: str, raised_by: str, section: str,
+                   prior: str | None = None) -> str:
+    """One section of the investigation brief. The REAP seat's run is
+    time-boxed to REAP_MAX_TOKENS, so the prompt asks for ONLY the named
+    section — nothing else, no preamble — 3-5 dense sentences."""
     focus = pg_one(
         f"select current_focus from {SCHEMA}.agent_presence "
         f"where agent_key = %s", (raised_by,))
@@ -290,13 +314,22 @@ def _investigation_brief(item_id: int, title: str, detail: str | None,
         lines.append(f"Detail from the flagging agent: {detail}")
     lines.append(f"Raised by: {raised_by}"
                  + (f" (their current focus: {focus})" if focus else ""))
+    if prior:
+        lines.append("SECTIONS SO FAR:")
+        lines.append(prior)
     lines.append(
-        "Investigate deeply: what is actually wrong, what evidence "
-        "supports it, what has likely already been tried, and the most "
-        "promising fixes in order. Reply with the full investigation "
-        "report as plain text — it will be posted back onto the shared "
-        "issue for the whole agent team.")
+        f"Write ONLY the {section} section (start with '{section}:'). "
+        f"{INVESTIGATION_SECTION_TASKS[section]}. 3-5 dense sentences, "
+        "concrete, no filler. Your run is time-boxed to "
+        f"{REAP_MAX_TOKENS} tokens — do not attempt any other section.")
     return "\n".join(lines)
+
+
+def missing_investigation_sections(note: str | None) -> list[str]:
+    """Sections the investigation still owes, read off the accumulated
+    note (same shape as overdue_relevance.missing_sections)."""
+    have = (note or "").upper()
+    return [s for s in INVESTIGATION_SECTIONS if (s + ":") not in have]
 
 
 def _start_investigation(item_id: int, by_agent: str, dry: bool = False,
@@ -304,7 +337,9 @@ def _start_investigation(item_id: int, by_agent: str, dry: bool = False,
     """Start the REAP 150B investigation for an issue. ONE live
     investigation per issue: while one is queued/running, the existing
     job is returned unchanged (started=False) — notes, touches, and
-    re-flags never spawn duplicates."""
+    re-flags never spawn duplicates. Section-chained (B1a): only the
+    FIRST section is dispatched here, at REAP_MAX_TOKENS; the collector
+    (B1b) lands it and dispatches the next missing section."""
     row = pg_one(
         f"""select title, detail, operator_key, created_by_agent,
                    investigation_status, investigation_job_ref
@@ -322,7 +357,8 @@ def _start_investigation(item_id: int, by_agent: str, dry: bool = False,
             return {"item_id": item_id,
                     "investigation_status": "requested",
                     "job_ref": cur_ref, "started": False}
-        ref = f"dry-run:item-{item_id}"
+        section = INVESTIGATION_SECTIONS[0]
+        ref = f"dry-run:item-{item_id}:{section.lower()}"
         pg_exec(
             f"""update {SCHEMA}.agent_work_items
                    set investigation_status = 'requested',
@@ -333,11 +369,13 @@ def _start_investigation(item_id: int, by_agent: str, dry: bool = False,
                  where id = %s""",
             (creator, ref, item_id))
         return {"item_id": item_id, "investigation_status": "requested",
-                "job_ref": ref, "started": True}
-    brief = _investigation_brief(item_id, title, detail, op, creator)
+                "job_ref": ref, "started": True,
+                "section": section, "sections_total": len(INVESTIGATION_SECTIONS)}
+    section = INVESTIGATION_SECTIONS[0]
+    brief = _section_brief(item_id, title, detail, op, creator, section)
     payload = {"prompt": brief, "probe_id": INVESTIGATION_PROBE_ID,
-               "commons_item_id": item_id, "thinking": True,
-               "max_tokens": 2000}
+               "commons_item_id": item_id, "section": section,
+               "thinking": True, "max_tokens": REAP_MAX_TOKENS}
     ev = pg_one(
         "insert into bus.events (event_type, source, target, priority, payload) "
         "values ('reap_infer', %s, 'gamma', %s, %s) returning id",
@@ -353,7 +391,8 @@ def _start_investigation(item_id: int, by_agent: str, dry: bool = False,
              where id = %s""",
         (creator, ref, item_id))
     return {"item_id": item_id, "investigation_status": "queued",
-            "job_ref": ref, "started": True}
+            "job_ref": ref, "started": True,
+            "section": section, "sections_total": len(INVESTIGATION_SECTIONS)}
 
 
 def reinvestigate(agent_key: str, item_id: int,
@@ -713,6 +752,23 @@ def selftest() -> int:
         assert fl["investigation_status"] == "requested" \
             and fl["job_ref"].startswith("dry-run") and fl["started"], \
             "investigation requested at raise time (dry — road untouched)"
+        assert fl["section"] == "WHAT" and fl["sections_total"] == 4, \
+            "section chain starts at WHAT of 4 (B1a sizing law)"
+        assert fl["job_ref"] == f"dry-run:item-{issue_id}:what", \
+            "dry ref names its section"
+        no_bus = pg_one(
+            "select count(*) from bus.events where payload->>'commons_item_id' = %s",
+            (str(issue_id),))
+        assert no_bus == 0, "dry investigation touches no bus event"
+        assert missing_investigation_sections(None) == list(INVESTIGATION_SECTIONS), \
+            "empty note owes all four sections"
+        assert missing_investigation_sections("WHAT: x\n\nEVIDENCE: y") == ["TRIED", "FIXES"], \
+            "landed sections drop out of the missing list"
+        assert REAP_MAX_TOKENS == 500, "sizing law: 500-token cap"
+        for sec in INVESTIGATION_SECTIONS:
+            brief = _section_brief(issue_id, "t", "d", op, a, sec)
+            assert f"Write ONLY the {sec} section" in brief, \
+                f"section brief asks only for {sec}"
         steps.append("raise_flag (issue + investigation requested, dry)")
 
         board_b = list_board(operator=op)  # what agent B sees on heartbeat

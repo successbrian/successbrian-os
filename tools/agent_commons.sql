@@ -67,13 +67,17 @@ comment on table successbrian_os.agent_work_items is 'Agent Commons common work 
 -- THE 150B INVESTIGATOR (Brian's refinement 2, capture #1400): raising a
 -- flag automatically starts a DeepSeek REAP 150B deep-investigation. The
 -- board-side half lives here: the issue carries its investigation state.
--- The live enqueue is one row in bus.events (event_type 'reap_infer',
+-- SIZED BY THE SENDER-OWNS-SIZING LAW (Brian, 2026-11-13; BUILD_QUEUE
+-- B1a): the report is a SECTION CHAIN (WHAT / EVIDENCE / TRIED / FIXES),
+-- one 500-token bus event per section, dispatched in order. The live
+-- enqueue is one row in bus.events per section (event_type 'reap_infer',
 -- target 'gamma', priority 5 — the road's standard class; the
 -- investigation JOINS the reap queue and never preempts paying work).
--- investigation_job_ref points at that row ('bus.events:<id>'); its live
--- status is read from bus.events at board-read time. The worker-side
--- report post-back (gamma writing its report onto the issue as a team
--- note) is follow-on wiring; investigation_result_note is its slot.
+-- investigation_job_ref points at the LIVE section's row
+-- ('bus.events:<id>'); its live status is read from bus.events at
+-- board-read time. investigation_result_note accumulates the landed
+-- sections ("SECTION:" headers); the collector (B1b) lands each finished
+-- section onto the note and dispatches the next missing one.
 alter table successbrian_os.agent_work_items
   add column if not exists investigation_status text not null default 'none'
   check (investigation_status in ('none','requested','queued','running','done'));

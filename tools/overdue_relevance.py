@@ -401,6 +401,33 @@ def dispatch_section(row, section, hits):
         "RETURNING id", (json.dumps(payload),))
 
 
+def file_capture(title, raw, context):
+    """One Intel Bridge capture, deduped by exact title
+    within 7 days. Returns the capture id or None."""
+    import base64 as b64
+    import subprocess
+
+    def b64sql(s):
+        return ("convert_from(decode('%s','base64'),'UTF8')"
+                % b64.b64encode(s.encode()).decode())
+
+    exists = sbos_common.pg_one(
+        "SELECT count(*) FROM atlas.scattered_captures "
+        "WHERE title = %s AND created_at > now() - interval "
+        "'7 days'", (title,))
+    if exists:
+        return None
+    sql = ("insert into atlas.scattered_captures "
+           "(title, raw_text, context, status) values "
+           f"({b64sql(title)}, {b64sql(raw)}, "
+           f"{b64sql(context)}, 'raw') returning id")
+    p = subprocess.run(["psql", "-d", "ecosystem_central",
+                        "-t", "-A", "-c", sql],
+                       capture_output=True, text=True, timeout=60)
+    out = (p.stdout or "").strip().splitlines()
+    return out[0] if out else ""
+
+
 def parse_reap_body(body):
     """Gamma's outbox body is a JSON envelope; the REAP
     text lives at result.text. Tolerates a pre-parsed
@@ -479,7 +506,8 @@ def dispatch_sections(limit=MAX_PER_RUN):
         "SELECT id, source_type, source_id, title, "
         "days_overdue, is_blog, reap_text, reap_passes "
         "FROM successbrian_os.overdue_relevance WHERE "
-        "reap_status IN ('done', 'chain-open') AND "
+        "reap_status IN ('done', 'chain-open', "
+        "'done-full') AND "
         "reap_event_id2 IS NULL AND reap_passes < %s "
         "ORDER BY id LIMIT %s", (MAX_CHAIN, limit))
     n = 0

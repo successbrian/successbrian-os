@@ -9,7 +9,12 @@ goal priority then age.
 
 Sources (same legs as B6's residue_inventory, enriched with context):
   held_brian_step - successbrian_os.pm_steps where status='held_brian'
-  unruled_capture - atlas.scattered_captures where status='raw'
+  unruled_capture - atlas.scattered_captures where depth='brian_decision'
+                    and ruled_at is null (B8b-2: the stream draws ONLY
+                    from brian_decision; unruled = ruled_at null, set
+                    only by the B8 write-back - ruling_why is not the
+                    test, gamma classify notes land there with ruled_at
+                    null, e.g. capture 1551)
   compile_residue - successbrian_os.knowledge_index where kind='compile'
                     (the B15 standing-compile contract; 0 rows until
                     B15 lands, lights up automatically when it does)
@@ -29,6 +34,11 @@ Sync semantics (carry-forward, never drop):
     resolved with reason 'source_left_residue' - history kept,
     never deleted, never silently dropped. A ruled/carried item
     is never touched by sync.
+  - B8b-2: a queued pending capture whose depth is no longer
+    brian_decision (reclassified, or discarded) is resolved with
+    reason 'depth_not_brian_decision' - the stream stays
+    depth-true over time. An unclassified (depth NULL) pending
+    capture is left alone until triage stamps its depth.
   - ruling itself is B8's write-back path (below): this tool only
     staged the queue before B8. Nothing here sends, buys,
     publishes, or contacts anyone.
@@ -75,6 +85,7 @@ Usage:
                                   + ordering + resolve-on-vanish probe
                                   + B8 rule/carry probes on disposable
                                   rows for all three source legs
+                                  + B8b-2 depth-filter probe
 """
 import json
 import sys
@@ -143,7 +154,9 @@ select 'unruled_capture',
                           'recommendation', recommendation,
                           'depth', depth,
                           'workspace_slug', workspace_slug) as context
-  from atlas.scattered_captures where status = 'raw'
+  from atlas.scattered_captures
+ where depth = 'brian_decision' and ruled_at is null
+   and status <> 'discarded'
 union all
 select 'compile_residue',
        'ki:' || canonical_id,
@@ -213,6 +226,25 @@ def sync():
             inserted += 1
         else:
             updated += 1
+    # B8b-2: pending captures whose depth left brian_decision resolve
+    # with the depth reason, before the general pass - the stream
+    # stays depth-true when a capture is reclassified or discarded.
+    # Depth NULL (unclassified, not yet triaged) is left alone: the
+    # clerk stamps a depth within minutes and the next sync settles it.
+    depth_resolved = pg_rows(
+        f"""update {SCHEMA}.{TABLE}
+               set status = 'resolved',
+                   resolved_reason = 'depth_not_brian_decision',
+                   resolved_at = now(), updated_at = now()
+             where status = 'pending' and source = 'unruled_capture'
+               and source_ref in (
+                 select 'capture:' || id::text
+                   from atlas.scattered_captures
+                  where (depth is not null
+                         and depth <> 'brian_decision')
+                     or status = 'discarded')
+             returning source_ref""",
+        dbname=DB)
     # Pending items whose source left residue: resolve, never delete.
     if live_refs:
         resolved = pg_rows(
@@ -239,6 +271,8 @@ def sync():
         dbname=DB)
     print(f"sync: live={len(live)} inserted={inserted} "
           f"updated={updated} resolved={len(resolved)} pending={pending}")
+    for (ref,) in depth_resolved:
+        print(f"  resolved (depth left brian_decision): {ref}")
     for (ref,) in resolved:
         print(f"  resolved (source left residue): {ref}")
     return 0
@@ -545,7 +579,7 @@ def _probe_refs():
         cap_id = pg_one(
             """insert into atlas.scattered_captures
                    (context, depth, raw_text, status, title)
-                values ('B8 selftest disposable', 'unclassified',
+                values ('B8 selftest disposable', 'brian_decision',
                         'B8 selftest disposable', 'raw',
                         'B8 selftest disposable')
                 returning id""",
@@ -559,7 +593,8 @@ def _probe_refs():
         pg_exec(
             """update atlas.scattered_captures
                   set status = 'raw', ruling_why = null,
-                      ruled_at = null, triaged_at = null
+                      ruled_at = null, triaged_at = null,
+                      depth = 'brian_decision'
                 where id = %s""",
             (cap_id,), dbname=DB)
     pg_exec(
@@ -699,6 +734,71 @@ def selftest():
         "where source_ref = %s or source_ref = %s or source_ref = %s",
         (pm_ref, cap_ref, ki_ref), dbname=DB) == 0, \
         "probe queue rows left behind"
+    # 11. B8b-2 depth filter: a non-brian_decision capture never enters
+    #     the stream; reclassifying it to brian_decision admits it;
+    #     moving it away again resolves it with the depth reason.
+    #     A second disposable capture row, reused across runs like the
+    #     B8 one (no DELETE grant on scattered_captures).
+    probe_id = pg_one(
+        "select id from atlas.scattered_captures "
+        "where title = 'B8b-2 selftest disposable' order by id limit 1",
+        dbname=DB)
+    if probe_id is None:
+        probe_id = pg_one(
+            """insert into atlas.scattered_captures
+                   (context, depth, raw_text, status, title)
+                values ('B8b-2 selftest disposable', 'team_working',
+                        'B8b-2 selftest disposable', 'raw',
+                        'B8b-2 selftest disposable')
+                returning id""",
+            dbname=DB)
+    else:
+        pg_exec(
+            """update atlas.scattered_captures
+                  set status = 'raw', depth = 'team_working',
+                      ruling_why = null, ruled_at = null,
+                      triaged_at = null
+                where id = %s""",
+            (probe_id,), dbname=DB)
+    probe_ref = f"capture:{probe_id}"
+    pg_exec(
+        f"delete from {SCHEMA}.{TABLE} where source_ref = %s",
+        (probe_ref,), dbname=DB)
+    sync()
+    assert _queue_row(probe_ref) is None, \
+        "team_working capture entered the decision stream"
+    pg_exec(
+        "update atlas.scattered_captures set depth = 'brian_decision' "
+        "where id = %s",
+        (probe_id,), dbname=DB)
+    sync()
+    assert _queue_row(probe_ref)["status"] == "pending", \
+        "brian_decision capture did not enter the stream"
+    pg_exec(
+        "update atlas.scattered_captures set depth = 'team_working' "
+        "where id = %s",
+        (probe_id,), dbname=DB)
+    sync()
+    row = pg_one(
+        f"select status, resolved_reason from {SCHEMA}.{TABLE} "
+        "where source_ref = %s",
+        (probe_ref,), dbname=DB)
+    assert row[0] == "resolved" and \
+        row[1] == "depth_not_brian_decision", \
+        f"reclassified capture not depth-resolved: {row}"
+    # Cleanup: mark the probe capture ruled so it never re-enters;
+    # the row stays, labeled disposable, like the B8 one. Drop its
+    # (resolved) queue row and reconcile once more.
+    pg_exec(
+        "update atlas.scattered_captures set status = 'triaged', "
+        "ruled_at = now(), "
+        "ruling_why = 'selftest ruling: depth probe done' where id = %s",
+        (probe_id,), dbname=DB)
+    pg_exec(
+        f"delete from {SCHEMA}.{TABLE} where source_ref = %s",
+        (probe_ref,), dbname=DB)
+    assert len(fetch_pending()) == len(fetch_residue()), \
+        "queue does not reconcile after B8b-2 depth probe"
     print("DECISION_QUEUE_OK")
     return 0
 

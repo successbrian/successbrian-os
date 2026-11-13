@@ -3,7 +3,16 @@
 
 One unified query gathering everything genuinely waiting on Brian:
   held_brian_step - successbrian_os.pm_steps where status='held_brian'
-  unruled_capture - atlas.scattered_captures where status='raw'
+  unruled_capture - atlas.scattered_captures where depth='brian_decision'
+                    and ruled_at is null (B8b-2: the stream draws ONLY
+                    from brian_decision. Unruled means never ruled by
+                    Brian: ruled_at is set only by the B8 write-back.
+                    ruling_why is NOT the test - gamma classify notes
+                    land there with ruled_at null, e.g. capture 1551.
+                    Raw captures carry depth NULL until the clerk
+                    triages them, so they enter the stream only once
+                    classified - unclassified is never silently
+                    Brian-facing.)
   compile_residue - successbrian_os.knowledge_index where kind='compile'
                     (the B15 standing-compile contract: compiles file
                     their residue-bearing rows to knowledge_index with
@@ -38,7 +47,9 @@ select 'unruled_capture',
        coalesce(title, ''),
        created_at,
        coalesce(cluster_key, '')
-  from atlas.scattered_captures where status = 'raw'
+  from atlas.scattered_captures
+ where depth = 'brian_decision' and ruled_at is null
+   and status <> 'discarded'
 union all
 select 'compile_residue',
        'ki:' || canonical_id,
@@ -102,6 +113,14 @@ def selftest():
             "rows are not oldest-first"
     # a guaranteed-empty probe stays empty (queries are scoped)
     assert run("select 1 where 1=0") == []
+    # B8b-2: the capture leg draws ONLY from brian_decision, unruled -
+    # its count reconciles with the depth directly, not with raw status.
+    bd = run("select count(*) from atlas.scattered_captures "
+             "where depth = 'brian_decision' and ruled_at is null "
+             "and status <> 'discarded'")
+    assert counts["unruled_capture"] == int(bd[0]), \
+        f"capture leg {counts['unruled_capture']} != brian_decision " \
+        f"unruled {bd[0]}"
     print("RESIDUE_INVENTORY_OK")
     return 0
 

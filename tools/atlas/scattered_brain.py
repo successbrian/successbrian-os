@@ -69,7 +69,8 @@ CREATE TABLE IF NOT EXISTS atlas.scattered_captures (
     ruling_why     text,
     created_at     timestamptz NOT NULL DEFAULT now(),
     triaged_at     timestamptz,
-    ruled_at       timestamptz
+    ruled_at       timestamptz,
+    depth          text NOT NULL DEFAULT 'unclassified'
 );
 """
 
@@ -115,6 +116,10 @@ def pg():
 def ensure(conn):
     with conn.cursor() as cur:
         cur.execute(DDL)
+        cur.execute(
+            "ALTER TABLE atlas.scattered_captures "
+            "ADD COLUMN IF NOT EXISTS depth text "
+            "NOT NULL DEFAULT 'unclassified'")
     conn.commit()
 
 
@@ -212,6 +217,92 @@ def recommend(score, forced):
     return "discard-candidate"
 
 
+# Intel depths (Brian 2026-11-13 06:45; INTEL_DEPTHS.md) — the clerk
+# stamps a depth on every capture AT TRIAGE. Deterministic phrase
+# rules, checked in priority order: an explicit Brian-action marker
+# wins, then system-self markers, then review markers, then
+# planning markers. Anything else triaged is internal working intel
+# (team_working). Raw captures stay 'unclassified' until triage
+# stamps them — unclassified is a real state, never assumed.
+# Depth markers — PRECISION RULE (fixed after the first backfill
+# showed the inversion): the Brian-facing depths are TITLE-ONLY.
+# A capture's title is its label ("BRIAN TO DO: ..."); a body that
+# merely mentions "ask Brian" or "heartbeat" in prose is discussion,
+# not the item's purpose, and must never escalate the item onto
+# Brian's surface. system_self additionally accepts machine-shaped
+# body keys (the cycle tool's finding keys), which never occur in
+# prose. A false brian_decision is worse than a missed one: it
+# would push a non-decision at Brian, the exact harm depths exist
+# to prevent.
+DEPTH_BRIAN_DECISION = (
+    "brian to do", "brian to rule", "ask brian", "needs brian",
+    "brian decision", "brian to decide", "for brian to decide",
+    "decision needed", "brian must decide",
+)
+DEPTH_SYSTEM_SELF_TITLE = (
+    "spencer cycle", "qa failing", "qa checks failing",
+    "price_intel", "backlog growing", "improvement_log",
+    "verification due", "verification check", "queue health",
+    "sizing watch", "agent cycle", "cycle #",
+)
+DEPTH_SYSTEM_SELF_BODY = (
+    "qa_failing:", "price_expired:", "backlog_growing",
+)
+DEPTH_BRIAN_REVIEW = (
+    "scoreboard", "ecosystem review", "verification verdict",
+    "improvement verdict",
+)
+DEPTH_AGENT_PLANNING_PREFIXES = ("design", "spec:", "architecture")
+DEPTH_AGENT_PLANNING = ("design doc", "build plan", "architecture doc")
+
+
+def depth_for(title, raw="", context=""):
+    """Deterministic depth for a capture at triage. Returns one of
+    the six registry depths; never raises on odd input."""
+    text = ((title or "") + " " + (raw or "") + " "
+            + (context or "")).lower()
+    title_l = (title or "").lower().strip()
+    if any(m in title_l for m in DEPTH_BRIAN_DECISION):
+        return "brian_decision"
+    if (any(m in title_l for m in DEPTH_SYSTEM_SELF_TITLE)
+            or any(m in text for m in DEPTH_SYSTEM_SELF_BODY)):
+        return "system_self"
+    if any(m in title_l for m in DEPTH_BRIAN_REVIEW):
+        return "brian_review"
+    if (title_l.startswith(DEPTH_AGENT_PLANNING_PREFIXES)
+            or title_l.startswith("plan:")
+            or any(m in title_l for m in DEPTH_AGENT_PLANNING)):
+        return "agent_planning"
+    return "team_working"
+
+
+def backfill_depths(conn, dry_run=False):
+    """Stamp depths on already-triaged captures still sitting at
+    'unclassified', using the same rule triage() applies. Raw
+    captures are left alone — their depth is stamped at triage.
+    Returns (rows_considered, rows_stamped)."""
+    ensure(conn)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, title, raw_text, context FROM "
+            "atlas.scattered_captures WHERE status <> 'raw' "
+            "AND depth = 'unclassified' ORDER BY id")
+        rows = cur.fetchall()
+    changed = 0
+    for cid, title, raw, context in rows:
+        depth = depth_for(title, raw, context)
+        changed += 1
+        if not dry_run:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE atlas.scattered_captures SET depth = %s "
+                    "WHERE id = %s AND depth = 'unclassified'",
+                    (depth, cid))
+    if not dry_run:
+        conn.commit()
+    return len(rows), changed
+
+
 def triage(conn):
     ensure(conn)
     with conn.cursor() as cur:
@@ -229,13 +320,15 @@ def triage(conn):
     for row in rows:
         score, reasons, forced = score_capture(conn, row, sizes)
         rec = recommend(score, forced)
+        depth = depth_for(row[1], row[2], row[3])
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE atlas.scattered_captures SET "
                 "status = 'triaged', score = %s, "
                 "score_reasons = %s, recommendation = %s, "
+                "depth = %s, "
                 "triaged_at = now() WHERE id = %s",
-                (score, "; ".join(reasons), rec, row[0]))
+                (score, "; ".join(reasons), rec, depth, row[0]))
         conn.commit()
         done += 1
     text = digest(conn)
@@ -369,6 +462,9 @@ def selftest(conn):
                 raw=raw_rich),
         capture(conn, "SSBTEST sipology revival party"),
         capture(conn, "SSBTEST zebra umbrella moonlight"),
+        capture(conn, "SSBTEST BRIAN TO DO - look up the order"),
+        capture(conn, "SSBTEST qa_failing:1,2,3"),
+        capture(conn, "SSBTEST design doc for the new queue"),
     ]
     done, _ = triage(conn)
     check(done >= 3, "triage processed the test captures")
@@ -389,6 +485,69 @@ def selftest(conn):
           and got[ids[2]][1] in ("park", "discard-candidate"),
           "an unconnected stray scores low (%s, %s)"
           % got[ids[2]])
+    # Depth probes (B8b-1): triage stamps a depth per capture.
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, depth FROM atlas.scattered_captures "
+            "WHERE id = ANY(%s) ORDER BY id", (ids,))
+        depths = {r[0]: r[1] for r in cur.fetchall()}
+    check(depths[ids[0]] == "team_working",
+          "goal-rich capture defaults to team_working (%s)"
+          % depths[ids[0]])
+    check(depths[ids[3]] == "brian_decision",
+          "BRIAN TO DO capture is brian_decision (%s)"
+          % depths[ids[3]])
+    check(depths[ids[4]] == "system_self",
+          "qa_failing capture is system_self (%s)"
+          % depths[ids[4]])
+    check(depths[ids[5]] == "agent_planning",
+          "design-doc capture is agent_planning (%s)"
+          % depths[ids[5]])
+    check(depth_for("BRIAN TO DO - x") == "brian_decision",
+          "depth_for: brian_decision marker")
+    check(depth_for("qa_failing:1,2") == "system_self",
+          "depth_for: system_self marker")
+    check(depth_for("Design doc: the new queue") == "agent_planning",
+          "depth_for: agent_planning prefix")
+    check(depth_for("plan: migrate the fleet") == "agent_planning",
+          "depth_for: plan: prefix")
+    check(depth_for("Weekly scoreboard") == "brian_review",
+          "depth_for: brian_review marker")
+    check(depth_for("a stray idea about dogs") == "team_working",
+          "depth_for: default team_working")
+    check(depth_for("Spencer cycle: 131 QA checks failing")
+          == "system_self",
+          "depth_for: cycle-finding title is system_self")
+    check(depth_for("Spencer cycle: 32 price_intel rows past shelf "
+                    "life") == "system_self",
+          "depth_for: price-intel cycle title is system_self")
+    check(depth_for("DealsDesk code audit",
+                    raw="three-copy drift; ask Brian which copy is "
+                    "canonical") == "team_working",
+          "depth_for: body-only 'ask Brian' does NOT escalate")
+    check(depth_for("INTEL - Paperclip: heartbeat model",
+                    raw="their heartbeat model runs the agent")
+          == "team_working",
+          "depth_for: body/title 'heartbeat' prose does NOT "
+          "escalate")
+    # Backfill probe: reset one stamped row to unclassified and
+    # confirm backfill_depths() re-stamps it with the same rule.
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE atlas.scattered_captures SET depth = "
+            "'unclassified' WHERE id = %s", (ids[0],))
+    conn.commit()
+    total, changed = backfill_depths(conn)
+    check(changed >= 1,
+          "backfill_depths stamps at least the reset row "
+          "(%d/%d)" % (changed, total))
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT depth FROM atlas.scattered_captures "
+            "WHERE id = %s", (ids[0],))
+        check(cur.fetchone()[0] == "team_working",
+              "backfilled row re-stamped team_working")
+    print("DEPTH_OK")
     rc = rule(conn, ids[2], "park", "selftest hold")
     check(rc == 0, "ruling 'park' applies")
     with conn.cursor() as cur:
@@ -418,6 +577,10 @@ def main(argv):
                       '[--context X] [--raw Y]')
                 return 2
             title = argv[2]
+            if title.startswith("--"):
+                print("refusing flag-like title %r — pass a real title"
+                      % title)
+                return 2
             context = raw = ""
             if "--context" in argv:
                 context = argv[argv.index("--context") + 1]
@@ -466,10 +629,18 @@ def main(argv):
             if "--why" in argv:
                 why = " ".join(argv[argv.index("--why") + 1:])
             return rule(conn, int(argv[2]), argv[3], why)
+        if cmd == "backfill-depths":
+            dry = "--dry-run" in argv
+            total, changed = backfill_depths(conn, dry_run=dry)
+            print("backfill-depths%s: %d unclassified triaged "
+                  "capture(s), %d stamped"
+                  % (" (dry run)" if dry else "", total, changed))
+            return 0
         if cmd == "selftest":
             return selftest(conn)
         print("usage: scattered_brain.py "
-              "[capture|list|triage|digest|rule|selftest]")
+              "[capture|list|triage|digest|rule|backfill-depths|"
+              "selftest]")
         return 2
     finally:
         conn.close()

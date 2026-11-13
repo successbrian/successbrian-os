@@ -82,11 +82,17 @@ def _normalize_verdict(parsed):
     """Map a judge reply in a known dialect onto the house contract
     {verdict, evidence}. Returns the normalized dict, or None when the
     reply carries no recognizable verdict. Dialects seen in the wild:
-    {verdict: ...} (house) and {status: PASS/FAIL, reasons: [...]}.
+    {verdict: ...} (house), {status: PASS/FAIL, reasons: [...]},
+    {result: PASS/FAIL, ...} and {pass: true/false, reason: ...}.
     A judge that rendered a verdict must not be executed for dialect:
     until 2026-11-13 the worker failed those steps as 'missing output
     keys' and 29 QA checks recorded machinery failures instead of the
-    real verdicts their judges had already given."""
+    real verdicts their judges had already given. Extended 2026-11-13
+    (cycle #172, check 637): three more failures the same morning
+    carried {result: PASS/FAIL} and one carried {pass: false} - same
+    verdict, different key. A reply with no verdict-bearing key at
+    all (e.g. a free-form improvement text) still fails as before:
+    no verdict was rendered, so there is nothing to normalize."""
     if not isinstance(parsed, dict):
         return None
     verdict = None
@@ -98,13 +104,35 @@ def _normalize_verdict(parsed):
         s = str(parsed["status"]).strip().lower()
         if s:
             verdict = "pass" if s in _PASS_WORDS else "fail"
+    elif "result" in parsed:
+        r = parsed["result"]
+        if isinstance(r, bool):
+            verdict = "pass" if r else "fail"
+        else:
+            s = str(r).strip().lower()
+            if s:
+                verdict = "pass" if s in _PASS_WORDS else "fail"
+    elif "pass" in parsed:
+        p = parsed["pass"]
+        if isinstance(p, bool):
+            verdict = "pass" if p else "fail"
+        else:
+            s = str(p).strip().lower()
+            if s:
+                verdict = "pass" if s in _PASS_WORDS else "fail"
     if verdict is None:
         return None
     out = dict(parsed)
     out["verdict"] = verdict
     if "evidence" not in out:
-        out["evidence"] = (out.get("reasons") or out.get("reason")
-                           or "")
+        ev = out.get("reasons") or out.get("reason")
+        if ev is None:
+            det = out.get("details")
+            if isinstance(det, str):
+                ev = det
+            elif det is not None:
+                ev = json.dumps(det)[:500]
+        out["evidence"] = ev or ""
     return out
 
 
@@ -187,7 +215,36 @@ def run_once(limit=1):
     return lines
 
 
+def dialect_test():
+    """Pure dialect probes (no model call, no DB): the exact shapes
+    that failed as 'missing output keys' on 2026-11-13 (check 637).
+    Prints DIALECT_OK so the gamma-clerk persistence check can run
+    it cheaply on every run-due without spending model calls."""
+    dialect_cases = [
+        ({"result": "PASS", "details": {"workspace_id": 149}}, "pass"),
+        ({"result": "FAIL", "reason": "no install report exists"},
+         "fail"),
+        ({"result": "FAIL"}, "fail"),
+        ({"pass": False, "reason": "Lack of evidence"}, "fail"),
+        ({"status": "FAIL", "stage": "factcheck",
+          "details": "factcheck output does not exist"}, "fail"),
+        ({"verdict": "pass", "evidence": "on record"}, "pass"),
+    ]
+    for raw_in, want in dialect_cases:
+        got = _normalize_verdict(raw_in)
+        assert got is not None and got["verdict"] == want, (raw_in, got)
+    ev = _normalize_verdict({"status": "FAIL", "stage": "factcheck",
+                             "details": "factcheck output missing"})
+    assert ev["evidence"] == "factcheck output missing", ev
+    assert _normalize_verdict(
+        {"improvement": "Introduce a quiet-pain detector"}) is None
+    print(f"DIALECT_OK ({len(dialect_cases)} cases; no-verdict reply "
+          "still unrecognized)")
+    return 0
+
+
 def selftest():
+    dialect_test()
     tag = f"morpheus-selftest-{int(time.time())}"
     c = pm_core.conn()
     cur = c.cursor()
@@ -224,7 +281,12 @@ def main(argv=None):
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--limit", type=int, default=1)
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--dialect-test", action="store_true",
+                    help="pure verdict-dialect probes only (no model, "
+                         "no DB) - the cheap QA persistence check")
     args = ap.parse_args(argv)
+    if args.dialect_test:
+        return dialect_test()
     if args.selftest:
         selftest()
         return 0

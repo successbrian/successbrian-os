@@ -55,7 +55,7 @@ DB_NAME = os.environ.get("SBOS_DB", "ecosystem_central")
 
 # Local model endpoints (llama.cpp servers on k11-alpha).
 SONIC_URL = os.environ.get("SONIC_URL", "http://127.0.0.1:11439/v1/chat/completions")
-SONIC_MODEL = os.environ.get("SONIC_MODEL", "qwen3.6")
+SONIC_MODEL = os.environ.get("SONIC_MODEL", "qwen-a3b")
 MORPHEUS_MODEL = os.environ.get("MORPHEUS_MODEL", "morpheus")
 PENNY_MODEL = os.environ.get("PENNY_MODEL", "penny")
 MORPHEUS_URL = os.environ.get("MORPHEUS_URL", "http://127.0.0.1:11437/v1/chat/completions")

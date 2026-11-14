@@ -437,7 +437,7 @@ def call_sonic(prompt, max_tokens=2000):
     req = urllib.request.Request(
         SONIC_URL,
         data=json.dumps({
-            "model": "qwen3.6",
+            "model": "qwen-a3b",
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": max_tokens, "temperature": 0.3}).encode(),
         headers={"Content-Type": "application/json"})

@@ -902,7 +902,7 @@ def judge_full_board_worthy(question, context):
     try:
         # Batch A migration (2026-10-27): delegates to sbos_common.llm_chat.
         out, _usage = sbos_common.llm_chat(
-            prompt, url=SONIC_URL, model="qwen3.6",
+            prompt, url=SONIC_URL, model="qwen-a3b",
             max_tokens=150, temperature=0.3, timeout=120)
         worthy = "WORTHY: YES" in out.upper()
         reason = ""

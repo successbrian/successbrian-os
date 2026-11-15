@@ -88,8 +88,20 @@ explicit owner act, written in the record. An ungranted scope refuses
 - **Approval door** — live, propose tier+: draft → `request-action` →
   pending approval → owner's decision recorded. Approval executes
   nothing yet; there is no execution surface in v1.
-- **Email door (v1, phased in):** private intake address; inbound mail
-  is untrusted data.
+- **Email door** — machinery live (Phase 4): the owner's secret
+  capability address (`email-address-create`, shown once, hash kept);
+  `email-process` gates on the capability address + aligned
+  SPF/DKIM + DMARC (From alone never trusted, missing auth fails
+  closed) and lands accepted mail through the dump door as a capture
+  — contents are data, never instructions. `APPROVE <id>` /
+  `DENY <id>` replies decide the owner's own pending requests
+  (recorded; executes nothing). Digests compose into the outbox
+  (`compose-digest`) and sit queued, unsent — nothing sends email.
+  **The live hookup is a separate step that has NOT been done and
+  needs the owner's own go:** choosing an email provider,
+  configuring the real domain (DNS: MX / SPF / DKIM / DMARC), and
+  pointing the provider's inbound webhook at the install. Until the
+  owner says go, no real mail arrives or leaves through this door.
 
 ## Readiness test
 

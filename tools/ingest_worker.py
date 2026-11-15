@@ -334,7 +334,7 @@ def serve_job(job, engine, url):
                       {"role": "user",
                        "content": build_prompt(cap)}],
             url=url, model=None, max_tokens=450,
-            temperature=0.2, timeout=300)
+            temperature=0.2, timeout=600)  # 2026-11-15: 450-token sweep gens breach 300s on loaded Penny (probe timed out at 300.2s)
         texts.append(t)
         pc, _bf = parse_sweep(t)
         per_cap.update(pc)
@@ -386,10 +386,15 @@ def run(max_jobs=1):
     for job in jobs:
         try:
             serve_job(job, engine, url)
-        except Exception as e:  # seat failure etc: requeue
+        except Exception as e:  # seat failure etc: capped retry
+            # 2026-11-15: plain release re-queued forever with attempts
+            # stuck at 0 -- jobs 99/106 failed ~144x and head-of-line
+            # blocked the penny queue. Timeout retry counts attempts
+            # and fails loudly after 3.
+            outcome = sbos_common.engine_job_timeout_retry(
+                QUEUE, job["id"])
             print(f"ingest-worker: job {job['id']} failed "
-                  f"({e}); released back to queue")
-            sbos_common.engine_job_release(QUEUE, job["id"])
+                  f"({e}); timeout-retry -> {outcome}")
     return 0
 
 

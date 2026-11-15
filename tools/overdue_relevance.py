@@ -118,7 +118,8 @@ REAP_MAX_TOKENS = sbos_common.REAP_MAX_TOKENS
 # BELOW the clerk lane (5) and the chat lanes (10/20/30), so an hourly batch
 # can never clog the road or starve live work. (Was hardcoded 40 — above
 # Brian's own ASAP ASAP tier — until 2026-11-13.)
-REAP_PRIORITY = 4
+REAP_PRIORITY = 3  # priority map: recurring upkeep waits a cycle
+# (below project work at 4, below the intake pipeline at 5)
 MONEY_CONTEXT = (
     "Brian's money context (his record): the big goal is "
     "sponsoring 40 people a month into GotBackup on a fixed "

@@ -164,6 +164,21 @@ def build_reap_packet(prompt, *, source, probe_id, section=None,
     }
 
 
+
+# ---------------------------------------------------------------- lane map
+# GAMMA BUS PRIORITY MAP (Brian, 2026-11-15: "subjobs related to higher
+# projects finish faster; things unrelated that can wait, wait").
+# The bus claims priority DESC, then oldest first. Ruled lanes:
+#   30/20/10  live chat work (ASAP ASAP / ASAP / whenever) — road tool
+#   5         the intake pipeline: clerk classify (queue keeper) and
+#             the ingest leg's REAP deep passes (its second stage)
+#   4         project work with a waiting deliverable (one-time bulk
+#             like the ruling-audit deep pass) — the default below
+#   3         recurring upkeep that can always wait a cycle:
+#             overdue-relevance, standing compiles
+#   1-2       pure filler (planning rounds, backlog deep passes)
+# A sender picks its tier ON PURPOSE from this map; inheriting the
+# default silently is how the 2026-11-15 audit bulk froze the clerk.
 def dispatch_reap_packet(packet, *, source, target="gamma",
                          priority=4):
     """Insert one standard packet on the node bus for gamma's REAP

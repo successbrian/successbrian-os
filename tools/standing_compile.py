@@ -456,7 +456,8 @@ def dispatch_lines(keys, dry: bool = False, day: str | None = None) -> dict:
             print(f"{key}: would dispatch {packet['probe_id']} "
                   f"(~{est} tok, max_tokens {packet['max_tokens']})")
             continue
-        eid = dispatch_reap_packet(packet, source="standing-compile")
+        eid = dispatch_reap_packet(packet, source="standing-compile",
+                                   priority=3)  # upkeep tier
         out["dispatched"] += 1
         out["lines"][key] = {"event_id": int(eid), "status": "pending",
                              "prompt_tokens": est}

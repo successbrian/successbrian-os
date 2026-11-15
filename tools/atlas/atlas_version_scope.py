@@ -53,6 +53,26 @@ carrying the ruling source + reason) BEFORE the project row goes.
 (version_scope_moves is item-level — item_id is a NOT NULL FK — so
 project-level events get their own audit table.)
 
+Definition sheet (Brian, 2026-11-15 09:39 CST: "income projects
+defined. audiences defined. ideas on how we'll market it definied...
+etc etc ... all the steps needed to vet and sort them"): version
+scope alone does not make a project "defined" — every registered
+project also carries a standard DEFINITION SHEET, the project-level
+counterpart of the blog fleet's 12-part planning package. The
+standard set is FIXED (DEFINITION_ITEMS below, mirroring
+blog_fleet.py's STANDARD_ITEMS discipline): the same 10 items for
+every project, seeded to every registered project, each item
+UNKNOWN until the record actually settles it. A cell is DEFINED
+only with a citable source in Brian's record (detail + source are
+required — set-definition refuses an uncited fill); a plausible
+inference stays UNKNOWN. version_scope is DERIVED from the scope
+tables (defined exactly when the project carries ruled v1 items),
+never hand-set. sort_verdict is Brian's ruling only — the sheet
+seeds it UNKNOWN everywhere. Store: atlas
+.version_scope_definition_items + _definition_moves (append-only
+change history, same pattern as scope moves). DDL:
+tools/atlas/2026-11-15_version_scope_definitions.sql.
+
 Usage (CLI):
   atlas_version_scope.py register-project --key KEY --name "Name" \
       [--note "..."] [--source "..."]
@@ -72,6 +92,13 @@ Usage (CLI):
   atlas_version_scope.py scope-gaps
   atlas_version_scope.py list-projects
   atlas_version_scope.py import-json FILE   (register project + items)
+  atlas_version_scope.py seed-definitions   (materialize the 10 standard
+      definition rows for every project + refresh derived version_scope)
+  atlas_version_scope.py set-definition --project KEY --item ITEM_KEY \
+      --state defined|unknown [--detail "..."] [--source "..."]
+  atlas_version_scope.py show-definition --project KEY
+  atlas_version_scope.py definition-gaps
+  atlas_version_scope.py sort-projects
   atlas_version_scope.py selftest
 """
 import argparse
@@ -281,6 +308,185 @@ def list_projects():
         "FROM atlas.version_scope_projects ORDER BY project_key")
 
 
+# ------------------------------------------------------- definition sheet
+# The standard definition set — FIXED, in this order, the same 10 items
+# for every registered project (Brian, 2026-11-15 09:39 CST). Mirrors
+# blog_fleet.py's STANDARD_ITEMS discipline: seeded to every project,
+# each item UNKNOWN until the record settles it, filled only from the
+# settled record with the source cited on the cell.
+DEFINITION_ITEMS = [
+    ("what_it_is", "What it is",
+     "What the project is + its kind/placement (product / marketing "
+     "skin / internal desk / template / plugin-part-of / game / tool), "
+     "from Brian's record."),
+    ("income_model", "Income model",
+     "How it makes money: what is sold, at what price, who pays — "
+     "price/payer/mechanism must be ON RECORD. A settled 'none — "
+     "internal, never sold' also defines it; paywall furniture with "
+     "no recorded price does not."),
+    ("audience", "Audience",
+     "The named audience/segment it serves, on record."),
+    ("marketing_ideas", "Marketing ideas",
+     "How it will be marketed — its blog or marketing asset, "
+     "channels, skin tie-ins — ideas ON RECORD (a ruled blog counts; "
+     "a ruled-out blog is recorded as such; nothing is invented)."),
+    ("unique_edge", "Unique edge",
+     "Its unique data source / unfair advantage / differentiator, on "
+     "record (the blogs' pp03 discipline: no evidence = UNKNOWN)."),
+    ("version_scope", "Version scope",
+     "DERIVED, never hand-set: defined exactly when the project "
+     "carries ruled v1 items in this registry."),
+    ("build_state", "Build state",
+     "Code state on record: exists / partial / finished / not "
+     "started / existence unknown."),
+    ("hosting", "Hosting",
+     "Hosting settled on record (Brian's launch law: no launch "
+     "without reliable hosting + finished code)."),
+    ("lifecycle_status", "Lifecycle status",
+     "Active / on hold / tentative-exit / under research / parked — "
+     "ONLY where Brian's record states it; unstated = UNKNOWN, never "
+     "'active' by default."),
+    ("sort_verdict", "Sort verdict",
+     "Where the project lands after vetting (build-next / develop / "
+     "park / merge / drop) — Brian's ruling only; UNKNOWN until he "
+     "rules it."),
+]
+DEFINITION_KEYS = [k for k, _t, _r in DEFINITION_ITEMS]
+DEFINITION_TITLES = {k: t for k, t, _r in DEFINITION_ITEMS}
+DEFINITION_STATES = ("defined", "unknown")
+DERIVED_SOURCE = ("derived by atlas_version_scope.py from "
+                  "atlas.version_scope_items")
+
+
+def definition_rows(project):
+    return pg_rows(
+        "SELECT item_key, state, detail, source FROM "
+        "atlas.version_scope_definition_items WHERE project_key=%s",
+        (project,))
+
+
+def defined_count(project):
+    row = pg_one(
+        "SELECT count(*) FROM atlas.version_scope_definition_items "
+        "WHERE project_key=%s AND state='defined'", (project,))
+    return row[0] if row else 0
+
+
+def _set_definition_row(project, item, state, detail, source):
+    """Write one definition cell; append the change to
+    _definition_moves when anything actually changed. Returns True
+    when a change was written."""
+    old = pg_one(
+        "SELECT state, detail, source FROM "
+        "atlas.version_scope_definition_items "
+        "WHERE project_key=%s AND item_key=%s", (project, item))
+    if old and (old[0], old[1], old[2]) == (state, detail, source):
+        return False
+    pg_exec(
+        "INSERT INTO atlas.version_scope_definition_items "
+        "(project_key, item_key, state, detail, source) "
+        "VALUES (%s, %s, %s, %s, %s) "
+        "ON CONFLICT (project_key, item_key) DO UPDATE SET "
+        "state=EXCLUDED.state, detail=EXCLUDED.detail, "
+        "source=EXCLUDED.source, updated_at=NOW()",
+        (project, item, state, detail, source))
+    pg_exec(
+        "INSERT INTO atlas.version_scope_definition_moves "
+        "(project_key, item_key, from_state, to_state, detail, source) "
+        "VALUES (%s, %s, %s, %s, %s, %s)",
+        (project, item, old[0] if old else "", state, detail, source))
+    return True
+
+
+def set_definition(project, item, state, detail="", source=""):
+    if item not in DEFINITION_KEYS:
+        raise SystemExit("bad definition item: %s" % item)
+    if item == "version_scope":
+        raise SystemExit(
+            "version_scope is derived from the scope tables — it "
+            "cannot be hand-set (seed-definitions refreshes it)")
+    if state not in DEFINITION_STATES:
+        raise SystemExit("bad definition state: %s" % state)
+    prow = pg_one(
+        "SELECT count(*) FROM atlas.version_scope_projects "
+        "WHERE project_key=%s", (project,))
+    if not prow or not prow[0]:
+        raise SystemExit("no such project: %s" % project)
+    if state == "defined" and (not detail.strip() or not source.strip()):
+        raise SystemExit(
+            "a defined cell must carry a detail + a source citation — "
+            "an uncited fill is exactly what this sheet exists to "
+            "prevent")
+    _set_definition_row(project, item, state, detail, source)
+
+
+def derive_version_scope(project):
+    """version_scope is DEFINED exactly when the project carries
+    ruled v1 items in this registry; derived live, never hand-set."""
+    n = pg_one(
+        "SELECT count(*) FROM atlas.version_scope_items "
+        "WHERE project_key=%s AND version_label='v1' "
+        "AND status<>'ruled_out'", (project,))[0]
+    if n:
+        _set_definition_row(
+            project, "version_scope", "defined",
+            "%d ruled v1 item(s) live in this registry — the "
+            "project's version scope is defined where v1 items are "
+            "ruled" % n, DERIVED_SOURCE)
+    else:
+        _set_definition_row(
+            project, "version_scope", "unknown", "", DERIVED_SOURCE)
+    return n
+
+
+def seed_definitions():
+    """Materialize any missing standard definition rows (at UNKNOWN)
+    for every registered project, then refresh the derived
+    version_scope cell for each. Idempotent. Returns
+    (project_count, new_rows_made)."""
+    keys = [r[0] for r in list_projects()]
+    made = 0
+    for key in keys:
+        for item in DEFINITION_KEYS:
+            made += pg_exec(
+                "INSERT INTO atlas.version_scope_definition_items "
+                "(project_key, item_key) VALUES (%s, %s) "
+                "ON CONFLICT (project_key, item_key) DO NOTHING",
+                (key, item)) or 0
+        derive_version_scope(key)
+    return len(keys), made
+
+
+def definition_gaps():
+    """(key, name, defined_n, missing_keys, priority, part_of) for
+    every registered project, worst-first: most missing items first,
+    then priority, then key. Part-of projects keep their own sheets —
+    their definition is the parent's business too, but the sheet is
+    where that shows."""
+    out = []
+    for key, name, _node, _note, part_of, priority in list_projects():
+        rows = {r[0]: r[1] for r in definition_rows(key)}
+        missing = [k for k in DEFINITION_KEYS
+                   if rows.get(k) != "defined"]
+        out.append((key, name, len(DEFINITION_KEYS) - len(missing),
+                    missing, priority or "normal", part_of))
+    out.sort(key=lambda r: (-len(r[3]), PRIORITY_RANK.get(r[4], 2),
+                            r[0]))
+    return out
+
+
+def sort_projects():
+    """The sorting view: projects ordered by priority (super_high
+    first) then definition completeness (defined-count desc), then
+    key. (key, name, defined_n, priority, part_of)."""
+    out = []
+    for key, name, _node, _note, part_of, priority in list_projects():
+        out.append((key, name, defined_count(key),
+                    priority or "normal", part_of))
+    out.sort(key=lambda r: (PRIORITY_RANK.get(r[3], 2), -r[2], r[0]))
+    return out
+
+
 # ---------------------------------------------------------------- CLI
 
 def cmd_register_project(a):
@@ -407,6 +613,83 @@ def cmd_import_json(a):
     print("imported %s: %d item(s)" % (data["project_key"], len(data.get("items", []))))
 
 
+def cmd_seed_definitions(a):
+    nproj, made = seed_definitions()
+    total = pg_one(
+        "SELECT count(*) FROM atlas.version_scope_definition_items")[0]
+    defined = pg_one(
+        "SELECT count(*) FROM atlas.version_scope_definition_items "
+        "WHERE state='defined'")[0]
+    print("seeded definitions: %d project(s), %d new row(s); "
+          "%d cells total, %d defined" % (nproj, made, total, defined))
+
+
+def cmd_set_definition(a):
+    set_definition(a.project, a.item, a.state,
+                   a.detail or "", a.source or "")
+    print("definition %s/%s = %s" % (a.project, a.item, a.state))
+
+
+def cmd_show_definition(a):
+    proj = pg_one(
+        "SELECT display_name, scope_note, part_of, priority "
+        "FROM atlas.version_scope_projects WHERE project_key=%s",
+        (a.project,))
+    if not proj:
+        raise SystemExit("no such project: %s" % a.project)
+    rows = {r[0]: (r[1], r[2], r[3]) for r in definition_rows(a.project)}
+    n = sum(1 for k in DEFINITION_KEYS
+            if rows.get(k, ("unknown", "", ""))[0] == "defined")
+    head = "%s — %s [definition: %d/%d defined" % (
+        a.project, proj[0], n, len(DEFINITION_KEYS))
+    if proj[3] and proj[3] != "normal":
+        head += "; %s" % PRIORITY_LABEL.get(proj[3], proj[3])
+    if proj[2]:
+        head += "; part of %s" % proj[2]
+    print(head + "]")
+    for item in DEFINITION_KEYS:
+        state, detail, source = rows.get(item, ("unknown", "", ""))
+        print("  [%s] %s" % (state, item))
+        if detail:
+            print("      %s" % detail)
+        if source:
+            print("      source: %s" % source)
+    moves = pg_one(
+        "SELECT count(*) FROM atlas.version_scope_definition_moves "
+        "WHERE project_key=%s", (a.project,))[0]
+    if moves:
+        print("  history: %d definition change(s) recorded" % moves)
+
+
+def cmd_definition_gaps(a):
+    gaps = definition_gaps()
+    total = defined = 0
+    for key, name, n, missing, priority, part_of in gaps:
+        total += len(DEFINITION_KEYS)
+        defined += n
+        flag = (" [%s]" % PRIORITY_LABEL[priority]
+                if priority in PRIORITY_LABEL else "")
+        home = " (part of %s)" % part_of if part_of else ""
+        print("DEFGAP %s — %s [defined %d/%d]%s%s: missing %s"
+              % (key, name, n, len(DEFINITION_KEYS), flag, home,
+                 ", ".join(missing) if missing else "nothing"))
+    print("definition gaps: %d cells across %d project(s), "
+          "%d defined, %d unknown"
+          % (total, len(gaps), defined, total - defined))
+
+
+def cmd_sort_projects(a):
+    rows = sort_projects()
+    names = {r[0]: r[1] for r in list_projects()}
+    for key, name, n, priority, part_of in rows:
+        flag = (" [%s]" % PRIORITY_LABEL[priority]
+                if priority in PRIORITY_LABEL else "")
+        home = (" (part of %s)"
+                % names.get(part_of, part_of)) if part_of else ""
+        print("SORT %s — %s%s%s: defined %d/%d"
+              % (key, name, flag, home, n, len(DEFINITION_KEYS)))
+
+
 # ---------------------------------------------------------------- selftest
 
 def selftest():
@@ -419,6 +702,7 @@ def selftest():
     P1, P2 = "selftest-vs-proj", "selftest-vs-empty"
     P3, P4 = "selftest-vs-child", "selftest-vs-plain"
     P5 = "selftest-vs-removed"
+    P6, P7 = "selftest-vs-defs", "selftest-vs-defs-empty"
     try:
         register_project(P1, "Selftest VS Project", source="selftest")
         check("register project + atlas node linked",
@@ -475,16 +759,75 @@ def selftest():
             refused = True
         check("remove-project refuses a project carrying scope items",
               refused)
+        # ---- definition sheet ----
+        register_project(P6, "Selftest VS Defs", source="selftest")
+        register_project(P7, "Selftest VS Defs Empty", source="selftest")
+        seed_definitions()
+        rows6 = {r[0]: r[1] for r in definition_rows(P6)}
+        check("definition seed materializes the 10 standard rows "
+              "(all unknown)",
+              len(rows6) == len(DEFINITION_KEYS)
+              and set(rows6.values()) == {"unknown"})
+        set_definition(P6, "what_it_is", "defined",
+                       "selftest thing", "selftest source")
+        row = pg_one(
+            "SELECT state, detail, source FROM "
+            "atlas.version_scope_definition_items "
+            "WHERE project_key=%s AND item_key='what_it_is'", (P6,))
+        check("set-definition round-trips with detail + source",
+              row == ("defined", "selftest thing", "selftest source"))
+        mv = pg_one(
+            "SELECT to_state FROM atlas.version_scope_definition_moves "
+            "WHERE project_key=%s AND item_key='what_it_is'", (P6,))
+        check("definition change kept in moves history",
+              bool(mv) and mv[0] == "defined")
+        refused = False
+        try:
+            set_definition(P6, "audience", "defined",
+                           "a detail with no source", "")
+        except SystemExit:
+            refused = True
+        check("set-definition refuses a defined cell without a source",
+              refused)
+        refused = False
+        try:
+            set_definition(P6, "version_scope", "defined", "x", "y")
+        except SystemExit:
+            refused = True
+        check("version_scope cannot be hand-set (derived only)",
+              refused)
+        rows6 = {r[0]: r[1] for r in definition_rows(P6)}
+        check("derived version_scope unknown with no v1 items",
+              rows6["version_scope"] == "unknown")
+        add_item(P6, "v1", "defcheck", "Def Check",
+                 "v1 item for derivation", "selftest")
+        derive_version_scope(P6)
+        rows6 = {r[0]: r[1] for r in definition_rows(P6)}
+        check("derived version_scope defined once a v1 item exists",
+              rows6["version_scope"] == "defined")
+        gaps = {g[0]: g[3] for g in definition_gaps()}
+        check("definition-gaps counts missing items correctly",
+              len(gaps[P7]) == len(DEFINITION_KEYS)
+              and len(gaps[P6]) == len(DEFINITION_KEYS) - 2)
+        srt = [s[0] for s in sort_projects()]
+        check("sort puts super-high priority ahead of completeness "
+              "(P2 super-high/0-defined before P6 normal/2-defined)",
+              srt.index(P2) < srt.index(P6))
+        check("sort orders same-priority projects by completeness",
+              srt.index(P6) < srt.index(P7))
     finally:
-        for pk in (P3, P4, P2, P1, P5):
+        for pk in (P3, P4, P2, P1, P5, P6, P7):
             pg_exec("DELETE FROM atlas.version_scope_projects "
                     "WHERE project_key=%s", (pk,))
         pg_exec("DELETE FROM atlas.version_scope_project_events "
                 "WHERE project_key LIKE 'selftest-vs-%'")
+        pg_exec("DELETE FROM atlas.version_scope_definition_moves "
+                "WHERE project_key LIKE 'selftest-vs-%'")
         pg_exec("DELETE FROM atlas.nodes WHERE node_key IN "
-                "(%s, %s, %s, %s, %s)",
+                "(%s, %s, %s, %s, %s, %s, %s)",
                 ("proj:%s" % P1, "proj:%s" % P2, "proj:%s" % P3,
-                 "proj:%s" % P4, "proj:%s" % P5))
+                 "proj:%s" % P4, "proj:%s" % P5, "proj:%s" % P6,
+                 "proj:%s" % P7))
     left = pg_one("SELECT count(*) FROM atlas.version_scope_projects "
                   "WHERE project_key LIKE 'selftest-vs-%'")
     check("cleanup: no selftest rows remain", left[0] == 0)
@@ -559,6 +902,27 @@ def main():
     sp = sub.add_parser("import-json")
     sp.add_argument("file")
     sp.set_defaults(fn=cmd_import_json)
+
+    sp = sub.add_parser("seed-definitions")
+    sp.set_defaults(fn=cmd_seed_definitions)
+
+    sp = sub.add_parser("set-definition")
+    sp.add_argument("--project", required=True)
+    sp.add_argument("--item", required=True)
+    sp.add_argument("--state", required=True, choices=DEFINITION_STATES)
+    sp.add_argument("--detail")
+    sp.add_argument("--source")
+    sp.set_defaults(fn=cmd_set_definition)
+
+    sp = sub.add_parser("show-definition")
+    sp.add_argument("--project", required=True)
+    sp.set_defaults(fn=cmd_show_definition)
+
+    sp = sub.add_parser("definition-gaps")
+    sp.set_defaults(fn=cmd_definition_gaps)
+
+    sp = sub.add_parser("sort-projects")
+    sp.set_defaults(fn=cmd_sort_projects)
 
     sp = sub.add_parser("selftest")
     sp.set_defaults(fn=lambda a: selftest())

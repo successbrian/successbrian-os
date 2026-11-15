@@ -43,6 +43,16 @@ priority — normal | high | super_high. scope-gaps surfaces
 super_high first, clearly flagged. Priority is ruled separately
 from scope and never implies scope items.
 
+Project removal (Brian, 2026-11-15 09:33 CST: "hashrate harbor is a
+blog"): a registration that turns out not to be a project at all is
+removed with remove-project. Removal is never silent and never a
+plain DELETE: the verb refuses a project that still carries scope
+items or still has part-of children, and writes an append-only row
+to atlas.version_scope_project_events (event 'project_removed',
+carrying the ruling source + reason) BEFORE the project row goes.
+(version_scope_moves is item-level — item_id is a NOT NULL FK — so
+project-level events get their own audit table.)
+
 Usage (CLI):
   atlas_version_scope.py register-project --key KEY --name "Name" \
       [--note "..."] [--source "..."]
@@ -56,6 +66,8 @@ Usage (CLI):
   atlas_version_scope.py set-part-of --project KEY --part-of PARENT_KEY
   atlas_version_scope.py set-priority --project KEY \
       --priority normal|high|super_high
+  atlas_version_scope.py remove-project --project KEY \
+      [--source "..."] [--reason "..."]
   atlas_version_scope.py show-scope --project KEY
   atlas_version_scope.py scope-gaps
   atlas_version_scope.py list-projects
@@ -193,6 +205,41 @@ def set_priority(project, priority):
         raise SystemExit("no such project: %s" % project)
 
 
+def remove_project(project, source="", reason=""):
+    """Remove a project registration that should never have been one
+    (e.g. a blog registered as a project). Guarded + audited: refuses
+    while the project carries scope items or has part-of children;
+    writes the 'project_removed' event BEFORE deleting the row."""
+    row = pg_one(
+        "SELECT display_name FROM atlas.version_scope_projects "
+        "WHERE project_key=%s", (project,))
+    if not row:
+        raise SystemExit("no such project: %s" % project)
+    n_items = pg_one(
+        "SELECT count(*) FROM atlas.version_scope_items "
+        "WHERE project_key=%s", (project,))[0]
+    if n_items:
+        raise SystemExit(
+            "project %s still carries %d scope item(s) — refusing to "
+            "remove; rule the items out first" % (project, n_items))
+    kids = pg_rows(
+        "SELECT project_key FROM atlas.version_scope_projects "
+        "WHERE part_of=%s", (project,))
+    if kids:
+        raise SystemExit(
+            "project %s is the part-of parent of %s — re-home them first"
+            % (project, ", ".join(k[0] for k in kids)))
+    pg_exec(
+        "INSERT INTO atlas.version_scope_project_events "
+        "(project_key, event, detail, source) "
+        "VALUES (%s, 'project_removed', %s, %s)",
+        (project, reason, source))
+    pg_exec(
+        "DELETE FROM atlas.version_scope_projects WHERE project_key=%s",
+        (project,))
+    return row[0]
+
+
 def gap_projects():
     """(key, name, state, missing, priority) for every project that is
     not 'defined' and NOT part of another project — part-of projects
@@ -265,6 +312,12 @@ def cmd_set_part_of(a):
 def cmd_set_priority(a):
     set_priority(a.project, a.priority)
     print("priority %s = %s" % (a.project, a.priority))
+
+
+def cmd_remove_project(a):
+    name = remove_project(a.project, a.source or "", a.reason or "")
+    print("removed project %s — %s (removal recorded in "
+          "version_scope_project_events)" % (a.project, name))
 
 
 def cmd_show_scope(a):
@@ -365,6 +418,7 @@ def selftest():
 
     P1, P2 = "selftest-vs-proj", "selftest-vs-empty"
     P3, P4 = "selftest-vs-child", "selftest-vs-plain"
+    P5 = "selftest-vs-removed"
     try:
         register_project(P1, "Selftest VS Project", source="selftest")
         check("register project + atlas node linked",
@@ -401,13 +455,36 @@ def selftest():
               P2 in gap_keys and P4 in gap_keys)
         check("super-high-priority gap surfaces before normal gaps",
               gap_keys.index(P2) < gap_keys.index(P4))
+        register_project(P5, "Selftest VS Removed", source="selftest")
+        remove_project(P5, source="selftest", reason="selftest removal")
+        check("remove-project deletes the project row",
+              pg_one("SELECT count(*) FROM atlas.version_scope_projects "
+                     "WHERE project_key=%s", (P5,))[0] == 0)
+        ev = pg_one("SELECT event, source FROM "
+                    "atlas.version_scope_project_events "
+                    "WHERE project_key=%s", (P5,))
+        check("removal recorded in project events with its source",
+              ev == ("project_removed", "selftest"))
+        register_project(P5, "Selftest VS Removed", source="selftest")
+        add_item(P5, "v1", "keepme", "Keep Me", "item blocks removal",
+                 "selftest")
+        refused = False
+        try:
+            remove_project(P5, source="selftest")
+        except SystemExit:
+            refused = True
+        check("remove-project refuses a project carrying scope items",
+              refused)
     finally:
-        for pk in (P3, P4, P2, P1):
+        for pk in (P3, P4, P2, P1, P5):
             pg_exec("DELETE FROM atlas.version_scope_projects "
                     "WHERE project_key=%s", (pk,))
-        pg_exec("DELETE FROM atlas.nodes WHERE node_key IN (%s, %s, %s, %s)",
+        pg_exec("DELETE FROM atlas.version_scope_project_events "
+                "WHERE project_key LIKE 'selftest-vs-%'")
+        pg_exec("DELETE FROM atlas.nodes WHERE node_key IN "
+                "(%s, %s, %s, %s, %s)",
                 ("proj:%s" % P1, "proj:%s" % P2, "proj:%s" % P3,
-                 "proj:%s" % P4))
+                 "proj:%s" % P4, "proj:%s" % P5))
     left = pg_one("SELECT count(*) FROM atlas.version_scope_projects "
                   "WHERE project_key LIKE 'selftest-vs-%'")
     check("cleanup: no selftest rows remain", left[0] == 0)
@@ -462,6 +539,12 @@ def main():
     sp.add_argument("--project", required=True)
     sp.add_argument("--priority", required=True, choices=PRIORITIES)
     sp.set_defaults(fn=cmd_set_priority)
+
+    sp = sub.add_parser("remove-project")
+    sp.add_argument("--project", required=True)
+    sp.add_argument("--source")
+    sp.add_argument("--reason")
+    sp.set_defaults(fn=cmd_remove_project)
 
     sp = sub.add_parser("show-scope")
     sp.add_argument("--project", required=True)

@@ -153,6 +153,10 @@ vendor-specific door.
      as numbers in a table. The door will tell you exactly that
      ("not available in this install yet") rather than invent
      numbers. When a scorecard store exists, this door reads it.
+   - **events** — not a `read --scope` door: this scope gates the
+     wake-up **changes feed** (door 7 below) — what changed since
+     your last check. It is *not* in the starting grant set; the
+     owner adds it explicitly when they want you polling.
 5. **The approval door (outward acts)** — *live now, at propose tier
    or above.* Prepare the draft, file it with `request-action` (kind:
    send / contact / buy / publish / post, plus the prepared draft as
@@ -187,6 +191,65 @@ vendor-specific door.
    owner says go, no real mail arrives or leaves through this door —
    inbound processing runs on payload files, and outbound digests
    sit in the outbox as "queued", unsent.
+7. **Wake-up (changes feed + signed webhooks)** — *live now
+   (Phase 5).* SBOS cannot tap you on the shoulder: most agent
+   hosts are not listeners — they only act while a session is
+   running. So wake-up in v1 works the other way around: **you
+   check in on a schedule** and ask what changed.
+   - **The changes feed** — `changes` with your agent key + token
+     and the cursor from your last call. It needs the **events**
+     scope, which is *not* in the starting grant set — the owner
+     adds it explicitly when they want you polling. Each call
+     returns compact entries — `{kind, id, status, at}`: board
+     items that changed, new approval requests on the owner's
+     queue, decisions on *your own* requests, and board flags —
+     plus a new cursor. Pass that cursor back next time and you
+     get only what is newer. **Entries carry IDs and a status word
+     only — no titles, no reasons, no prose.** That is deliberate:
+     a wake-up is data, never instructions. Fetch the details
+     through your scoped reading doors.
+   - **Signed webhooks** — if your side *can* listen (an always-on
+     gateway, a middleman like Zapier/n8n, your own listener), the
+     owner can register a webhook endpoint (`webhook-register`,
+     owner-side). When something wake-worthy happens — a request
+     is filed for the owner, a decision is made, a board flag is
+     raised — SBOS queues a delivery and POSTs a body of exactly
+     `{event_id, kind, id, at}`, signed HMAC-SHA256 (header
+     `X-SBOS-Signature: t=<ts>,v1=<hex>`, ~5-minute timestamp
+     tolerance) with the delivery id in `X-SBOS-Delivery-Id` for
+     dedupe. Delivery is at-least-once; retries reuse the same
+     delivery id, so make your receiver idempotent on it, verify
+     the signature before trusting the body, and fetch details
+     through your token — never act on the payload alone. One
+     honest tradeoff to know: the signing secret is stored
+     server-side in SBOS (signing requires it); only its
+     fingerprint is ever listed or logged.
+   - **Recipes — how to check in on a schedule** (copy-paste;
+     polling is the mechanism, honestly — there is no push for
+     non-listener agents in v1; full push notifications arrive
+     with the MCP phase):
+     *(a) Cron (any host that can run a shell on a timer):*
+     ```
+     # every 30 minutes: ask SBOS what changed since last time
+     cd /path/to/successbrian-os
+     python3 tools/agent_interface.py changes --agent YOUR_AGENT_KEY --token YOUR_TOKEN --cursor "$(cat ~/.sbos_changes_cursor 2>/dev/null)" > /tmp/sbos_changes.json
+     python3 -c "import json; d=json.load(open('/tmp/sbos_changes.json')); open('$HOME/.sbos_changes_cursor','w').write(d['cursor'])"
+     # then read /tmp/sbos_changes.json: if "changes" is not empty,
+     # fetch the details through your reading doors and report them
+     ```
+     *(b) OpenClaw hosts:* OpenClaw's Gateway is always-on and has
+     real cron plus a webhook door of its own (`POST /hooks/wake`,
+     Bearer hook token, loopback/tailnet exposure only). Either
+     point the owner's SBOS webhook at that hook (same machine or
+     tailnet — never expose it publicly), or use OpenClaw's cron
+     to run recipe (a).
+     *(c) A chat agent with scheduled tasks (paste this to it):*
+     "Every hour, check my SuccessBrian OS for changes: run the
+     changes command with my agent key and token and the saved
+     cursor, save the new cursor it returns, and if the changes
+     list is not empty, fetch the details through my reading
+     doors and tell me what changed — board items, flags, and
+     decisions on my requests. If nothing changed, stay silent."
 
 ## 6. The six-step readiness test (how we know you are plugged in)
 

@@ -78,7 +78,9 @@ explicit owner act, written in the record. An ungranted scope refuses
   **calendar** (open items; past-due open items are marked carried
   forward, never dropped), **scorecard** (door built; this install
   has no scorecard data store yet, so it answers "not available in
-  this install yet" — honestly, never with invented numbers).
+  this install yet" — honestly, never with invented numbers),
+  **events** (not a read door — it gates the wake-up changes feed
+  below; not in the starting grant set, owner-added only).
 - **Approval door** — live, propose tier+: prepare the draft, file it
   with `request-action`, stop. The owner approves/denies in SBOS;
   approval records the go and executes nothing (no execution surface
@@ -97,6 +99,26 @@ explicit owner act, written in the record. An ungranted scope refuses
   configuring the real domain (DNS: MX / SPF / DKIM / DMARC), and
   pointing the provider's inbound webhook at the install. Until the
   owner says go, no real mail arrives or leaves through this door.
+- **Wake-up** — live (Phase 5): SBOS cannot tap you on the shoulder
+  — most agent hosts are not listeners — so you poll: `changes`
+  with your key + token + the cursor from your last call (needs
+  the **events** scope — not in the starting grant set; the owner
+  adds it explicitly). Entries are `{kind, id, status, at}` only —
+  IDs and a status word, never prose; fetch details through your
+  reading doors. If your side can listen (an always-on gateway or
+  middleman), the owner can register a signed webhook
+  (`webhook-register`, owner-side): wake-worthy events (a request
+  filed, a decision made, a board flag raised) POST exactly
+  `{event_id, kind, id, at}`, HMAC-SHA256-signed
+  (`X-SBOS-Signature: t=<ts>,v1=<hex>`, ~5-minute tolerance),
+  delivery id in `X-SBOS-Delivery-Id` — verify before trusting,
+  dedupe on the id, retries reuse the same id. The signing secret
+  is stored server-side in SBOS (signing requires it); only its
+  fingerprint is listed or logged. Copy-paste scheduled-check
+  recipes (a cron line, an OpenClaw cron/hook note, a
+  scheduled-task text to paste into a chat agent) are in the
+  packet source, Section 5 door 7. Polling is the mechanism for
+  non-listeners, honestly — full push arrives with the MCP phase.
 
 ## Readiness test
 

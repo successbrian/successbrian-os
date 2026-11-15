@@ -185,16 +185,67 @@ on payload files, and outbound digests sit in the outbox, unsent.
   python3 agent_interface.py outbox-guard   (no non-queued row, ever)
   python3 agent_interface.py selftest4   (phase-4 end-to-end proof)
 
+PHASE 5 (same ruling) adds WAKE-UP LITE. Most personal agents are
+NOT listeners (extra-doors dig, §A): OpenClaw is the only mainstream
+host found with a general inbound webhook door, ChatGPT's event
+triggers fire only from Gmail / Slack / GitHub, and MCP
+notifications reach only a client already holding a stream open.
+So v1 wake-up is a feed agents POLL, plus signed outbound webhooks
+for always-on receivers; full push notifications ride with MCP
+in v2.
+
+  CHANGES-SINCE FEED — behind verify-token + READ tier + the
+  'events' read scope (an explicit owner grant via set-scopes;
+  registration defaults NEVER include it):
+  python3 agent_interface.py changes --agent KEY --token T       [--cursor CURSOR] [--limit N]
+  Returns {cursor, changes: [{kind, id, status, at}]} — board
+  items (latest state), new requests on the owner's queue,
+  decisions on the caller's OWN requests, and board flags. Pass
+  the cursor back to get only newer changes. IDs and a status
+  word only — no titles, no reasons, no prose (see below).
+
+  SIGNED OUTBOUND WEBHOOKS — owner-side registration; delivery
+  queues on wake-worthy events (a request filed for the owner, a
+  decision made, a board flag raised through the board door):
+  python3 agent_interface.py webhook-register --operator OP       --url URL [--secret S]   (secret generated + shown once
+                                if not supplied)
+  python3 agent_interface.py webhook-list --operator OP
+  python3 agent_interface.py webhook-revoke --id ID
+  python3 agent_interface.py webhook-deliver [--operator OP]
+  python3 agent_interface.py webhook-guard
+  python3 agent_interface.py selftest5   (phase-5 end-to-end proof)
+  The POST body is exactly {event_id, kind, id, at} — identifiers
+  and a timestamp, NEVER prose: a wake-up payload is untrusted
+  content aimed at an agent, so anything prose-shaped would be an
+  instruction-injection surface. Receivers fetch details through
+  their own scoped token. Signing is HMAC-SHA256 over
+  "<timestamp>.<raw body>" (Stripe's pattern), sent as
+  X-SBOS-Signature: t=<ts>,v1=<hex> with X-SBOS-Delivery-Id for
+  dedupe (~5-minute timestamp tolerance; delivery is
+  at-least-once and retries reuse the same delivery id).
+  THE SIGNING SECRET is stored RAW in the dedicated
+  agent_interface_webhooks table because HMAC needs it server-side
+  — a known, flagged v1 tradeoff (no secrets vault exists in this
+  install; only the secret's fingerprint is audited or listed).
+  See tools/agent_interface_phase5.sql. Delivery runs only when
+  the owner/operator runs webhook-deliver, and only to endpoints
+  the owner registered; the selftest delivers to loopback only.
+
 Exit codes: 0 ok; 1 refused (bad/expired/revoked token, tier too low,
 scope not granted, agent revoked, not found); 2 usage or store errors.
 """
 import argparse
 import hashlib
+import hmac
 import json
 import os
 import re
 import secrets
 import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 
 sys.path.insert(0, "/home/successbrian/successbrian-os/tools")
@@ -206,7 +257,7 @@ import agent_board  # noqa: E402  (Agent Commons — the board door's engine)
 TIERS = ("read", "propose", "act")
 REQUEST_KINDS = ("send", "contact", "buy", "publish", "post")
 READ_SCOPES = ("board", "requests", "goals", "people", "calendar",
-               "scorecard")
+               "scorecard", "events")
 DEFAULT_READ_SCOPES = ("board", "requests")
 TEST_OPERATOR = "selftest-operator"
 TEST_AGENT = "selftest-outside-agent"
@@ -500,6 +551,20 @@ def board_progress(agent_key, token, item_id, note=None, attempt=False):
         return None
     _audit(agent_key, agent["operator_key"], "board_progress",
            {"item_id": item_id, "attempt": attempt})
+    if attempt:
+        # A logged attempt can cross the flag line (attempts >= 5 in
+        # the agent_board view). When it does, that is a wake-worthy
+        # event: queue a flag delivery for the owner's webhooks
+        # (deduped per webhook + item in _wake_for_event).
+        flag_reason = pg_one(
+            "select flag_reason from successbrian_os.agent_board "
+            "where id=%s", (item_id,))
+        if flag_reason is not None:
+            _wake_for_event(
+                agent["operator_key"],
+                _last_audit_id(agent_key, "board_progress",
+                               "item_id", item_id),
+                "flag", item_id)
     return out
 
 
@@ -598,6 +663,10 @@ def request_action(agent_key, token, kind, payload=None, reason=None):
          reason))
     _audit(agent_key, agent["operator_key"], "action_requested",
            {"request_id": rid, "kind": kind})
+    _wake_for_event(agent["operator_key"],
+                    _last_audit_id(agent_key, "action_requested",
+                                   "request_id", rid),
+                    "request", rid)
     return show_request(rid)
 
 
@@ -635,6 +704,10 @@ def _decide_request(request_id, owner_key, new_status, event):
     _audit(agent_key, operator_key, event,
            {"request_id": request_id, "decided_by": owner_key,
             "executed": False})
+    _wake_for_event(operator_key,
+                    _last_audit_id(agent_key, event, "request_id",
+                                   request_id),
+                    "request_decision", request_id)
     return show_request(request_id)
 
 
@@ -787,6 +860,10 @@ def read_door(agent_key, token, scope, limit=25):
     available=False and the honest reason — never fabricated data."""
     if scope not in READ_SCOPES:
         raise ValueError(f"scope must be one of {READ_SCOPES}")
+    if scope == "events":
+        raise ValueError("scope 'events' is served by the changes "
+                         "verb (changes_feed) — it needs a cursor, "
+                         "which the read verb does not carry")
     limit = max(1, min(int(limit), 100))
     agent = _gate(agent_key, token, "read")
     if agent is None:
@@ -814,7 +891,7 @@ def scope_guard():
             where exists (select 1 from unnest(a.read_scopes) s
                            where s not in ('board','requests','goals',
                                           'people','calendar',
-                                          'scorecard'))
+                                          'scorecard','events'))
                or (a.read_scopes <> array['board','requests']::text[]
                    and not exists
                      (select 1 from successbrian_os.agent_interface_audit au
@@ -1135,6 +1212,625 @@ def outbox_guard():
     return pg_one(
         "select count(*) from successbrian_os.agent_interface_outbox "
         "where status <> 'queued'")
+
+
+
+# ---------------------------------------------------------------------------
+# PHASE 5 — WAKE-UP LITE. Most personal agents are NOT listeners (the
+# dig, §A): OpenClaw is the only mainstream host found with a general
+# inbound webhook door, ChatGPT's event triggers fire only from
+# Gmail / Slack / GitHub, and MCP notifications reach only a client
+# already holding a stream open. So v1 wake-up has three parts:
+#   1. a CHANGES-SINCE FEED agents poll on a schedule (the 'events'
+#      read scope — granted only by an explicit owner act, never a
+#      registration default);
+#   2. SIGNED OUTBOUND WEBHOOKS for the receivers that ARE always on
+#      (an OpenClaw gateway, a middleman, the owner's own listener);
+#   3. copy-paste scheduled-check recipes in the packet.
+# Full push notifications ride with MCP in v2 (ruled scope).
+#
+# Payloads — feed entries and webhook bodies alike — are DATA-ONLY:
+# identifiers, a status word, and a timestamp. NEVER prose. A
+# wake-up payload is untrusted content aimed at an agent; anything
+# prose-shaped in it would be an instruction-injection surface. A
+# receiver that wants details fetches them through its own scoped
+# token (the reading doors / the board).
+# ---------------------------------------------------------------------------
+
+WAKE_TAG = "wake-up"  # audit agent_key for owner/system wake-up events
+WEBHOOK_PAYLOAD_KEYS = ("event_id", "kind", "id", "at")
+WEBHOOK_SIG_TOLERANCE_S = 300  # ~5 min (Stripe's library default)
+TEST_OPERATOR5 = "selftest5-operator"
+TEST_AGENT_P5A = "selftest5-outside-agent-a"
+TEST_AGENT_P5B = "selftest5-outside-agent-b"
+TEST_AGENT_P5C = "selftest5-outside-agent-c"
+TEST_WEBHOOK_SECRET = "whsec_selftest5_fixed_secret"
+
+
+# ------------------------------------------------------- changes feed
+
+def changes_feed(agent_key, token, cursor=None, limit=100):
+    """The changes-since feed: what changed for the caller's owner
+    since `cursor`, as compact entries {kind, id, status, at} —
+    board items (latest state), new pending-approval requests (the
+    owner's whole queue), decisions on the CALLER's own requests,
+    and board flags. IDs and a status word only — no titles, no
+    reasons, no prose: the feed is data for the agent to act on by
+    fetching details through its scoped doors, never instructions.
+
+    Cursor semantics: pass back the returned cursor and only newer
+    changes come back (strictly after it). No cursor = from the
+    beginning, bounded by limit. Behind verify-token + READ tier +
+    the 'events' scope grant; refusals are audited like every door.
+    Returns the result dict, or None when the gate refuses."""
+    agent = _gate(agent_key, token, "read")
+    if agent is None:
+        return None
+    if not require_scope(agent, "events"):
+        return None
+    limit = max(1, min(int(limit), 200))
+    since = cursor or "1970-01-01 00:00:00+00"
+    op = agent["operator_key"]
+    entries = []
+    for iid, status, at in pg_rows(
+            "select id, status, updated_at::text from "
+            "successbrian_os.agent_work_items where operator_key=%s "
+            "and updated_at > %s::timestamptz", (op, since)):
+        entries.append({"kind": "board_item", "id": iid,
+                        "status": status, "at": at})
+    for rid, at in pg_rows(
+            "select id, requested_at::text from "
+            "successbrian_os.agent_interface_requests "
+            "where operator_key=%s "
+            "and requested_at > %s::timestamptz", (op, since)):
+        # A request arrives pending — that is the event this entry
+        # reports, whatever the owner has decided since (the
+        # decision itself is the separate entry below).
+        entries.append({"kind": "request", "id": rid,
+                        "status": "pending", "at": at})
+    for rid, status, at in pg_rows(
+            "select id, status, decided_at::text from "
+            "successbrian_os.agent_interface_requests "
+            "where agent_key=%s and decided_at is not null "
+            "and decided_at > %s::timestamptz", (agent_key, since)):
+        entries.append({"kind": "request", "id": rid,
+                        "status": status, "at": at})
+    for iid, at in pg_rows(
+            "select id, updated_at::text from "
+            "successbrian_os.agent_board where operator_key=%s "
+            "and flag_reason is not null "
+            "and updated_at > %s::timestamptz", (op, since)):
+        entries.append({"kind": "flag", "id": iid,
+                        "status": "flagged", "at": at})
+    entries.sort(key=lambda e: (e["at"], e["kind"], e["id"],
+                                e["status"]))
+    seen, uniq = set(), []
+    for e in entries:
+        k = (e["kind"], e["id"], e["status"], e["at"])
+        if k not in seen:
+            seen.add(k)
+            uniq.append(e)
+    entries = uniq[:limit]
+    out_cursor = entries[-1]["at"] if entries else since
+    _audit(agent_key, op, "changes_read",
+           {"count": len(entries), "cursor": out_cursor})
+    return {"agent_key": agent_key, "operator_key": op,
+            "cursor": out_cursor, "changes": entries}
+
+
+# ------------------------------------------------------------ webhooks
+
+def _last_audit_id(agent_key, event, detail_key, detail_value):
+    """The id of the most recent audit row for one event + detail
+    value — the triggering event's id for a wake-up payload."""
+    return pg_one(
+        "select max(id) from successbrian_os.agent_interface_audit "
+        "where agent_key=%s and event=%s and detail->>%s=%s",
+        (agent_key, event, detail_key, str(detail_value)))
+
+
+def _wake_for_event(operator_key, event_id, kind, ref_id):
+    """Queue signed-webhook deliveries for one wake-worthy event.
+    The payload is exactly {event_id, kind, id, at} — identifiers
+    and a timestamp, never prose (see the section header)."""
+    if event_id is None:
+        return 0
+    at = pg_one(
+        "select created_at::text from "
+        "successbrian_os.agent_interface_audit where id=%s",
+        (event_id,))
+    hooks = pg_rows(
+        "select id from successbrian_os.agent_interface_webhooks "
+        "where operator_key=%s and revoked=false order by id",
+        (operator_key,))
+    queued = 0
+    for (webhook_id,) in hooks:
+        if kind == "flag":
+            dupe = pg_one(
+                "select count(*) from successbrian_os."
+                "agent_interface_webhook_deliveries "
+                "where webhook_id=%s and kind='flag' and ref_id=%s",
+                (webhook_id, ref_id))
+        else:
+            dupe = pg_one(
+                "select count(*) from successbrian_os."
+                "agent_interface_webhook_deliveries "
+                "where webhook_id=%s and event_id=%s",
+                (webhook_id, event_id))
+        if dupe:
+            continue
+        payload = {"event_id": int(event_id), "kind": kind,
+                   "id": int(ref_id), "at": at}
+        did = pg_one(
+            """insert into successbrian_os.
+                 agent_interface_webhook_deliveries
+                 (webhook_id, operator_key, event_id, kind, ref_id,
+                  payload)
+               values (%s,%s,%s,%s,%s,%s) returning id""",
+            (webhook_id, operator_key, int(event_id), kind,
+             int(ref_id), Json(payload)))
+        _audit(WAKE_TAG, operator_key, "webhook_queued",
+               {"delivery_id": did, "webhook_id": webhook_id,
+                "event_id": int(event_id), "kind": kind,
+                "ref_id": int(ref_id)})
+        queued += 1
+    return queued
+
+
+def register_webhook(operator_key, url, secret=None):
+    """Owner-side: register a wake-up endpoint. The owner may supply
+    the signing secret or have one generated (shown ONCE, like every
+    credential in this interface). The secret is stored RAW in the
+    dedicated webhooks table — HMAC signing needs it server-side;
+    that is the flagged v1 tradeoff stated in
+    tools/agent_interface_phase5.sql. Only its SHA-256 fingerprint
+    is audited or ever listed."""
+    parsed = urllib.parse.urlparse(url or "")
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError("webhook url must be an http(s) URL")
+    generated = secret is None
+    if generated:
+        secret = "whsec_" + secrets.token_urlsafe(32)
+    fingerprint = _hash(secret)[:16]
+    wid = pg_one(
+        """insert into successbrian_os.agent_interface_webhooks
+             (operator_key, url, secret, secret_fingerprint)
+           values (%s,%s,%s,%s) returning id""",
+        (operator_key, url, secret, fingerprint))
+    _audit(WAKE_TAG, operator_key, "webhook_registered",
+           {"webhook_id": wid, "url": url,
+            "fingerprint": fingerprint})
+    return {"id": wid, "operator_key": operator_key, "url": url,
+            "fingerprint": fingerprint, "secret": secret,
+            "generated": generated, "revoked": False}
+
+
+def list_webhooks(operator_key):
+    """Owner-side: the owner's wake-up endpoints — metadata only.
+    The secret is never recoverable; the fingerprint identifies it."""
+    rows = pg_rows(
+        """select id, url, secret_fingerprint, revoked,
+                  created_at::text, revoked_at::text
+             from successbrian_os.agent_interface_webhooks
+            where operator_key=%s order by id""", (operator_key,))
+    keys = ("id", "url", "fingerprint", "revoked", "created_at",
+            "revoked_at")
+    return [dict(zip(keys, r)) for r in rows]
+
+
+def revoke_webhook(webhook_id):
+    """Owner-side: revoke a wake-up endpoint. Deliveries already
+    queued for it stop being deliverable (they stay on the record,
+    visibly undelivered — never silently dropped)."""
+    row = pg_one(
+        """update successbrian_os.agent_interface_webhooks
+              set revoked=true, revoked_at=now()
+            where id=%s and revoked=false
+            returning operator_key""", (webhook_id,))
+    if row is None:
+        return False
+    _audit(WAKE_TAG, row, "webhook_revoked",
+           {"webhook_id": webhook_id})
+    return True
+
+
+def _webhook_signature(secret, body_bytes, timestamp):
+    """HMAC-SHA256 over "<timestamp>.<raw body>" (Stripe's pattern)."""
+    signed = f"{timestamp}.".encode("utf-8") + body_bytes
+    return hmac.new(secret.encode("utf-8"), signed,
+                    hashlib.sha256).hexdigest()
+
+
+def verify_webhook_signature(secret, body_bytes, timestamp, signature,
+                             tolerance_s=WEBHOOK_SIG_TOLERANCE_S):
+    """The receiver-side check, kept in the module so receivers (and
+    the selftest's loopback listener) run the exact same code:
+    constant-time signature comparison + a signed-timestamp
+    tolerance (~5 minutes) against replay."""
+    try:
+        ts = int(timestamp)
+    except (TypeError, ValueError):
+        return False
+    if abs(int(time.time()) - ts) > tolerance_s:
+        return False
+    expected = _webhook_signature(secret, body_bytes, ts)
+    return secrets.compare_digest(expected, signature or "")
+
+
+def deliver_webhooks(operator_key=None, limit=50):
+    """Deliver queued wake-up deliveries (owner/operator-run; the
+    ONLY code path that POSTs, and only to endpoints the OWNER
+    registered). Each POST carries the stored data-only payload as
+    the raw body, X-SBOS-Delivery-Id (the delivery row's id — the
+    dedupe key; a retry reuses the same row and id, never a new
+    one), X-SBOS-Timestamp, and X-SBOS-Signature: t=<ts>,v1=<hmac>.
+    A failure leaves the row 'queued' with the error recorded —
+    visible, retryable, never silently dropped."""
+    limit = max(1, min(int(limit), 200))
+    sql = ("select d.id, d.webhook_id, d.payload, w.url, w.secret, "
+           "w.revoked, d.operator_key "
+           "from successbrian_os.agent_interface_webhook_deliveries d "
+           "join successbrian_os.agent_interface_webhooks w "
+           "  on w.id = d.webhook_id "
+           "where d.status='queued'")
+    params = []
+    if operator_key:
+        sql += " and d.operator_key=%s"
+        params.append(operator_key)
+    sql += " order by d.id limit %s"
+    params.append(limit)
+    results = []
+    for (did, wid, payload, url, secret, w_revoked,
+         op) in pg_rows(sql, tuple(params)):
+        if w_revoked:
+            err = "webhook revoked; delivery left queued on the record"
+            pg_exec(
+                "update successbrian_os."
+                "agent_interface_webhook_deliveries "
+                "set attempts=attempts+1, last_error=%s where id=%s",
+                (err, did))
+            _audit(WAKE_TAG, op, "webhook_delivery_failed",
+                   {"delivery_id": did, "webhook_id": wid,
+                    "error": err})
+            results.append({"delivery_id": did, "webhook_id": wid,
+                            "status": "queued", "error": err})
+            continue
+        body = json.dumps(payload, sort_keys=True,
+                          separators=(",", ":")).encode("utf-8")
+        ts = int(time.time())
+        sig = _webhook_signature(secret, body, ts)
+        req = urllib.request.Request(
+            url, data=body, method="POST",
+            headers={"Content-Type": "application/json",
+                     "X-SBOS-Delivery-Id": str(did),
+                     "X-SBOS-Timestamp": str(ts),
+                     "X-SBOS-Signature": f"t={ts},v1={sig}"})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                code = resp.status
+            if not (200 <= code < 300):
+                raise ValueError(f"HTTP {code}")
+            pg_exec(
+                "update successbrian_os."
+                "agent_interface_webhook_deliveries "
+                "set status='delivered', attempts=attempts+1, "
+                "delivered_at=now(), last_error=null where id=%s",
+                (did,))
+            _audit(WAKE_TAG, op, "webhook_delivered",
+                   {"delivery_id": did, "webhook_id": wid,
+                    "event_id": payload.get("event_id")})
+            results.append({"delivery_id": did, "webhook_id": wid,
+                            "status": "delivered"})
+        except Exception as e:  # HTTP error / refused / timeout
+            err = str(e)[:200]
+            pg_exec(
+                "update successbrian_os."
+                "agent_interface_webhook_deliveries "
+                "set attempts=attempts+1, last_error=%s where id=%s",
+                (err, did))
+            _audit(WAKE_TAG, op, "webhook_delivery_failed",
+                   {"delivery_id": did, "webhook_id": wid,
+                    "error": err})
+            results.append({"delivery_id": did, "webhook_id": wid,
+                            "status": "queued", "error": err})
+    return results
+
+
+def webhook_guard():
+    """The payload-shape guard (QA runs this daily): every queued or
+    delivered wake-up payload must be exactly {event_id, kind, id,
+    at} with scalar values only — no nested objects, no prose-length
+    strings. This is the injection-surface line, proven on live
+    rows. Returns the violation count."""
+    bad = 0
+    for (payload,) in pg_rows(
+            "select payload from successbrian_os."
+            "agent_interface_webhook_deliveries"):
+        if (not isinstance(payload, dict)
+                or set(payload) != set(WEBHOOK_PAYLOAD_KEYS)):
+            bad += 1
+            continue
+        for v in payload.values():
+            if isinstance(v, (dict, list)) or (
+                    isinstance(v, str) and len(v) > 64):
+                bad += 1
+                break
+    return bad
+
+
+def _cleanup_test5_rows():
+    # Disposable phase-5 selftest cleanup (the standing precedent):
+    # production records are never deleted; selftest scaffolding
+    # rows (deliveries, webhooks, board items + presence, requests,
+    # audit rows, the test agents) are removed whole.
+    for key in (TEST_AGENT_P5A, TEST_AGENT_P5B, TEST_AGENT_P5C):
+        pg_exec("delete from successbrian_os.agent_work_items "
+                "where created_by_agent=%s or claimed_by_agent=%s",
+                (key, key))
+        pg_exec("delete from successbrian_os.agent_presence "
+                "where agent_key=%s", (key,))
+    pg_exec("delete from successbrian_os."
+            "agent_interface_webhook_deliveries where operator_key=%s",
+            (TEST_OPERATOR5,))
+    pg_exec("delete from successbrian_os.agent_interface_webhooks "
+            "where operator_key=%s", (TEST_OPERATOR5,))
+    pg_exec("delete from successbrian_os.agent_interface_requests "
+            "where operator_key=%s", (TEST_OPERATOR5,))
+    pg_exec("delete from successbrian_os.agent_interface_audit "
+            "where operator_key=%s", (TEST_OPERATOR5,))
+    pg_exec("delete from successbrian_os.agent_interface_agents "
+            "where operator_key=%s", (TEST_OPERATOR5,))
+
+
+def selftest5():
+    """Phase-5 end-to-end proof on disposable rows: register agents
+    (one with the events scope explicitly granted, two without) ->
+    the ungranted are refused the feed -> make changes (board post +
+    claim, a request filed, an owner decision) -> the feed returns
+    them with a cursor -> a second call with that cursor returns
+    empty -> register a webhook (owner-supplied secret) -> a new
+    request queues a data-only delivery -> deliver to a LOOPBACK
+    listener on this machine, which verifies the HMAC signature,
+    timestamp, and delivery id with this module's own receiver
+    check -> a tampered body and a stale timestamp are rejected ->
+    requeue + redeliver reuses the SAME delivery id -> five board
+    attempts raise a flag and queue a flag delivery -> a revoked
+    token is refused on the feed -> the payload guard holds -> the
+    audit trail is complete -> cleanup. NO external calls: the only
+    HTTP in this selftest is 127.0.0.1."""
+    import http.server
+    import threading
+
+    steps = []
+
+    def check(label, cond):
+        steps.append((label, bool(cond)))
+        print(f"  [{'ok' if cond else 'FAIL'}] {label}")
+        if not cond:
+            raise AssertionError(label)
+
+    received = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(n)
+            sig = self.headers.get("X-SBOS-Signature") or ""
+            v1 = sig.split("v1=", 1)[1] if "v1=" in sig else ""
+            received.append({
+                "body": body,
+                "delivery_id": self.headers.get("X-SBOS-Delivery-Id"),
+                "verified": verify_webhook_signature(
+                    TEST_WEBHOOK_SECRET, body,
+                    self.headers.get("X-SBOS-Timestamp") or "", v1),
+                "payload": json.loads(body)})
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    _cleanup_test5_rows()
+    print("agent_interface phase-5 selftest")
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        # 1. register: A with events explicitly granted; B and C
+        #    without — C on the bare default, proving no silent grant
+        register_agent(TEST_OPERATOR5, TEST_AGENT_P5A,
+                       "Selftest5 Agent A", vendor="selftest-vendor",
+                       tier="propose",
+                       scopes=["board", "requests", "events"])
+        register_agent(TEST_OPERATOR5, TEST_AGENT_P5B,
+                       "Selftest5 Agent B", vendor="selftest-vendor",
+                       tier="read")
+        register_agent(TEST_OPERATOR5, TEST_AGENT_P5C,
+                       "Selftest5 Agent C", vendor="selftest-vendor",
+                       tier="read")
+        shown_c = show_agent(TEST_AGENT_P5C)
+        check("registration default does NOT include the events "
+              "scope (no silent grant)",
+              shown_c["read_scopes"] == ["board", "requests"])
+        tok_a = issue_token(TEST_AGENT_P5A, days=30)
+        tok_b = issue_token(TEST_AGENT_P5B, days=30)
+        tok_c = issue_token(TEST_AGENT_P5C, days=30)
+        check("tokens issued for three outside agents",
+              bool(tok_a) and bool(tok_b) and bool(tok_c))
+        # 2. the ungranted are refused the feed
+        check("agent without the events scope refused the feed",
+              changes_feed(TEST_AGENT_P5B, tok_b) is None)
+        check("default-scope agent refused the feed",
+              changes_feed(TEST_AGENT_P5C, tok_c) is None)
+        # 3. baseline: nothing has changed yet for this owner
+        base = changes_feed(TEST_AGENT_P5A, tok_a)
+        check("baseline feed is empty for a fresh owner",
+              base is not None and base["changes"] == [])
+        cursor0 = base["cursor"]
+        # 4. make changes: board post + claim, a request, a decision
+        p = board_post(TEST_AGENT_P5A, tok_a,
+                       "SELFTEST5 disposable board item",
+                       "phase-5 selftest item")
+        item_id = p["item_id"] if p else None
+        check("board post through the gate", p is not None)
+        c = board_claim(TEST_AGENT_P5A, tok_a, item_id)
+        check("board claim through the gate", c is not None)
+        rq = request_action(TEST_AGENT_P5A, tok_a, "send",
+                            {"draft": "selftest5 — never sent"},
+                            "phase-5 selftest: feed + decision")
+        check("request filed pending",
+              rq is not None and rq["status"] == "pending")
+        ap = approve_request(rq["id"], TEST_OPERATOR5)
+        check("owner decision recorded",
+              ap is not None and ap["status"] == "approved")
+        # 5. the feed returns the changes, data-only, with a cursor
+        feed1 = changes_feed(TEST_AGENT_P5A, tok_a, cursor=cursor0)
+        kinds = {(e["kind"], e["id"], e["status"])
+                 for e in feed1["changes"]}
+        check("feed returns the board item change",
+              ("board_item", item_id, "claimed") in kinds
+              or ("board_item", item_id, "open") in kinds)
+        check("feed returns the new request (pending)",
+              ("request", rq["id"], "pending") in kinds)
+        check("feed returns the decision on the agent's own request",
+              ("request", rq["id"], "approved") in kinds)
+        check("every feed entry is exactly {kind, id, status, at}",
+              all(set(e) == {"kind", "id", "status", "at"}
+                  for e in feed1["changes"]))
+        cursor1 = feed1["cursor"]
+        check("the cursor advanced", cursor1 != cursor0)
+        # 6. passing the cursor back yields only newer changes: none
+        feed2 = changes_feed(TEST_AGENT_P5A, tok_a, cursor=cursor1)
+        check("second call with the cursor returns empty, same "
+              "cursor", feed2["changes"] == []
+              and feed2["cursor"] == cursor1)
+        # 7. register a webhook (owner-supplied secret)
+        wh = register_webhook(
+            TEST_OPERATOR5, f"http://127.0.0.1:{port}/hook",
+            secret=TEST_WEBHOOK_SECRET)
+        check("webhook registered with a fingerprint",
+              wh["fingerprint"] == _hash(TEST_WEBHOOK_SECRET)[:16])
+        stored_secret = pg_one(
+            "select secret from successbrian_os."
+            "agent_interface_webhooks where id=%s", (wh["id"],))
+        check("signing secret stored raw in the dedicated table "
+              "(the flagged v1 tradeoff — HMAC needs it server-side; "
+              "only its fingerprint is audited/listed)",
+              stored_secret == TEST_WEBHOOK_SECRET)
+        listed = list_webhooks(TEST_OPERATOR5)
+        check("webhook listing shows metadata + fingerprint, never "
+              "the secret",
+              listed and "secret" not in listed[0]
+              and listed[0]["fingerprint"] == wh["fingerprint"])
+        # 8. a new request queues a data-only delivery
+        rq2 = request_action(TEST_AGENT_P5A, tok_a, "send",
+                             {"draft": "selftest5 — never sent"},
+                             "phase-5 selftest: webhook wake-up")
+        drow = pg_one(
+            "select id, payload, status from successbrian_os."
+            "agent_interface_webhook_deliveries "
+            "where operator_key=%s order by id desc limit 1",
+            (TEST_OPERATOR5,))
+        check("the new request queued a webhook delivery",
+              drow is not None and drow[2] == "queued")
+        delivery_id, payload = drow[0], drow[1]
+        check("the delivery payload is exactly {event_id, kind, id, "
+              "at} — ids and a timestamp, no prose",
+              set(payload) == set(WEBHOOK_PAYLOAD_KEYS)
+              and payload["kind"] == "request"
+              and payload["id"] == rq2["id"])
+        # 9. deliver to the loopback listener; it verifies the HMAC
+        out = deliver_webhooks(operator_key=TEST_OPERATOR5)
+        check("deliver reports the delivery delivered",
+              any(r["delivery_id"] == delivery_id
+                  and r["status"] == "delivered" for r in out))
+        check("the loopback receiver verified the HMAC signature + "
+              "timestamp", len(received) == 1
+              and received[0]["verified"] is True)
+        check("the receiver got the delivery id + the data-only "
+              "payload", received[0]["delivery_id"] == str(delivery_id)
+              and received[0]["payload"]["id"] == rq2["id"])
+        # 10. tampering + replay are rejected by the receiver check
+        good = received[0]
+        ts_now = str(int(time.time()))
+        sig_now = _webhook_signature(TEST_WEBHOOK_SECRET,
+                                     good["body"], int(ts_now))
+        check("a tampered body fails verification",
+              verify_webhook_signature(
+                  TEST_WEBHOOK_SECRET, good["body"] + b"x", ts_now,
+                  sig_now) is False)
+        check("a stale timestamp fails verification (replay window)",
+              verify_webhook_signature(
+                  TEST_WEBHOOK_SECRET, good["body"],
+                  str(int(time.time()) - 10000), sig_now) is False)
+        check("a wrong secret fails verification",
+              verify_webhook_signature(
+                  "whsec_wrong_secret", good["body"], ts_now,
+                  sig_now) is False)
+        # 11. retry reuses the SAME delivery id (requeue the row)
+        pg_exec("update successbrian_os."
+                "agent_interface_webhook_deliveries "
+                "set status='queued' where id=%s", (delivery_id,))
+        out = deliver_webhooks(operator_key=TEST_OPERATOR5)
+        check("redelivery reuses the same delivery id",
+              len(received) == 2
+              and received[1]["delivery_id"] == str(delivery_id)
+              and received[1]["verified"] is True)
+        # 12. five attempts raise a flag -> a flag delivery queues
+        p2 = board_post(TEST_AGENT_P5A, tok_a,
+                        "SELFTEST5 disposable flag item",
+                        "phase-5 selftest: flag wake-up")
+        item2 = p2["item_id"] if p2 else None
+        board_claim(TEST_AGENT_P5A, tok_a, item2)
+        for i in range(5):
+            board_progress(TEST_AGENT_P5A, tok_a, item2,
+                           note=f"selftest5 attempt {i + 1}",
+                           attempt=True)
+        flag_row = pg_one(
+            "select flag_reason from successbrian_os.agent_board "
+            "where id=%s", (item2,))
+        check("five attempts raised the board flag",
+              flag_row is not None)
+        fdel = pg_one(
+            "select count(*) from successbrian_os."
+            "agent_interface_webhook_deliveries "
+            "where operator_key=%s and kind='flag' and ref_id=%s",
+            (TEST_OPERATOR5, item2))
+        check("the raised flag queued a flag delivery", fdel == 1)
+        out = deliver_webhooks(operator_key=TEST_OPERATOR5)
+        check("the flag delivery reached the receiver, data-only",
+              len(received) == 3
+              and received[2]["payload"]["kind"] == "flag"
+              and received[2]["payload"]["id"] == item2
+              and received[2]["verified"] is True)
+        # 13. a revoked token is refused on the feed
+        revoke_token(TEST_AGENT_P5A)
+        check("revoked token refused on the feed",
+              changes_feed(TEST_AGENT_P5A, tok_a) is None)
+        # 14. the payload guard holds on live rows
+        check("webhook payload guard: zero violations",
+              webhook_guard() == 0)
+        # 15. the audit trail shows the whole phase-5 story
+        events = [r[0] for r in pg_rows(
+            "select event from successbrian_os.agent_interface_audit "
+            "where operator_key=%s", (TEST_OPERATOR5,))]
+        for expected in ("changes_read", "scope_refused",
+                         "webhook_registered", "webhook_queued",
+                         "webhook_delivered"):
+            check(f"audit contains '{expected}'", expected in events)
+    finally:
+        server.shutdown()
+        _cleanup_test5_rows()
+    left = pg_one("select count(*) from "
+                  "successbrian_os.agent_interface_agents "
+                  "where operator_key=%s", (TEST_OPERATOR5,))
+    left_wh = pg_one("select count(*) from "
+                     "successbrian_os.agent_interface_webhooks "
+                     "where operator_key=%s", (TEST_OPERATOR5,))
+    check("cleanup: no selftest5 rows remain",
+          left == 0 and left_wh == 0)
+    print("SELFTEST PASS")
+    return 0
 
 
 def _cleanup_test_rows():
@@ -1928,6 +2624,39 @@ def main(argv=None):
     sub.add_parser("outbox-guard")
 
     sub.add_parser("selftest4")
+
+    ch = sub.add_parser("changes")
+    ch.add_argument("--agent", required=True)
+    ch.add_argument("--token", required=True)
+    ch.add_argument("--cursor",
+                    help="cursor from a previous changes call "
+                         "(default: from the beginning)")
+    ch.add_argument("--limit", type=int, default=100)
+    ch.add_argument("--json", action="store_true")
+
+    wr = sub.add_parser("webhook-register")
+    wr.add_argument("--operator", required=True)
+    wr.add_argument("--url", required=True)
+    wr.add_argument("--secret",
+                    help="signing secret (default: generated and "
+                         "shown once)")
+
+    wl = sub.add_parser("webhook-list")
+    wl.add_argument("--operator", required=True)
+    wl.add_argument("--json", action="store_true")
+
+    wv = sub.add_parser("webhook-revoke")
+    wv.add_argument("--id", required=True, type=int)
+
+    wd = sub.add_parser("webhook-deliver")
+    wd.add_argument("--operator",
+                    help="owner key (default: all owners' queues)")
+    wd.add_argument("--limit", type=int, default=50)
+    wd.add_argument("--json", action="store_true")
+
+    sub.add_parser("webhook-guard")
+
+    sub.add_parser("selftest5")
     args = ap.parse_args(argv)
 
     try:
@@ -1939,6 +2668,56 @@ def main(argv=None):
             return selftest3()
         if args.cmd == "selftest4":
             return selftest4()
+        if args.cmd == "selftest5":
+            return selftest5()
+        if args.cmd == "changes":
+            out = changes_feed(args.agent, args.token, args.cursor,
+                               args.limit)
+            if out is None:
+                print("refused: token, or the events scope was not "
+                      "granted", file=sys.stderr)
+                return 1
+            print(json.dumps(out, indent=2, default=str))
+            return 0
+        if args.cmd == "webhook-register":
+            out = register_webhook(args.operator, args.url,
+                                   args.secret)
+            print(json.dumps(
+                {k: v for k, v in out.items() if k != "secret"},
+                indent=2, default=str))
+            print(f"secret: {out['secret']}")
+            print("STORE THIS SECRET NOW — listings show only its "
+                  "fingerprint. It is stored server-side (HMAC "
+                  "signing requires it) in the dedicated webhooks "
+                  "table: the flagged v1 tradeoff, see "
+                  "tools/agent_interface_phase5.sql.",
+                  file=sys.stderr)
+            return 0
+        if args.cmd == "webhook-list":
+            rows = list_webhooks(args.operator)
+            print(json.dumps(rows, indent=2, default=str))
+            return 0
+        if args.cmd == "webhook-revoke":
+            if not revoke_webhook(args.id):
+                print("refused: unknown or already revoked webhook",
+                      file=sys.stderr)
+                return 1
+            print(f"webhook #{args.id} revoked")
+            return 0
+        if args.cmd == "webhook-deliver":
+            rows = deliver_webhooks(args.operator, args.limit)
+            print(json.dumps(rows, indent=2, default=str))
+            return 0
+        if args.cmd == "webhook-guard":
+            bad = webhook_guard()
+            if bad:
+                print(f"WEBHOOK_GUARD_FAIL: {bad} deliver(ies) with "
+                      f"a payload that is not exactly "
+                      f"{{event_id, kind, id, at}} scalars",
+                      file=sys.stderr)
+                return 1
+            print("WEBHOOK_GUARD_OK")
+            return 0
         if args.cmd == "email-address-create":
             out = create_email_address(args.operator, args.domain)
             print(json.dumps(

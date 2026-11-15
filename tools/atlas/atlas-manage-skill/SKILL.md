@@ -61,6 +61,22 @@ your profile is an installation; the fleet copy governs.
 6. **Nothing goes outward.** These tools write only inside the
    ecosystem. Filing never sends, posts, buys, or contacts anyone.
 
+7. **Rulings carry Brian's words, or the INTERPRETATION label**
+   (ruling-provenance standard, 2026-11-15; full text:
+   `tools/ruling-provenance-standard.md`). When you file a ruling,
+   decision, or directive, quote Brian's verbatim words for the point
+   being recorded. If his exact words are not available to you, the
+   filing's headline must carry the label **INTERPRETATION** — an
+   unlabeled, unquoted ruling claim is a defect (the failure family:
+   assistant interpretation hardened into Brian's record; specimen:
+   the systeme.io "platform ruling", corrected by Brian 2026-11-15).
+   The claim asserts no more than the quote plainly carries: a quote
+   that names or mentions a thing is not a decision about that thing's
+   platform, owner, price, or scope. Hedges in his words ("I believe",
+   "likely", "might") stay in the claim. Before repeating a ruling
+   from the record, re-read the quoted words in the source entry —
+   not the headline, not another artifact's summary of it.
+
 ## The filing checklist — where each datum lives
 
 Run the applicable lines in the same pass the intel arises:

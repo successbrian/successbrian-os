@@ -15,6 +15,10 @@ Pipeline (Brian's deliberation-flow shape; jobs sized small):
            audit sample of SUPPORTED (the specimen passed a Penny sweep
            as SUPPORTED — sweep false-negatives exist, so we sample):
            SUPPORTED / INTERPRETATION-RISK / UNRESOLVED + reason.
+  collect  lands bus-dispatched deep verdicts from the outbox into
+           deep_results.jsonl; when the dispatched set completes
+           it runs the report step once (marker file:
+           collect_report_done.json).
   report   writes flags.jsonl (interpretation-risk + no-quote classes)
            and, with --file-captures, files one Intel Bridge capture per
            NEW interpretation-risk flag (idempotent via a state file).
@@ -244,6 +248,124 @@ def deep(rows, sweep_results, out, sample_rate=0.10, limit=0):
     return len(targets), len(sampled)
 
 
+
+# ---------------------------------------------------------------- collect
+def collect(wd, rows, sweep_results):
+    """Land gamma-bus deep-pass verdicts into deep_results.jsonl.
+
+    Idempotent: ids already in deep_results.jsonl are never rewritten.
+    Failed or dead-lettered events land as ERROR records so the set
+    completes honestly. When every dispatched event has finished, run
+    the report step (flags + captures) once and drop the marker file
+    collect_report_done.json.
+    """
+    if sbos_common is None:
+        raise SystemExit("sbos_common not importable — run from the repo")
+    disp_path = wd / "deep_results.jsonl.dispatched"
+    dispatched = {}
+    if disp_path.exists():
+        for l in disp_path.read_text().splitlines():
+            if l.strip():
+                r = json.loads(l)
+                dispatched[r["id"]] = r["bus_event"]
+    if not dispatched:
+        print("collect: no dispatched deep packets on record — nothing to do")
+        return 0
+    done = _load_done(wd / "deep_results.jsonl")
+    todo = {cid: eid for cid, eid in dispatched.items() if cid not in done}
+    new = 0
+    running = 0
+    if todo:
+        eids = list(todo.values())
+        ev = {r[0]: {"status": r[1], "last_error": r[2]}
+              for r in sbos_common.pg_rows(
+                  "SELECT id, status, last_error FROM bus.events "
+                  "WHERE id = ANY(%s)", (eids,))}
+        results = {}
+        for r in sbos_common.pg_rows(
+                "SELECT body FROM successbrian_os.outbox "
+                "WHERE message_type='inference_result' "
+                "AND (body::jsonb->>'event_id')::bigint = ANY(%s)",
+                (eids,)):
+            b = json.loads(r[0])
+            results[int(b["event_id"])] = b
+        with (wd / "deep_results.jsonl").open("a") as f:
+            for cid, eid in todo.items():
+                e = ev.get(eid)
+                if e is None:
+                    continue
+                if e["status"] in ("pending", "processing"):
+                    running += 1
+                    continue
+                sample = (sweep_results.get(cid, {}).get("verdict")
+                          == "SUPPORTED")
+                if e["status"] == "done" and eid in results:
+                    res = results[eid].get("result") or {}
+                    text = (res.get("text") or "").strip()
+                    rec = {"id": cid, "tier": "reap",
+                           "model": res.get("engine") or "reap",
+                           "verdict": _verdict(
+                               text, ("INTERPRETATION-RISK", "UNRESOLVED",
+                                      "SUPPORTED")),
+                           "raw": text[:400], "audit_sample": sample,
+                           "secs": res.get("wall_s")}
+                else:
+                    rec = {"id": cid, "tier": "reap", "model": "reap",
+                           "verdict": "ERROR",
+                           "raw": (e.get("last_error") or
+                                   f"event ended {e['status']} with no "
+                                   "result")[:400],
+                           "audit_sample": sample, "secs": None}
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                f.flush()
+                done[cid] = rec
+                new += 1
+    landed = len(done)
+    total = len(dispatched)
+    try:
+        sbos_common.pg_exec(
+            "INSERT INTO successbrian_os.worker_heartbeats "
+            "(worker_name, last_heartbeat, last_status, last_error, "
+            "last_run_output) VALUES ('ruling-audit-collect', now(), "
+            "'ok', NULL, %s) ON CONFLICT (worker_name) DO UPDATE SET "
+            "last_heartbeat = EXCLUDED.last_heartbeat, "
+            "last_status = EXCLUDED.last_status, last_error = NULL, "
+            "last_run_output = EXCLUDED.last_run_output",
+            (f"deep verdicts landed {landed}/{total}; {running} still "
+             f"running on gamma",))
+    except Exception as exc:  # the heartbeat must never kill the collect
+        print(f"collect: heartbeat failed: {exc}", file=sys.stderr)
+    print(f"collect: {new} new verdicts landed; {landed}/{total} in; "
+          f"{running} still running")
+    marker = wd / "collect_report_done.json"
+    if running == 0 and landed >= total and not marker.exists():
+        census_path = wd / "census_candidates.jsonl"
+        if census_path.exists():
+            rows = [json.loads(l) for l in
+                    census_path.read_text().splitlines() if l.strip()]
+        by_id = {r["id"]: r for r in rows}
+        deep_results = {k: v for k, v in
+                        _load_done(wd / "deep_results.jsonl").items()
+                        if k in by_id}
+        flags = build_flags(rows, sweep_results, deep_results)
+        (wd / "flags.jsonl").write_text(
+            "".join(json.dumps(fl, ensure_ascii=False) + "\n"
+                    for fl in flags))
+        counts = {}
+        for fl in flags:
+            counts[fl["class"]] = counts.get(fl["class"], 0) + 1
+        filed, skipped = file_captures(flags, wd / "capture_state.json")
+        marker.write_text(json.dumps(
+            {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+             "flags": counts, "captures_filed": filed,
+             "captures_skipped": skipped}, indent=1))
+        print(f"report: flags {counts} -> {wd / 'flags.jsonl'}")
+        print(f"captures: filed {filed} new, skipped {skipped} "
+              "already-filed")
+        print("RULING_AUDIT_PIPELINE_COMPLETE")
+    return 0
+
+
 # ----------------------------------------------------------------- report
 def build_flags(rows, sweep_results, deep_results):
     by_id = {r["id"]: r for r in rows}
@@ -353,7 +475,7 @@ def selftest():
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("extract", "sweep", "deep", "report"):
+    for name in ("extract", "sweep", "deep", "report", "collect"):
         p = sub.add_parser(name)
         p.add_argument("--logs-dir", default=str(Path.home() / "memory"))
         p.add_argument("--memory-file", default=str(Path.home() / "MEMORY.md"))
@@ -390,6 +512,8 @@ def main():
                      sample_rate=args.sample_rate, limit=args.limit)
         print(f"deep: judged {n} entries ({ns} audit-sample)")
         return 0
+    if args.cmd == "collect":
+        return collect(wd, rows, sweep_results)
     deep_results = _load_done(wd / "deep_results.jsonl")
     flags = build_flags(rows, sweep_results, deep_results)
     (wd / "flags.jsonl").write_text(

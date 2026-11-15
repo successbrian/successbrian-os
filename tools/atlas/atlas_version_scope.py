@@ -28,6 +28,21 @@ Scope state (computed, never stored):
 scope-gaps lists every project that is not 'defined', with what is
 missing — the gap list the planner rotation works from.
 
+Part-of projects (Brian, 2026-11-15 09:21 CST: "road chat is part of
+successbrian os (not separate)"): a component of another project is
+registered with part_of = the parent project_key. It is NOT a
+standalone project: scope-gaps excludes it (its undefined scope is
+the parent's business, recorded in the parent's note), and
+list-projects / show-scope display it as part of the parent. The row
+is kept — history matters; the correction re-homes the registration,
+never erases it.
+
+Priority (Brian, 2026-11-15 09:22 CST: "traffic streemz is a
+marketing skin and it's super high priority"): projects carry a
+priority — normal | high | super_high. scope-gaps surfaces
+super_high first, clearly flagged. Priority is ruled separately
+from scope and never implies scope items.
+
 Usage (CLI):
   atlas_version_scope.py register-project --key KEY --name "Name" \
       [--note "..."] [--source "..."]
@@ -38,6 +53,9 @@ Usage (CLI):
       --to v1|v2|v3 --source "..." [--reason "..."]
   atlas_version_scope.py set-status --project KEY --item ITEM_KEY \
       --status in_scope|parked|done|ruled_out
+  atlas_version_scope.py set-part-of --project KEY --part-of PARENT_KEY
+  atlas_version_scope.py set-priority --project KEY \
+      --priority normal|high|super_high
   atlas_version_scope.py show-scope --project KEY
   atlas_version_scope.py scope-gaps
   atlas_version_scope.py list-projects
@@ -55,6 +73,9 @@ import sbos_common  # noqa: E402
 USER = "postgres"
 CORE_VERSIONS = ("v1", "v2", "v3")
 STATUSES = ("in_scope", "parked", "moved", "done", "ruled_out")
+PRIORITIES = ("normal", "high", "super_high")
+PRIORITY_RANK = {"super_high": 0, "high": 1, "normal": 2}
+PRIORITY_LABEL = {"super_high": "SUPER HIGH PRIORITY", "high": "HIGH PRIORITY"}
 
 
 def pg_rows(sql, params=None):
@@ -144,6 +165,50 @@ def set_status(project, item_key, status):
         raise SystemExit("no such item: %s/%s" % (project, item_key))
 
 
+def set_part_of(project, parent):
+    if project == parent:
+        raise SystemExit("a project cannot be part of itself")
+    prow = pg_one(
+        "SELECT part_of FROM atlas.version_scope_projects "
+        "WHERE project_key=%s", (parent,))
+    if not prow:
+        raise SystemExit("no such parent project: %s" % parent)
+    if prow[0]:
+        raise SystemExit("parent %s is itself part of %s — no chains"
+                         % (parent, prow[0]))
+    n = pg_exec(
+        "UPDATE atlas.version_scope_projects SET part_of=%s, updated_at=NOW() "
+        "WHERE project_key=%s", (parent, project))
+    if not n:
+        raise SystemExit("no such project: %s" % project)
+
+
+def set_priority(project, priority):
+    if priority not in PRIORITIES:
+        raise SystemExit("bad priority: %s" % priority)
+    n = pg_exec(
+        "UPDATE atlas.version_scope_projects SET priority=%s, updated_at=NOW() "
+        "WHERE project_key=%s", (priority, project))
+    if not n:
+        raise SystemExit("no such project: %s" % project)
+
+
+def gap_projects():
+    """(key, name, state, missing, priority) for every project that is
+    not 'defined' and NOT part of another project — part-of projects
+    are scoped inside their parent, never standalone gaps. Ordered:
+    super_high priority first, then high, then normal, then key."""
+    out = []
+    for key, name, _node, _note, part_of, priority in list_projects():
+        if part_of:
+            continue
+        state, _counts, missing = project_state(key)
+        if state != "defined":
+            out.append((key, name, state, missing, priority or "normal"))
+    out.sort(key=lambda r: (PRIORITY_RANK.get(r[4], 2), r[0]))
+    return out
+
+
 def project_state(project):
     """(state, counts-by-version, missing list) computed live."""
     rows = pg_rows(
@@ -164,7 +229,8 @@ def project_state(project):
 
 def list_projects():
     return pg_rows(
-        "SELECT project_key, display_name, atlas_node_key, scope_note "
+        "SELECT project_key, display_name, atlas_node_key, scope_note, "
+        "part_of, priority "
         "FROM atlas.version_scope_projects ORDER BY project_key")
 
 
@@ -191,14 +257,38 @@ def cmd_set_status(a):
     print("status %s/%s = %s" % (a.project, a.item, a.status))
 
 
+def cmd_set_part_of(a):
+    set_part_of(a.project, a.part_of)
+    print("part-of %s -> %s" % (a.project, a.part_of))
+
+
+def cmd_set_priority(a):
+    set_priority(a.project, a.priority)
+    print("priority %s = %s" % (a.project, a.priority))
+
+
 def cmd_show_scope(a):
     proj = pg_one(
-        "SELECT display_name, atlas_node_key, scope_note "
+        "SELECT display_name, atlas_node_key, scope_note, part_of, priority "
         "FROM atlas.version_scope_projects WHERE project_key=%s", (a.project,))
     if not proj:
         raise SystemExit("no such project: %s" % a.project)
     state, counts, missing = project_state(a.project)
+    if proj[3]:
+        parent = pg_one(
+            "SELECT display_name FROM atlas.version_scope_projects "
+            "WHERE project_key=%s", (proj[3],))
+        parent_name = parent[0] if parent else proj[3]
+        print("%s — %s [part of %s — scoped there, not separately]"
+              % (a.project, proj[0], parent_name))
+        if proj[2]:
+            print("  note: %s" % proj[2])
+        print("  no separate scope is kept here — see: show-scope "
+              "--project %s" % proj[3])
+        return
     print("%s — %s [scope: %s]" % (a.project, proj[0], state))
+    if proj[4] and proj[4] != "normal":
+        print("  priority: %s" % PRIORITY_LABEL.get(proj[4], proj[4]))
     if proj[2]:
         print("  note: %s" % proj[2])
     items = pg_rows(
@@ -227,20 +317,29 @@ def cmd_show_scope(a):
 
 
 def cmd_scope_gaps(a):
-    gaps = 0
-    for key, name, _node, _note in list_projects():
-        state, counts, missing = project_state(key)
-        if state != "defined":
-            gaps += 1
-            print("GAP %s — %s [scope: %s]: %s" % (key, name, state, "; ".join(missing)))
-    print("scope gaps: %d project(s) not fully defined" % gaps)
+    gaps = gap_projects()
+    for key, name, state, missing, priority in gaps:
+        flag = (" [%s]" % PRIORITY_LABEL[priority]
+                if priority in PRIORITY_LABEL else "")
+        print("GAP %s — %s [scope: %s]%s: %s"
+              % (key, name, state, flag, "; ".join(missing)))
+    print("scope gaps: %d project(s) not fully defined" % len(gaps))
 
 
 def cmd_list_projects(a):
-    for key, name, node, _note in list_projects():
+    rows = list_projects()
+    names = {r[0]: r[1] for r in rows}
+    for key, name, node, _note, part_of, priority in rows:
+        if part_of:
+            print("%s — %s [part of %s — scoped there, not separately; node %s]"
+                  % (key, name, names.get(part_of, part_of), node))
+            continue
         state, counts, _m = project_state(key)
         cs = " ".join("%s=%d" % (v, counts.get(v, 0)) for v in CORE_VERSIONS)
-        print("%s — %s [scope: %s; %s; node %s]" % (key, name, state, cs, node))
+        flag = ("; %s" % PRIORITY_LABEL[priority]
+                if priority in PRIORITY_LABEL else "")
+        print("%s — %s [scope: %s; %s%s; node %s]"
+              % (key, name, state, cs, flag, node))
 
 
 def cmd_import_json(a):
@@ -265,6 +364,7 @@ def selftest():
         print("  [ok] %s" % label if cond else "  [FAIL] %s" % label)
 
     P1, P2 = "selftest-vs-proj", "selftest-vs-empty"
+    P3, P4 = "selftest-vs-child", "selftest-vs-plain"
     try:
         register_project(P1, "Selftest VS Project", source="selftest")
         check("register project + atlas node linked",
@@ -287,11 +387,27 @@ def selftest():
         state2, _c, missing2 = project_state(P2)
         check("scope-less project reads unknown + gaps named",
               state2 == "unknown" and len(missing2) == 1)
+        register_project(P3, "Selftest VS Child", source="selftest")
+        set_part_of(P3, P1)
+        prow = pg_one("SELECT part_of FROM atlas.version_scope_projects "
+                      "WHERE project_key=%s", (P3,))
+        check("part-of recorded on the child row", prow[0] == P1)
+        register_project(P4, "Selftest VS Plain", source="selftest")
+        set_priority(P2, "super_high")
+        gap_keys = [g[0] for g in gap_projects()]
+        check("part-of project excluded from scope gaps",
+              P3 not in gap_keys)
+        check("standalone unknown projects still in scope gaps",
+              P2 in gap_keys and P4 in gap_keys)
+        check("super-high-priority gap surfaces before normal gaps",
+              gap_keys.index(P2) < gap_keys.index(P4))
     finally:
-        pg_exec("DELETE FROM atlas.version_scope_projects WHERE project_key IN (%s, %s)",
-                (P1, P2))
-        pg_exec("DELETE FROM atlas.nodes WHERE node_key IN (%s, %s)",
-                ("proj:%s" % P1, "proj:%s" % P2))
+        for pk in (P3, P4, P2, P1):
+            pg_exec("DELETE FROM atlas.version_scope_projects "
+                    "WHERE project_key=%s", (pk,))
+        pg_exec("DELETE FROM atlas.nodes WHERE node_key IN (%s, %s, %s, %s)",
+                ("proj:%s" % P1, "proj:%s" % P2, "proj:%s" % P3,
+                 "proj:%s" % P4))
     left = pg_one("SELECT count(*) FROM atlas.version_scope_projects "
                   "WHERE project_key LIKE 'selftest-vs-%'")
     check("cleanup: no selftest rows remain", left[0] == 0)
@@ -336,6 +452,16 @@ def main():
     sp.add_argument("--item", required=True)
     sp.add_argument("--status", required=True)
     sp.set_defaults(fn=cmd_set_status)
+
+    sp = sub.add_parser("set-part-of")
+    sp.add_argument("--project", required=True)
+    sp.add_argument("--part-of", required=True)
+    sp.set_defaults(fn=cmd_set_part_of)
+
+    sp = sub.add_parser("set-priority")
+    sp.add_argument("--project", required=True)
+    sp.add_argument("--priority", required=True, choices=PRIORITIES)
+    sp.set_defaults(fn=cmd_set_priority)
 
     sp = sub.add_parser("show-scope")
     sp.add_argument("--project", required=True)

@@ -120,6 +120,28 @@ explicit owner act, written in the record. An ungranted scope refuses
   packet source, Section 5 door 7. Polling is the mechanism for
   non-listeners, honestly — full push arrives with the MCP phase.
 
+- **Folder lite** — live (Phase 6): your owner's plain-files
+  exchange folder (`folder-init`, owner-side) — `inbox/`,
+  `drafts/`, `processed/`, `START-HERE.md`; one file per item.
+  `folder-scan` (propose tier) files each new `inbox/` text/Markdown
+  file (256 KB max) through the dump door as a capture — provenance
+  + contents-are-data stamped — and moves it to `processed/`
+  renamed `<capture id>-<name>`, kept forever; anything unfit (too
+  big, binary, wrong type, a link pointing outside) is left in
+  place and reported, never silently dropped. `folder-draft`
+  (propose tier) writes one prepared draft into `drafts/` only,
+  named `<date>-<slug>-req<id>.md` when tied to a pending request —
+  a proposal, never a send. No cloud-drive sync is built (ruled
+  out); the owner's own sync of the folder is theirs and works.
+- **ICS calendar feed** — live (Phase 6): `ics` (read tier +
+  **calendar** scope) generates a standard iCalendar document from
+  the owner's calendar — one event per open item with a due date,
+  stable ids; a past-due open item is included and marked *CARRIED
+  FORWARD*. `--out <path>` writes it inside your owner's exchange
+  folder. Generation only — SBOS does not serve the feed; getting
+  it in front of a calendar app is a hosting question for later,
+  stated honestly, not improvised.
+
 ## Readiness test
 
 Packet-only, you must be able to: (1) register + get name tag/token,

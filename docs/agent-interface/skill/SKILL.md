@@ -59,6 +59,12 @@ phase; v1 is the token route).
 Tokens are scoped, expiring, and revocable. A refusal (expired, revoked,
 wrong tier) means stop and report it — never work around a refusal.
 
+Your tier says *how* you may work; your **read scopes** say *what* you
+may look at. The owner grants your scope list; new agents start with
+the minimum (board + your own requests), and every widening is an
+explicit owner act, written in the record. An ungranted scope refuses
+— that is normal; report it, don't route around it.
+
 ## Doors
 
 - **Common work board (Agent Commons)** — live, propose tier+: through
@@ -69,9 +75,16 @@ wrong tier) means stop and report it — never work around a refusal.
 - **Dump door** — live, propose tier+: `dump` (title + plain payload);
   lands in the Intel Bridge as a capture stamped with your name tag +
   owner key. Any time, unsorted.
-- **Reading doors:** people + last-said, calendar (missed items carry
-  forward), goals, weekly scorecard — scoped by your token. *(Next
-  phase — not live yet.)*
+- **Reading doors** — live, read tier+, one per granted scope, all
+  via `read --scope <scope>` with your key + token; every read is
+  logged with your name tag: **board** (your owner's board),
+  **requests** (your OWN approval requests only — never another
+  agent's), **goals** (the owner's goals + progress), **people**
+  (bounded slice, names + basics — no email/phone through this door),
+  **calendar** (open items; past-due open items are marked carried
+  forward, never dropped), **scorecard** (door built; this install
+  has no scorecard data store yet, so it answers "not available in
+  this install yet" — honestly, never with invented numbers).
 - **Approval door** — live, propose tier+: draft → `request-action` →
   pending approval → owner's decision recorded. Approval executes
   nothing yet; there is no execution surface in v1.
@@ -83,5 +96,8 @@ wrong tier) means stop and report it — never work around a refusal.
 Packet-only: (1) register + token, (2) read scorecard + goals,
 (3) post current work to the board, (4) claim → do → complete a task
 with no double-claim, (5) dump one learning, (6) file one outward
-draft as a pending approval and stop. If a step needs hand-holding,
+draft as a pending approval and stop. All six steps run on live doors
+now; inside step 2 the goals door serves real data and the scorecard
+door answers honestly that no scorecard store exists yet — report
+that as found, never invent numbers. If a step needs hand-holding,
 report which step and what was missing — that is the next build item.

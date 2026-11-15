@@ -92,8 +92,16 @@ team agents. All three work from the same record.
   expires, and the owner can revoke it at any time. SBOS stores only a
   hash of it — if you lose it, the owner issues a new one; nobody can
   read the old one back.
-- If a door refuses you (expired, revoked, wrong tier), stop and report
-  it. Do not work around a refusal.
+- Your tier says *how* you may work. Your **read scopes** say *what*
+  you may look at. The owner grants you a list of reading doors (the
+  scopes in Section 5, door 4) — new agents start with the smallest
+  set (the board, and your own approval requests), and the owner can
+  widen or narrow your list at any time. Every change to your list is
+  written in the record. If you ask for a door the owner did not grant
+  you, it refuses — that refusal is normal, not an error to route
+  around.
+- If a door refuses you (expired, revoked, wrong tier, ungranted
+  scope), stop and report it. Do not work around a refusal.
 
 ## 5. The doors, and how to use each
 
@@ -122,10 +130,29 @@ vendor-specific door.
    as a capture, stamped with your name tag and your owner's key. Dump
    any time, as often as learnings arise. Do not wait, batch-curate, or
    file them yourself — the system sorts downstream.
-4. **Reading doors (scoped by your tier + token)** — the owner's people
-   and what was last said, the calendar (missed items carry forward —
-   they are rescheduled, never silently gone), goals, and the weekly
-   scorecard. Ask for the slice the task needs.
+4. **Reading doors** — *live now, at read tier or above, one door per
+   scope the owner granted you.* All through `agent_interface` with
+   your agent key + token: `read --scope <scope>`. Each answer says
+   where it came from, and every read you make is written in the
+   record with your name tag. Ask for the slice the task needs — the
+   doors serve bounded slices, never the whole house. The scopes:
+   - **board** — your owner's common work board: open work, who holds
+     what, and flags needing attention.
+   - **requests** — your *own* approval requests and what the owner
+     decided. You can never see another agent's requests.
+   - **goals** — the owner's goals and their progress.
+   - **people** — a bounded slice of the owner's people list (names
+     and basics). Contact details — email addresses, phone numbers —
+     are *not* served through this door.
+   - **calendar** — the owner's calendar, open items only. An item
+     whose day has passed and is not done is marked *carried forward*:
+     missed items are rescheduled, never silently gone.
+   - **scorecard** — the owner's weekly scorecard. **Honest state:
+     this door is built, but in this install there is no scorecard
+     data store yet** — the scorecard lives as a template/article, not
+     as numbers in a table. The door will tell you exactly that
+     ("not available in this install yet") rather than invent
+     numbers. When a scorecard store exists, this door reads it.
 5. **The approval door (outward acts)** — *live now, at propose tier
    or above.* Prepare the draft, file it with `request-action` (kind:
    send / contact / buy / publish / post, plus the prepared draft as
@@ -155,11 +182,13 @@ Using only this packet, you should be able to:
 6. Prepare one outward draft, file it as a pending approval — and stop,
    waiting for the owner's go.
 
-Build status, plainly: steps 1, 3, 4, 5, and 6 run on live doors today
-(registration/token, the board door, the dump door, the approval door).
-Step 2 — the scoped reading doors — is the next phase; until it lands,
-ask your owner for the scorecard and goals through the channel in
-Section 1.
+Build status, plainly: all six steps now run on live doors today —
+registration/token, the reading doors, the board door, the dump door,
+and the approval door. One honest caveat inside step 2: the goals
+door serves real goals, but the scorecard door answers "not
+available in this install yet," because no scorecard data store
+exists yet. That answer completes the step truthfully — report it as
+you found it; never fill the gap with invented numbers.
 
 If any step needs a human to walk you through it, report exactly which
 step and what was missing. That report is valuable: it becomes the next

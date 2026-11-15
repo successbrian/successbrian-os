@@ -92,8 +92,46 @@ and the refusal is audited):
   execution surface is a later phase and does not exist yet.
   python3 agent_interface.py selftest2   (phase-2 end-to-end proof)
 
+PHASE 3 (same ruling) adds the SCOPED READING DOORS. Every registered
+agent carries read_scopes — the reading doors its OWNER granted it
+(registration default: the minimal set, board + requests; widening is
+an explicit, audited owner act via set-scopes, never a default).
+One read verb serves every scope, behind verify-token + READ tier +
+that scope's grant; every read and every refusal is audited:
+
+  python3 agent_interface.py read --agent KEY --token T \
+      --scope board|requests|goals|people|calendar|scorecard \
+      [--limit N]
+  python3 agent_interface.py set-scopes --agent KEY \
+      --scopes board,requests,goals --by OWNER   (owner-side)
+  register-agent also accepts [--scopes board,requests,...].
+
+  Scope -> source map (fitted to what really exists on this install;
+  DDL: tools/agent_interface_phase3.sql):
+    board     — the Agent Commons board (successbrian_os.agent_board
+                view), filtered to the agent's owner's board.
+    requests  — agent_interface_requests, the agent's OWN requests
+                only; another agent's requests are never served.
+    goals     — successbrian_os.sbos_goals, the owner's goal store
+                (Atlas's goal_nodes plan on top of these rows).
+    people    — people_unified.people.people, a bounded slice of the
+                owner's people store. Contact details (email / phone)
+                are NOT served through this door.
+    calendar  — successbrian_os.life_calendar, open items only;
+                past-due open items are flagged carried_forward (the
+                calendar carries missed items forward, never drops).
+    scorecard — NO data store exists in this install yet: the weekly
+                scorecard is a template/article, not data. The door
+                exists and answers honestly — available=false with the
+                reason, audited like any read — and never fabricates
+                numbers. When a scorecard store is built, this door
+                reads it.
+  Reads never mutate owner data: the doors run SELECTs only; the
+  interface's own audit rows are the only writes a read makes.
+  python3 agent_interface.py selftest3   (phase-3 end-to-end proof)
+
 Exit codes: 0 ok; 1 refused (bad/expired/revoked token, tier too low,
-agent revoked, not found); 2 usage or store errors.
+scope not granted, agent revoked, not found); 2 usage or store errors.
 """
 import argparse
 import hashlib
@@ -104,12 +142,16 @@ import sys
 from datetime import datetime, timezone
 
 sys.path.insert(0, "/home/successbrian/successbrian-os/tools")
+import sbos_common  # noqa: E402  (connect() for the people door's DB)
 from sbos_common import pg_exec, pg_one, pg_rows  # noqa: E402
 from psycopg2.extras import Json  # noqa: E402
 import agent_board  # noqa: E402  (Agent Commons — the board door's engine)
 
 TIERS = ("read", "propose", "act")
 REQUEST_KINDS = ("send", "contact", "buy", "publish", "post")
+READ_SCOPES = ("board", "requests", "goals", "people", "calendar",
+               "scorecard")
+DEFAULT_READ_SCOPES = ("board", "requests")
 TEST_OPERATOR = "selftest-operator"
 TEST_AGENT = "selftest-outside-agent"
 TEST_AGENT2 = "selftest-outside-agent-2"
@@ -117,6 +159,11 @@ TEST_OPERATOR2 = "selftest2-operator"
 TEST_AGENT_P2A = "selftest2-outside-agent-a"
 TEST_AGENT_P2B = "selftest2-outside-agent-b"
 TEST_AGENT_P2R = "selftest2-outside-agent-read"
+TEST_OPERATOR3 = "selftest3-operator"
+TEST_AGENT_P3A = "selftest3-outside-agent-a"
+TEST_AGENT_P3B = "selftest3-outside-agent-b"
+TEST_AGENT_P3C = "selftest3-outside-agent-c"
+TEST_AGENT_P3D = "selftest3-outside-agent-d"
 
 
 def _hash(token: str) -> str:
@@ -130,23 +177,73 @@ def _audit(agent_key, operator_key, event, detail=None):
         (agent_key, operator_key, event, Json(detail or {})))
 
 
+def _norm_scopes(scopes):
+    """Validate + canonicalize a read-scope set (READ_SCOPES order).
+    None means 'not specified' and is passed through as None."""
+    if scopes is None:
+        return None
+    bad = [s for s in scopes if s not in READ_SCOPES]
+    if bad:
+        raise ValueError(f"unknown read scopes {bad}; "
+                         f"vocabulary is {READ_SCOPES}")
+    return [s for s in READ_SCOPES if s in scopes]
+
+
 def register_agent(operator_key, agent_key, display_name, vendor="other",
-                   tier="read"):
+                   tier="read", scopes=None):
     if tier not in TIERS:
         raise ValueError(f"tier must be one of {TIERS}")
+    scopes = _norm_scopes(scopes)
+    existing = pg_one(
+        "select read_scopes from successbrian_os.agent_interface_agents "
+        "where agent_key=%s", (agent_key,))
+    if existing is None:
+        granted = (list(scopes) if scopes is not None
+                   else list(DEFAULT_READ_SCOPES))
+        pg_exec(
+            """insert into successbrian_os.agent_interface_agents
+                 (agent_key, operator_key, display_name, vendor, tier,
+                  read_scopes)
+               values (%s,%s,%s,%s,%s,%s)""",
+            (agent_key, operator_key, display_name, vendor, tier,
+             granted))
+        _audit(agent_key, operator_key, "registered",
+               {"vendor": vendor, "tier": tier, "scopes": granted})
+    else:
+        pg_exec(
+            """update successbrian_os.agent_interface_agents
+                  set operator_key=%s, display_name=%s, vendor=%s,
+                      tier=%s, updated_at=now()
+                where agent_key=%s""",
+            (operator_key, display_name, vendor, tier, agent_key))
+        _audit(agent_key, operator_key, "registered",
+               {"vendor": vendor, "tier": tier})
+        if scopes is not None and list(existing) != list(scopes):
+            set_scopes(agent_key, scopes, by="register-agent")
+    return show_agent(agent_key)
+
+
+def set_scopes(agent_key, scopes, by):
+    """Owner-side: set an agent's granted read scopes. This is THE
+    widening act — explicit, and audited as scopes_changed with the
+    old set, the new set, and who did it. Registration defaults never
+    widen anyone (see DEFAULT_READ_SCOPES)."""
+    scopes = _norm_scopes(scopes)
+    if scopes is None:
+        raise ValueError("scopes are required")
+    row = pg_one(
+        "select operator_key, read_scopes from "
+        "successbrian_os.agent_interface_agents where agent_key=%s",
+        (agent_key,))
+    if row is None:
+        return None
+    operator_key, old = row
     pg_exec(
-        """insert into successbrian_os.agent_interface_agents
-             (agent_key, operator_key, display_name, vendor, tier)
-           values (%s,%s,%s,%s,%s)
-           on conflict (agent_key) do update
-             set operator_key=excluded.operator_key,
-                 display_name=excluded.display_name,
-                 vendor=excluded.vendor,
-                 tier=excluded.tier,
-                 updated_at=now()""",
-        (agent_key, operator_key, display_name, vendor, tier))
-    _audit(agent_key, operator_key, "registered",
-           {"vendor": vendor, "tier": tier})
+        """update successbrian_os.agent_interface_agents
+              set read_scopes=%s, updated_at=now()
+            where agent_key=%s""", (scopes, agent_key))
+    _audit(agent_key, operator_key, "scopes_changed",
+           {"old": list(old), "new": list(scopes), "by": by})
     return show_agent(agent_key)
 
 
@@ -184,14 +281,15 @@ def verify_token(agent_key, token):
         """select agent_key, operator_key, display_name, vendor, tier,
                   agent_revoked, token_hash, token_revoked,
                   (token_expires_at is not null
-                   and token_expires_at < now()) as token_expired
+                   and token_expires_at < now()) as token_expired,
+                  read_scopes
              from successbrian_os.agent_interface_agents
             where agent_key=%s""",
         (agent_key,))
     if row is None:
         return _refuse(agent_key, None, "unknown_agent")
     (key, operator_key, name, vendor, tier, agent_revoked, token_hash,
-     token_revoked, token_expired) = row
+     token_revoked, token_expired, read_scopes) = row
     if agent_revoked:
         return _refuse(key, operator_key, "agent_revoked")
     if not token_hash:
@@ -204,7 +302,8 @@ def verify_token(agent_key, token):
         return _refuse(key, operator_key, "token_mismatch")
     _audit(key, operator_key, "token_verified", {"tier": tier})
     return {"agent_key": key, "operator_key": operator_key,
-            "display_name": name, "vendor": vendor, "tier": tier}
+            "display_name": name, "vendor": vendor, "tier": tier,
+            "read_scopes": list(read_scopes or [])}
 
 
 def require_tier(agent: dict, need: str) -> bool:
@@ -238,15 +337,19 @@ def show_agent(agent_key):
         """select agent_key, operator_key, display_name, vendor, tier,
                   agent_revoked, token_revoked,
                   token_issued_at::text, token_expires_at::text,
-                  (token_hash is not null) as has_token, created_at::text
+                  (token_hash is not null) as has_token, created_at::text,
+                  read_scopes
              from successbrian_os.agent_interface_agents
             where agent_key=%s""", (agent_key,))
     if row is None:
         return None
     keys = ("agent_key", "operator_key", "display_name", "vendor", "tier",
             "agent_revoked", "token_revoked", "token_issued_at",
-            "token_expires_at", "has_token", "created_at")
-    return dict(zip(keys, row))
+            "token_expires_at", "has_token", "created_at",
+            "read_scopes")
+    out = dict(zip(keys, row))
+    out["read_scopes"] = list(out["read_scopes"] or [])
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -471,6 +574,179 @@ def deny_request(request_id, owner_key):
     """Owner denies a pending request."""
     return _decide_request(request_id, owner_key, "denied",
                            "action_denied")
+
+
+# ---------------------------------------------------------------------------
+# PHASE 3 — the scoped reading doors. One read verb, six scopes; every
+# read passes verify-token + READ tier + THAT scope's owner grant, and
+# every read (served or honestly not-available) and every refusal is
+# audited with the agent's name tag. Reads run SELECTs only — owner
+# data is never mutated by a read; the audit row is the only write.
+# ---------------------------------------------------------------------------
+
+def require_scope(agent: dict, scope: str) -> bool:
+    """Scope gate: True if the owner granted this scope to the agent.
+    A refusal is audited as scope_refused."""
+    if scope not in READ_SCOPES:
+        raise ValueError(f"scope must be one of {READ_SCOPES}")
+    if scope in (agent.get("read_scopes") or []):
+        return True
+    _audit(agent["agent_key"], agent["operator_key"], "scope_refused",
+           {"scope": scope, "granted": agent.get("read_scopes") or []})
+    return False
+
+
+def _read_board(agent, limit):
+    rows = pg_rows(
+        """select id, title, status, kind, created_by_agent,
+                  claimed_by_agent, attempts, flag_reason,
+                  created_at::text
+             from successbrian_os.agent_board
+            where operator_key=%s
+            order by (flag_reason is not null) desc, id desc
+            limit %s""", (agent["operator_key"], limit))
+    keys = ("id", "title", "status", "kind", "created_by_agent",
+            "claimed_by_agent", "attempts", "flag_reason", "created_at")
+    return (True,
+            "Agent Commons board (successbrian_os.agent_board view), "
+            "filtered to your owner's board; flagged items first",
+            [dict(zip(keys, r)) for r in rows], None)
+
+
+def _read_requests(agent, limit):
+    rows = pg_rows(
+        """select id, kind, payload, reason, status, requested_at::text,
+                  decided_at::text, decided_by
+             from successbrian_os.agent_interface_requests
+            where agent_key=%s
+            order by id desc limit %s""", (agent["agent_key"], limit))
+    keys = ("id", "kind", "payload", "reason", "status", "requested_at",
+            "decided_at", "decided_by")
+    return (True,
+            "your OWN pending-approval requests "
+            "(successbrian_os.agent_interface_requests) — another "
+            "agent's requests are never served through this door",
+            [dict(zip(keys, r)) for r in rows], None)
+
+
+def _read_goals(agent, limit):
+    rows = pg_rows(
+        """select goal_name, goal_slug, status, priority, progress_pct,
+                  target_date::text
+             from successbrian_os.sbos_goals
+            where status in ('active','planning','in_progress','blocked')
+            order by case status when 'in_progress' then 0
+                                 when 'blocked' then 1
+                                 when 'active' then 2
+                                 else 3 end,
+                     updated_at desc
+            limit %s""", (limit,))
+    keys = ("goal_name", "goal_slug", "status", "priority",
+            "progress_pct", "target_date")
+    return (True,
+            "the owner's goals in successbrian_os.sbos_goals (the "
+            "goal store Atlas's goal_nodes plan on top of); open "
+            "statuses only, most recently worked first",
+            [dict(zip(keys, r)) for r in rows], None)
+
+
+def _read_calendar(agent, limit):
+    rows = pg_rows(
+        """select title, event_date::text, end_date::text, event_type,
+                  status, (event_date < now()) as carried_forward
+             from successbrian_os.life_calendar
+            where status in ('planned','scheduled','confirmed')
+            order by event_date asc
+            limit %s""", (limit,))
+    keys = ("title", "event_date", "end_date", "event_type", "status",
+            "carried_forward")
+    return (True,
+            "the owner's SBOS life calendar "
+            "(successbrian_os.life_calendar), open items only; a "
+            "past-due open item is carried forward (flagged "
+            "carried_forward), never silently dropped",
+            [dict(zip(keys, r)) for r in rows], None)
+
+
+def _read_people(agent, limit):
+    limit = min(limit, 50)
+    conn = sbos_common.connect(dbname="people_unified")
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """select id, first_name, last_name, city, state, status,
+                      last_contact::text
+                 from people.people
+                order by id desc limit %s""", (limit,))
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+    keys = ("id", "first_name", "last_name", "city", "state", "status",
+            "last_contact")
+    return (True,
+            "the owner's people store (people_unified.people.people) "
+            "— a bounded slice, most recently added first. Contact "
+            "details (email / phone) are NOT served through this door",
+            [dict(zip(keys, r)) for r in rows], None)
+
+
+def _read_scorecard(agent, limit):
+    return (False, None, [],
+            "not available in this install yet: no weekly-scorecard "
+            "data store exists here — the owner's weekly scorecard "
+            "currently lives as a template/article, not as data, so "
+            "there are no numbers to serve and none are invented. "
+            "When a scorecard store is built, this door will read it.")
+
+
+_READERS = {"board": _read_board, "requests": _read_requests,
+            "goals": _read_goals, "people": _read_people,
+            "calendar": _read_calendar, "scorecard": _read_scorecard}
+
+
+def read_door(agent_key, token, scope, limit=25):
+    """Serve one scoped read. Returns the result dict, or None when
+    the gate refuses (bad/expired/revoked token, or the scope was not
+    granted — refusals are audited by verify_token / require_scope).
+    A scope whose source does not exist returns a dict with
+    available=False and the honest reason — never fabricated data."""
+    if scope not in READ_SCOPES:
+        raise ValueError(f"scope must be one of {READ_SCOPES}")
+    limit = max(1, min(int(limit), 100))
+    agent = _gate(agent_key, token, "read")
+    if agent is None:
+        return None
+    if not require_scope(agent, scope):
+        return None
+    available, source, items, note = _READERS[scope](agent, limit)
+    _audit(agent_key, agent["operator_key"], "read",
+           {"scope": scope, "available": available, "source": source,
+            "count": len(items)})
+    return {"agent_key": agent_key, "scope": scope,
+            "available": available, "source": source, "items": items,
+            "note": note}
+
+
+def scope_guard():
+    """The no-silent-widening guard (QA runs this daily): every agent's
+    read_scopes must stay inside the vocabulary, and any agent holding
+    MORE than the registration default must trace that grant to an
+    audited act — a registration that named the scopes, or a
+    scopes_changed event. A bare UPDATE that widens an agent without
+    an audit row fails this guard. Returns the violation count."""
+    return pg_one(
+        """select count(*) from successbrian_os.agent_interface_agents a
+            where exists (select 1 from unnest(a.read_scopes) s
+                           where s not in ('board','requests','goals',
+                                          'people','calendar',
+                                          'scorecard'))
+               or (a.read_scopes <> array['board','requests']::text[]
+                   and not exists
+                     (select 1 from successbrian_os.agent_interface_audit au
+                       where au.agent_key = a.agent_key
+                         and (au.event = 'scopes_changed'
+                              or (au.event = 'registered'
+                                  and au.detail ? 'scopes'))))""")
 
 
 def _cleanup_test_rows():
@@ -727,6 +1003,154 @@ def selftest2():
     return 0
 
 
+def _cleanup_test3_rows():
+    # Disposable phase-3 selftest cleanup (the standing precedent):
+    # production records are never deleted; selftest scaffolding rows
+    # (requests, audit rows, the test agents) are removed whole.
+    pg_exec("delete from successbrian_os.agent_interface_requests "
+            "where operator_key=%s", (TEST_OPERATOR3,))
+    pg_exec("delete from successbrian_os.agent_interface_audit "
+            "where operator_key=%s", (TEST_OPERATOR3,))
+    pg_exec("delete from successbrian_os.agent_interface_agents "
+            "where operator_key=%s", (TEST_OPERATOR3,))
+
+
+def selftest3():
+    """Phase-3 end-to-end proof on disposable rows: agents registered
+    with different scope grants -> a granted scope reads real data ->
+    an ungranted scope is refused (audited) -> requests are the
+    agent's OWN only -> the no-source scope (scorecard) answers
+    honestly, not-available, audited -> widening is an explicit
+    audited owner act (set-scopes) -> a revoked token is refused on a
+    read -> the audit trail is complete -> cleanup."""
+    steps = []
+
+    def check(label, cond):
+        steps.append((label, bool(cond)))
+        print(f"  [{'ok' if cond else 'FAIL'}] {label}")
+        if not cond:
+            raise AssertionError(label)
+
+    _cleanup_test3_rows()
+    print("agent_interface phase-3 selftest")
+    # 1. register A (read tier) with an explicit scope grant — no people
+    register_agent(TEST_OPERATOR3, TEST_AGENT_P3A, "Selftest3 Agent A",
+                   vendor="selftest-vendor", tier="read",
+                   scopes=["board", "requests", "goals", "calendar",
+                           "scorecard"])
+    shown_a = show_agent(TEST_AGENT_P3A)
+    check("register with explicit scopes stores exactly those scopes",
+          shown_a["read_scopes"] == ["board", "requests", "goals",
+                                     "calendar", "scorecard"])
+    # 2. register B (read tier) with NO scopes named -> minimal default
+    register_agent(TEST_OPERATOR3, TEST_AGENT_P3B, "Selftest3 Agent B",
+                   vendor="selftest-vendor", tier="read")
+    shown_b = show_agent(TEST_AGENT_P3B)
+    check("register without scopes defaults to board+requests ONLY "
+          "(no silent widening)",
+          shown_b["read_scopes"] == ["board", "requests"])
+    # 3. two propose-tier agents under the same owner (requests tests)
+    register_agent(TEST_OPERATOR3, TEST_AGENT_P3C, "Selftest3 Agent C",
+                   vendor="selftest-vendor", tier="propose")
+    register_agent(TEST_OPERATOR3, TEST_AGENT_P3D, "Selftest3 Agent D",
+                   vendor="selftest-vendor", tier="propose")
+    tok_a = issue_token(TEST_AGENT_P3A, days=30)
+    tok_b = issue_token(TEST_AGENT_P3B, days=30)
+    tok_c = issue_token(TEST_AGENT_P3C, days=30)
+    tok_d = issue_token(TEST_AGENT_P3D, days=30)
+    check("tokens issued for four outside agents",
+          bool(tok_a) and bool(tok_b) and bool(tok_c) and bool(tok_d))
+    # 4. a granted scope reads REAL data (goals from sbos_goals)
+    g = read_door(TEST_AGENT_P3A, tok_a, "goals")
+    check("granted goals scope reads real goals",
+          g is not None and g["available"] is True
+          and len(g["items"]) > 0 and "goal_name" in g["items"][0])
+    # 5. an ungranted scope is refused, and the refusal is audited
+    check("ungranted goals scope refused for the default-scope agent",
+          read_door(TEST_AGENT_P3B, tok_b, "goals") is None)
+    refused = pg_one(
+        "select count(*) from successbrian_os.agent_interface_audit "
+        "where operator_key=%s and agent_key=%s "
+        "and event='scope_refused'", (TEST_OPERATOR3, TEST_AGENT_P3B))
+    check("scope refusal audited", refused and refused >= 1)
+    # 6. requests are the agent's OWN only
+    rq = request_action(TEST_AGENT_P3C, tok_c, "send",
+                        {"draft": "selftest3 — never sent"},
+                        "phase-3 selftest: own-requests isolation")
+    check("agent C files a request (pending)",
+          rq is not None and rq["status"] == "pending")
+    own = read_door(TEST_AGENT_P3C, tok_c, "requests")
+    check("agent C reads its OWN request back",
+          own is not None
+          and any(r["id"] == rq["id"] for r in own["items"]))
+    other = read_door(TEST_AGENT_P3D, tok_d, "requests")
+    check("agent D does NOT see agent C's request",
+          other is not None
+          and all(r["id"] != rq["id"] for r in other["items"]))
+    none_own = read_door(TEST_AGENT_P3A, tok_a, "requests")
+    check("agent A (no requests of its own) reads an empty own list",
+          none_own is not None and none_own["items"] == [])
+    # 7. board + calendar doors answer with their real sources
+    bd = read_door(TEST_AGENT_P3A, tok_a, "board")
+    check("board door serves the owner's board (available)",
+          bd is not None and bd["available"] is True
+          and bd["source"] is not None)
+    cal = read_door(TEST_AGENT_P3A, tok_a, "calendar")
+    check("calendar door serves open life-calendar items",
+          cal is not None and cal["available"] is True
+          and len(cal["items"]) > 0
+          and "carried_forward" in cal["items"][0])
+    # 8. the no-source scope answers honestly — available=False, a
+    #    result (not a refusal), and the read is audited
+    sc = read_door(TEST_AGENT_P3A, tok_a, "scorecard")
+    check("scorecard door answers honestly: not available, no "
+          "fabricated numbers",
+          sc is not None and sc["available"] is False
+          and sc["items"] == [] and "not available" in sc["note"])
+    # 9. people is NOT granted to A yet -> refused; then the owner
+    #    widens explicitly (set-scopes, audited) and the read serves a
+    #    bounded slice with NO contact details
+    check("people scope refused before the owner grants it",
+          read_door(TEST_AGENT_P3A, tok_a, "people") is None)
+    widened = set_scopes(TEST_AGENT_P3A,
+                         ["board", "requests", "goals", "people",
+                          "calendar", "scorecard"],
+                         by=TEST_OPERATOR3)
+    check("set-scopes widens the grant (owner act)",
+          widened is not None and "people" in widened["read_scopes"])
+    ppl = read_door(TEST_AGENT_P3A, tok_a, "people", limit=5)
+    check("people door serves a bounded slice after the grant",
+          ppl is not None and ppl["available"] is True
+          and 0 < len(ppl["items"]) <= 5)
+    check("people door serves NO contact details",
+          all("primary_email" not in it and "whatsapp" not in it
+              and "primary_phone" not in it for it in ppl["items"]))
+    # 10. a revoked token is refused on a read
+    revoke_token(TEST_AGENT_P3D)
+    check("revoked token refused on a read",
+          read_door(TEST_AGENT_P3D, tok_d, "requests") is None)
+    # 11. the audit trail shows the whole phase-3 story
+    events = [r[0] for r in pg_rows(
+        "select event from successbrian_os.agent_interface_audit "
+        "where operator_key=%s", (TEST_OPERATOR3,))]
+    for expected in ("registered", "scopes_changed", "read",
+                     "scope_refused", "token_revoked", "token_refused"):
+        check(f"audit contains '{expected}'", expected in events)
+    reads = pg_one(
+        "select count(*) from successbrian_os.agent_interface_audit "
+        "where operator_key=%s and event='read' "
+        "and detail->>'scope'='scorecard' "
+        "and detail->>'available'='false'", (TEST_OPERATOR3,))
+    check("the honest not-available scorecard read is audited too",
+          reads and reads >= 1)
+    _cleanup_test3_rows()
+    left = pg_one("select count(*) from successbrian_os.agent_interface_agents "
+                  "where operator_key=%s", (TEST_OPERATOR3,))
+    check("cleanup: no selftest3 rows remain", left == 0)
+    print("SELFTEST PASS")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="SBOS Agent Interface v1 — outside-agent registration "
@@ -739,6 +1163,9 @@ def main(argv=None):
     r.add_argument("--name", required=True)
     r.add_argument("--vendor", default="other")
     r.add_argument("--tier", default="read", choices=TIERS)
+    r.add_argument("--scopes",
+                   help="comma-separated read scopes to grant "
+                        "(default: board,requests — the minimum)")
 
     i = sub.add_parser("issue-token")
     i.add_argument("--agent", required=True)
@@ -823,6 +1250,25 @@ def main(argv=None):
                     help="the owner's operator key, recorded as decider")
 
     sub.add_parser("selftest2")
+
+    ss = sub.add_parser("set-scopes")
+    ss.add_argument("--agent", required=True)
+    ss.add_argument("--scopes", required=True,
+                    help="comma-separated read scopes (the full new "
+                         "grant set for this agent)")
+    ss.add_argument("--by", required=True,
+                    help="the owner's operator key, recorded as the "
+                         "grantor in the audit")
+
+    rd = sub.add_parser("read")
+    rd.add_argument("--agent", required=True)
+    rd.add_argument("--token", required=True)
+    rd.add_argument("--scope", required=True, choices=READ_SCOPES)
+    rd.add_argument("--limit", type=int, default=25)
+
+    sub.add_parser("scope-guard")
+
+    sub.add_parser("selftest3")
     args = ap.parse_args(argv)
 
     try:
@@ -830,6 +1276,35 @@ def main(argv=None):
             return selftest()
         if args.cmd == "selftest2":
             return selftest2()
+        if args.cmd == "selftest3":
+            return selftest3()
+        if args.cmd == "set-scopes":
+            out = set_scopes(
+                args.agent,
+                [s.strip() for s in args.scopes.split(",") if s.strip()],
+                args.by)
+            if out is None:
+                print("refused: unknown agent", file=sys.stderr)
+                return 1
+            print(json.dumps(out, indent=2, default=str))
+            return 0
+        if args.cmd == "read":
+            out = read_door(args.agent, args.token, args.scope,
+                            args.limit)
+            if out is None:
+                print("refused: token, or scope not granted",
+                      file=sys.stderr)
+                return 1
+            print(json.dumps(out, indent=2, default=str))
+            return 0
+        if args.cmd == "scope-guard":
+            bad = scope_guard()
+            if bad:
+                print(f"SCOPES_GUARD_FAIL: {bad} agent(s) hold scopes "
+                      f"with no audited grant", file=sys.stderr)
+                return 1
+            print("SCOPES_GUARD_OK")
+            return 0
         if args.cmd == "board-focus":
             out = board_focus(args.agent, args.token, args.focus,
                               args.note)
@@ -915,8 +1390,12 @@ def main(argv=None):
             print(json.dumps(out, indent=2, default=str))
             return 0
         if args.cmd == "register-agent":
+            scopes = None
+            if args.scopes:
+                scopes = [s.strip() for s in args.scopes.split(",")
+                          if s.strip()]
             a = register_agent(args.operator, args.agent, args.name,
-                               args.vendor, args.tier)
+                               args.vendor, args.tier, scopes)
             print(json.dumps(a, indent=2, default=str))
             return 0
         if args.cmd == "issue-token":

@@ -43,23 +43,80 @@ Usage (CLI):
   python3 agent_interface.py show-agent --agent KEY [--json]
   python3 agent_interface.py selftest
 
+PHASE 2 (same ruling) adds the three working doors, all behind the
+same gate (verify-token + PROPOSE tier; a read-tier agent is refused
+and the refusal is audited):
+
+  BOARD DOOR — the outside agent works the Agent Commons board through
+  tools/agent_board.py, exactly as internal agents do (this module is
+  a thin gated wrapper; Commons behavior is untouched, its tables are
+  never written directly here):
+  python3 agent_interface.py board-focus --agent KEY --token T \
+      --focus "..." [--note "..."]      (publish current focus)
+  python3 agent_interface.py board-post --agent KEY --token T \
+      --title "..." [--detail "..."]    (post a board item)
+  python3 agent_interface.py board-claim --agent KEY --token T \
+      --item ID                         (Commons' atomic claim;
+                                         double-claim is refused)
+  python3 agent_interface.py board-progress --agent KEY --token T \
+      --item ID [--note "..."] [--attempt]
+  python3 agent_interface.py board-complete --agent KEY --token T \
+      --item ID [--note "..."]
+  Provenance: Commons' own fields carry it — items record
+  created_by_agent / claimed_by_agent and operator_key; progress rows
+  record agent_key; presence records agent_key + operator_key — and
+  every board write is ALSO audited in agent_interface_audit.
+
+  DUMP DOOR — the agent dumps intel (facts / decisions / ideas / open
+  items) in one plain payload; it lands in the Intel Bridge as a
+  capture via the ecosystem's own capture machinery
+  (tools/atlas/scattered_brain.py capture(), reused verbatim), with
+  the agent's name tag + owner key stamped into the capture context.
+  The agent does not sort or file; the system does downstream.
+  python3 agent_interface.py dump --agent KEY --token T \
+      --title "..." --body "..."
+
+  PENDING-APPROVAL DOOR — the outward-act gate. The agent files a
+  request; the owner approves or denies it:
+  python3 agent_interface.py request-action --agent KEY --token T \
+      --kind send|contact|buy|publish|post [--payload '{...}'] \
+      [--reason "..."]
+  python3 agent_interface.py list-requests --operator OP \
+      [--status pending|approved|denied] [--json]   (owner-side)
+  python3 agent_interface.py approve-request --id ID --owner OP
+  python3 agent_interface.py deny-request --id ID --owner OP
+  CRITICAL: approving a request executes NOTHING. It only moves the
+  record to 'approved' — there is no 'executed' state and no code
+  path in this module (or anywhere in the agent interface) that
+  sends, buys, publishes, or contacts anyone. An owner-facing
+  execution surface is a later phase and does not exist yet.
+  python3 agent_interface.py selftest2   (phase-2 end-to-end proof)
+
 Exit codes: 0 ok; 1 refused (bad/expired/revoked token, tier too low,
 agent revoked, not found); 2 usage or store errors.
 """
 import argparse
 import hashlib
 import json
+import os
 import secrets
 import sys
+from datetime import datetime, timezone
 
 sys.path.insert(0, "/home/successbrian/successbrian-os/tools")
 from sbos_common import pg_exec, pg_one, pg_rows  # noqa: E402
 from psycopg2.extras import Json  # noqa: E402
+import agent_board  # noqa: E402  (Agent Commons — the board door's engine)
 
 TIERS = ("read", "propose", "act")
+REQUEST_KINDS = ("send", "contact", "buy", "publish", "post")
 TEST_OPERATOR = "selftest-operator"
 TEST_AGENT = "selftest-outside-agent"
 TEST_AGENT2 = "selftest-outside-agent-2"
+TEST_OPERATOR2 = "selftest2-operator"
+TEST_AGENT_P2A = "selftest2-outside-agent-a"
+TEST_AGENT_P2B = "selftest2-outside-agent-b"
+TEST_AGENT_P2R = "selftest2-outside-agent-read"
 
 
 def _hash(token: str) -> str:
@@ -192,6 +249,230 @@ def show_agent(agent_key):
     return dict(zip(keys, row))
 
 
+# ---------------------------------------------------------------------------
+# PHASE 2 — the board door, the dump door, and the pending-approval door.
+# Every door below passes the SAME gate first: verify-token + tier check.
+# ---------------------------------------------------------------------------
+
+def _gate(agent_key, token, need):
+    """Verify the token and the tier in one step; return the verified
+    agent dict, or None. Every refusal is audited by verify_token /
+    require_tier (token_refused / tier_refused)."""
+    agent = verify_token(agent_key, token)
+    if agent is None:
+        return None
+    if not require_tier(agent, need):
+        return None
+    return agent
+
+
+# ------------------------------------------------------------- board door
+# Thin gated wrapper over tools/agent_board.py (Agent Commons). Commons
+# does the work — atomic leased claims, the lifecycle, the progress log —
+# with its behavior completely unchanged; this wrapper only authenticates
+# the outside agent and audits the write. Provenance rides Commons' own
+# fields: items carry created_by_agent / claimed_by_agent /
+# operator_key, progress rows carry agent_key, presence carries
+# agent_key + operator_key.
+
+def board_focus(agent_key, token, focus, note=None):
+    """Publish the agent's current focus (Commons presence + heartbeat;
+    heartbeat also refreshes the leases on anything it holds)."""
+    agent = _gate(agent_key, token, "propose")
+    if agent is None:
+        return None
+    out = agent_board.heartbeat(agent_key, current_focus=focus,
+                                status_note=note,
+                                operator=agent["operator_key"])
+    _audit(agent_key, agent["operator_key"], "board_focus",
+           {"focus": focus})
+    return out
+
+
+def board_post(agent_key, token, title, detail=None):
+    """Post a task to the common board. Starts 'open'."""
+    agent = _gate(agent_key, token, "propose")
+    if agent is None:
+        return None
+    out = agent_board.post_item(agent["operator_key"], agent_key, title,
+                                detail, kind="task")
+    _audit(agent_key, agent["operator_key"], "board_post",
+           {"item_id": out["item_id"], "title": title})
+    return out
+
+
+def board_claim(agent_key, token, item_id):
+    """Claim a board item through Commons' atomic claim. A live claim
+    held by another agent is REFUSED (None) — the double-claim refusal
+    holds for outside agents exactly as for internal ones, and the
+    refusal is audited."""
+    agent = _gate(agent_key, token, "propose")
+    if agent is None:
+        return None
+    out = agent_board.claim_item(agent_key, item_id)
+    if out is None:
+        _audit(agent_key, agent["operator_key"], "board_claim_refused",
+               {"item_id": item_id})
+        return None
+    _audit(agent_key, agent["operator_key"], "board_claim",
+           {"item_id": item_id})
+    return out
+
+
+def board_progress(agent_key, token, item_id, note=None, attempt=False):
+    """Log progress on a claimed item (Commons rules: tasks are
+    progressed by the agent holding the claim)."""
+    agent = _gate(agent_key, token, "propose")
+    if agent is None:
+        return None
+    out = agent_board.progress_item(agent_key, item_id, note=note,
+                                    attempt=attempt)
+    if out is None:
+        return None
+    _audit(agent_key, agent["operator_key"], "board_progress",
+           {"item_id": item_id, "attempt": attempt})
+    return out
+
+
+def board_complete(agent_key, token, item_id, note=None):
+    """Mark a board item done (the claiming or creating agent)."""
+    agent = _gate(agent_key, token, "propose")
+    if agent is None:
+        return None
+    out = agent_board.complete_item(agent_key, item_id, note=note)
+    if out is None:
+        return None
+    _audit(agent_key, agent["operator_key"], "board_complete",
+           {"item_id": item_id})
+    return out
+
+
+# -------------------------------------------------------------- dump door
+
+def dump_intel(agent_key, token, title, body):
+    """Dump intel into the Intel Bridge as a capture. Reuses the
+    ecosystem's own capture machinery verbatim (tools/atlas/
+    scattered_brain.py — the same insert every existing producer lands
+    in atlas.scattered_captures), with the agent's name tag + owner key
+    stamped into the capture context as provenance. The agent does not
+    sort or file; the clerk/cluster machinery downstream does.
+    Returns the capture id, or None when the gate refuses."""
+    agent = _gate(agent_key, token, "propose")
+    if agent is None:
+        return None
+    atlas_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "atlas")
+    if atlas_dir not in sys.path:
+        sys.path.insert(0, atlas_dir)
+    import scattered_brain  # lazy: only the dump door needs the Bridge
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    context = (
+        f"Dumped via the SBOS Agent Interface DUMP DOOR by outside "
+        f"agent '{agent['display_name']}' (agent_key={agent_key}, "
+        f"vendor={agent['vendor']}) for owner/operator "
+        f"'{agent['operator_key']}' at {stamp}. Provenance stamped by "
+        f"tools/agent_interface.py; the agent does not sort or file — "
+        f"the ecosystem manages the rest.")
+    conn = scattered_brain.pg()
+    try:
+        capture_id = scattered_brain.capture(conn, title, context, body)
+    finally:
+        conn.close()
+    _audit(agent_key, agent["operator_key"], "dump",
+           {"capture_id": capture_id, "title": title})
+    return capture_id
+
+
+# ------------------------------------------------- pending-approval door
+# The outward-act gate. An agent FILES a request; the owner approves or
+# denies it. Approval moves the record to 'approved' and NOTHING ELSE
+# happens: there is no execution path — no send, no buy, no publish, no
+# contact — anywhere in this module. 'approved' means "the owner said
+# go, recorded"; an owner-facing execution surface is a later phase.
+
+def show_request(request_id):
+    row = pg_one(
+        """select id, agent_key, operator_key, kind, payload, reason,
+                  status, requested_at::text, decided_at::text, decided_by
+             from successbrian_os.agent_interface_requests
+            where id=%s""", (request_id,))
+    if row is None:
+        return None
+    keys = ("id", "agent_key", "operator_key", "kind", "payload",
+            "reason", "status", "requested_at", "decided_at",
+            "decided_by")
+    return dict(zip(keys, row))
+
+
+def request_action(agent_key, token, kind, payload=None, reason=None):
+    """File an outward-action request for the owner's decision.
+    PROPOSE tier. The request lands 'pending'; nothing is executed."""
+    if kind not in REQUEST_KINDS:
+        raise ValueError(f"kind must be one of {REQUEST_KINDS}")
+    agent = _gate(agent_key, token, "propose")
+    if agent is None:
+        return None
+    rid = pg_one(
+        """insert into successbrian_os.agent_interface_requests
+             (agent_key, operator_key, kind, payload, reason)
+           values (%s,%s,%s,%s,%s) returning id""",
+        (agent_key, agent["operator_key"], kind, Json(payload or {}),
+         reason))
+    _audit(agent_key, agent["operator_key"], "action_requested",
+           {"request_id": rid, "kind": kind})
+    return show_request(rid)
+
+
+def list_requests(operator_key, status=None):
+    """Owner-side view of the pending-approval queue for one operator."""
+    sql = ("select id from successbrian_os.agent_interface_requests "
+           "where operator_key=%s")
+    params = [operator_key]
+    if status is not None:
+        sql += " and status=%s"
+        params.append(status)
+    sql += " order by id"
+    return [show_request(r[0]) for r in pg_rows(sql, tuple(params))]
+
+
+def _decide_request(request_id, owner_key, new_status, event):
+    row = pg_one(
+        "select agent_key, operator_key, status from "
+        "successbrian_os.agent_interface_requests where id=%s",
+        (request_id,))
+    if row is None:
+        return None
+    agent_key, operator_key, status = row
+    if status != "pending":
+        return None  # already decided — a decision is recorded once
+    n = pg_exec(
+        """update successbrian_os.agent_interface_requests
+              set status=%s, decided_at=now(), decided_by=%s
+            where id=%s and status='pending'""",
+        (new_status, owner_key, request_id))
+    if n == 0:
+        return None
+    # The decision is recorded with the owner key + timestamp. NOTHING
+    # is executed on approval — see the section header above.
+    _audit(agent_key, operator_key, event,
+           {"request_id": request_id, "decided_by": owner_key,
+            "executed": False})
+    return show_request(request_id)
+
+
+def approve_request(request_id, owner_key):
+    """Owner approves a pending request. Records the go; executes
+    NOTHING (no outward act exists to execute in this phase)."""
+    return _decide_request(request_id, owner_key, "approved",
+                           "action_approved")
+
+
+def deny_request(request_id, owner_key):
+    """Owner denies a pending request."""
+    return _decide_request(request_id, owner_key, "denied",
+                           "action_denied")
+
+
 def _cleanup_test_rows():
     # Disposable selftest cleanup (the standing Commons precedent):
     # production audit rows are never deleted; selftest rows are proof
@@ -268,6 +549,184 @@ def selftest():
     return 0
 
 
+def _cleanup_test2_rows(capture_id=None):
+    # Disposable phase-2 selftest cleanup (the standing precedent from
+    # the Commons + Phase 1 selftests): production records are never
+    # deleted; selftest scaffolding rows are removed whole — board
+    # items (progress rows cascade), presence, the selftest capture,
+    # requests, audit rows, and the test agents themselves.
+    for key in (TEST_AGENT_P2A, TEST_AGENT_P2B, TEST_AGENT_P2R):
+        pg_exec("delete from successbrian_os.agent_work_items "
+                "where created_by_agent=%s or claimed_by_agent=%s",
+                (key, key))
+        pg_exec("delete from successbrian_os.agent_presence "
+                "where agent_key=%s", (key,))
+    if capture_id is not None:
+        atlas_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "atlas")
+        if atlas_dir not in sys.path:
+            sys.path.insert(0, atlas_dir)
+        import scattered_brain
+        conn = scattered_brain.pg()
+        try:
+            cur = conn.cursor()
+            cur.execute("delete from atlas.scattered_captures "
+                        "where id=%s", (capture_id,))
+            conn.commit()
+        finally:
+            conn.close()
+    pg_exec("delete from successbrian_os.agent_interface_requests "
+            "where operator_key=%s", (TEST_OPERATOR2,))
+    pg_exec("delete from successbrian_os.agent_interface_audit "
+            "where operator_key=%s", (TEST_OPERATOR2,))
+    pg_exec("delete from successbrian_os.agent_interface_agents "
+            "where operator_key=%s", (TEST_OPERATOR2,))
+
+
+def selftest2():
+    """Phase-2 end-to-end proof on disposable rows: register outside
+    agents -> board post/claim/progress/complete through the gate ->
+    second agent's double-claim refused -> read-tier agent refused a
+    board write -> dump lands as an Intel Bridge capture -> outward
+    request filed pending -> approve + deny recorded, NOTHING executed
+    -> the audit shows the whole trail -> cleanup."""
+    steps = []
+
+    def check(label, cond):
+        steps.append((label, bool(cond)))
+        print(f"  [{'ok' if cond else 'FAIL'}] {label}")
+        if not cond:
+            raise AssertionError(label)
+
+    _cleanup_test2_rows()
+    print("agent_interface phase-2 selftest")
+    # 1. register two propose-tier outside agents + one read-tier agent
+    register_agent(TEST_OPERATOR2, TEST_AGENT_P2A, "Selftest2 Agent A",
+                   vendor="selftest-vendor", tier="propose")
+    register_agent(TEST_OPERATOR2, TEST_AGENT_P2B, "Selftest2 Agent B",
+                   vendor="selftest-vendor", tier="propose")
+    register_agent(TEST_OPERATOR2, TEST_AGENT_P2R, "Selftest2 Agent Read",
+                   vendor="selftest-vendor", tier="read")
+    tok_a = issue_token(TEST_AGENT_P2A, days=30)
+    tok_b = issue_token(TEST_AGENT_P2B, days=30)
+    tok_r = issue_token(TEST_AGENT_P2R, days=30)
+    check("register + token three outside agents",
+          bool(tok_a) and bool(tok_b) and bool(tok_r))
+    # 2. board door: publish focus (presence carries tag + owner key)
+    f = board_focus(TEST_AGENT_P2A, tok_a,
+                    "phase-2 selftest: working the board door")
+    check("board focus published through the gate",
+          f is not None and f["agent_key"] == TEST_AGENT_P2A)
+    pres = pg_one(
+        "select operator_key, current_focus from "
+        "successbrian_os.agent_presence where agent_key=%s",
+        (TEST_AGENT_P2A,))
+    check("presence carries the focus + owner key",
+          pres is not None and pres[0] == TEST_OPERATOR2
+          and pres[1] == "phase-2 selftest: working the board door")
+    # 3. board door: post (item carries created_by tag + owner key)
+    p = board_post(TEST_AGENT_P2A, tok_a,
+                   "SELFTEST2 disposable board item — delete after proof",
+                   "phase-2 selftest item")
+    item_id = p["item_id"] if p else None
+    check("board post opens an item", p is not None and p["status"] == "open")
+    prov = pg_one(
+        "select operator_key, created_by_agent from "
+        "successbrian_os.agent_work_items where id=%s", (item_id,))
+    check("item provenance: owner key + agent name tag on the row",
+          prov == (TEST_OPERATOR2, TEST_AGENT_P2A))
+    # 4. claim by A; double-claim by B refused (Commons atomic claim)
+    c = board_claim(TEST_AGENT_P2A, tok_a, item_id)
+    check("first outside agent claims the item",
+          c is not None and c["claimed_by_agent"] == TEST_AGENT_P2A)
+    check("double-claim by second outside agent REFUSED",
+          board_claim(TEST_AGENT_P2B, tok_b, item_id) is None)
+    # 5. progress + complete by A (progress row carries the name tag)
+    pr = board_progress(TEST_AGENT_P2A, tok_a, item_id,
+                        note="selftest2 progress note")
+    check("progress logged through the gate", pr is not None)
+    tag = pg_one(
+        "select agent_key from successbrian_os.agent_work_progress "
+        "where item_id=%s order by id desc limit 1", (item_id,))
+    check("progress row carries the agent name tag", tag == TEST_AGENT_P2A)
+    dn = board_complete(TEST_AGENT_P2A, tok_a, item_id,
+                        note="selftest2 complete")
+    check("item completed through the gate",
+          dn is not None and dn["status"] == "done")
+    # 6. a READ-tier agent is refused a board write at the gate
+    check("read-tier agent refused a board post at the gate",
+          board_post(TEST_AGENT_P2R, tok_r,
+                     "SELFTEST2 must never land") is None)
+    landed = pg_one(
+        "select count(*) from successbrian_os.agent_work_items "
+        "where created_by_agent=%s", (TEST_AGENT_P2R,))
+    check("nothing from the read-tier agent reached the board",
+          landed == 0)
+    # 7. dump door: lands in the Intel Bridge as a capture, tagged
+    cid = dump_intel(
+        TEST_AGENT_P2A, tok_a,
+        "SELFTEST2 agent-interface dump — disposable",
+        "fact: the phase-2 dump door lands outside-agent intel in the "
+        "Intel Bridge as a capture, tagged with the agent name tag + "
+        "owner key; cleaned up by the selftest.")
+    check("dump returns a capture id", bool(cid))
+    cap = pg_one("select context from atlas.scattered_captures "
+                 "where id=%s", (cid,))
+    check("capture carries agent name tag + owner key provenance",
+          cap is not None and TEST_AGENT_P2A in cap
+          and TEST_OPERATOR2 in cap)
+    # 8. pending-approval door: file -> pending -> approve (no execution)
+    rq = request_action(TEST_AGENT_P2A, tok_a, "send",
+                        {"draft": "selftest2 outward draft — never sent"},
+                        "phase-2 selftest: prove the gate")
+    check("outward request filed as pending",
+          rq is not None and rq["status"] == "pending")
+    pend = list_requests(TEST_OPERATOR2, status="pending")
+    check("owner view lists the pending request",
+          any(r["id"] == rq["id"] for r in pend))
+    ap = approve_request(rq["id"], TEST_OPERATOR2)
+    check("approve records the decision (owner key + timestamp)",
+          ap is not None and ap["status"] == "approved"
+          and ap["decided_by"] == TEST_OPERATOR2
+          and ap["decided_at"] is not None)
+    # 9. deny path
+    rq2 = request_action(TEST_AGENT_P2A, tok_a, "publish",
+                         {"draft": "selftest2 deny-path draft"},
+                         "phase-2 selftest: deny path")
+    dnq = deny_request(rq2["id"], TEST_OPERATOR2)
+    check("deny records the decision",
+          dnq is not None and dnq["status"] == "denied")
+    # 10. the guard: zero executed outward acts, anywhere
+    executed = pg_one(
+        "select count(*) from successbrian_os.agent_interface_requests "
+        "where status='executed'")
+    check("zero requests in an 'executed' state (none exists by design)",
+          executed == 0)
+    # 11. the audit shows the whole trail
+    events = [r[0] for r in pg_rows(
+        "select event from successbrian_os.agent_interface_audit "
+        "where operator_key=%s", (TEST_OPERATOR2,))]
+    for expected in ("board_focus", "board_post", "board_claim",
+                     "board_claim_refused", "board_progress",
+                     "board_complete", "tier_refused", "dump",
+                     "action_requested", "action_approved",
+                     "action_denied"):
+        check(f"audit contains '{expected}'", expected in events)
+    _cleanup_test2_rows(capture_id=cid)
+    left_agents = pg_one(
+        "select count(*) from successbrian_os.agent_interface_agents "
+        "where operator_key=%s", (TEST_OPERATOR2,))
+    left_items = pg_one(
+        "select count(*) from successbrian_os.agent_work_items "
+        "where created_by_agent=%s", (TEST_AGENT_P2A,))
+    left_caps = pg_one("select count(*) from atlas.scattered_captures "
+                       "where id=%s", (cid,))
+    check("cleanup: no selftest2 rows remain",
+          left_agents == 0 and left_items == 0 and left_caps == 0)
+    print("SELFTEST PASS")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="SBOS Agent Interface v1 — outside-agent registration "
@@ -302,11 +761,159 @@ def main(argv=None):
     s.add_argument("--json", action="store_true")
 
     sub.add_parser("selftest")
+
+    bf = sub.add_parser("board-focus")
+    bf.add_argument("--agent", required=True)
+    bf.add_argument("--token", required=True)
+    bf.add_argument("--focus", required=True)
+    bf.add_argument("--note")
+
+    bp = sub.add_parser("board-post")
+    bp.add_argument("--agent", required=True)
+    bp.add_argument("--token", required=True)
+    bp.add_argument("--title", required=True)
+    bp.add_argument("--detail")
+
+    bc = sub.add_parser("board-claim")
+    bc.add_argument("--agent", required=True)
+    bc.add_argument("--token", required=True)
+    bc.add_argument("--item", required=True, type=int)
+
+    bg = sub.add_parser("board-progress")
+    bg.add_argument("--agent", required=True)
+    bg.add_argument("--token", required=True)
+    bg.add_argument("--item", required=True, type=int)
+    bg.add_argument("--note")
+    bg.add_argument("--attempt", action="store_true")
+
+    bt = sub.add_parser("board-complete")
+    bt.add_argument("--agent", required=True)
+    bt.add_argument("--token", required=True)
+    bt.add_argument("--item", required=True, type=int)
+    bt.add_argument("--note")
+
+    du = sub.add_parser("dump")
+    du.add_argument("--agent", required=True)
+    du.add_argument("--token", required=True)
+    du.add_argument("--title", required=True)
+    du.add_argument("--body", required=True)
+
+    ra = sub.add_parser("request-action")
+    ra.add_argument("--agent", required=True)
+    ra.add_argument("--token", required=True)
+    ra.add_argument("--kind", required=True, choices=REQUEST_KINDS)
+    ra.add_argument("--payload", default="{}",
+                    help="JSON object with the prepared draft/details")
+    ra.add_argument("--reason")
+
+    lr = sub.add_parser("list-requests")
+    lr.add_argument("--operator", required=True)
+    lr.add_argument("--status",
+                    choices=("pending", "approved", "denied"))
+    lr.add_argument("--json", action="store_true")
+
+    aq = sub.add_parser("approve-request")
+    aq.add_argument("--id", required=True, type=int)
+    aq.add_argument("--owner", required=True,
+                    help="the owner's operator key, recorded as decider")
+
+    dq = sub.add_parser("deny-request")
+    dq.add_argument("--id", required=True, type=int)
+    dq.add_argument("--owner", required=True,
+                    help="the owner's operator key, recorded as decider")
+
+    sub.add_parser("selftest2")
     args = ap.parse_args(argv)
 
     try:
         if args.cmd == "selftest":
             return selftest()
+        if args.cmd == "selftest2":
+            return selftest2()
+        if args.cmd == "board-focus":
+            out = board_focus(args.agent, args.token, args.focus,
+                              args.note)
+            if out is None:
+                print("refused: token or tier", file=sys.stderr)
+                return 1
+            print(json.dumps(out, indent=2, default=str))
+            return 0
+        if args.cmd == "board-post":
+            out = board_post(args.agent, args.token, args.title,
+                             args.detail)
+            if out is None:
+                print("refused: token or tier", file=sys.stderr)
+                return 1
+            print(json.dumps(out, indent=2, default=str))
+            return 0
+        if args.cmd == "board-claim":
+            out = board_claim(args.agent, args.token, args.item)
+            if out is None:
+                print("refused: token, tier, or claim held by another "
+                      "agent", file=sys.stderr)
+                return 1
+            print(json.dumps(out, indent=2, default=str))
+            return 0
+        if args.cmd == "board-progress":
+            out = board_progress(args.agent, args.token, args.item,
+                                 args.note, args.attempt)
+            if out is None:
+                print("refused: token, tier, or not your claimed item",
+                      file=sys.stderr)
+                return 1
+            print(json.dumps(out, indent=2, default=str))
+            return 0
+        if args.cmd == "board-complete":
+            out = board_complete(args.agent, args.token, args.item,
+                                 args.note)
+            if out is None:
+                print("refused: token, tier, or not your item",
+                      file=sys.stderr)
+                return 1
+            print(json.dumps(out, indent=2, default=str))
+            return 0
+        if args.cmd == "dump":
+            cid = dump_intel(args.agent, args.token, args.title,
+                             args.body)
+            if cid is None:
+                print("refused: token or tier", file=sys.stderr)
+                return 1
+            print(f"dumped: Intel Bridge capture #{cid}")
+            return 0
+        if args.cmd == "request-action":
+            out = request_action(args.agent, args.token, args.kind,
+                                 json.loads(args.payload), args.reason)
+            if out is None:
+                print("refused: token or tier", file=sys.stderr)
+                return 1
+            print(json.dumps(out, indent=2, default=str))
+            print("filed as PENDING — the owner decides; nothing is "
+                  "executed by filing or by approval.",
+                  file=sys.stderr)
+            return 0
+        if args.cmd == "list-requests":
+            rows = list_requests(args.operator, args.status)
+            print(json.dumps(rows, indent=2, default=str))
+            return 0
+        if args.cmd == "approve-request":
+            out = approve_request(args.id, args.owner)
+            if out is None:
+                print("refused: unknown or already decided",
+                      file=sys.stderr)
+                return 1
+            print(json.dumps(out, indent=2, default=str))
+            print("approved = the owner's go is recorded. NOTHING was "
+                  "executed — no execution surface exists yet.",
+                  file=sys.stderr)
+            return 0
+        if args.cmd == "deny-request":
+            out = deny_request(args.id, args.owner)
+            if out is None:
+                print("refused: unknown or already decided",
+                      file=sys.stderr)
+                return 1
+            print(json.dumps(out, indent=2, default=str))
+            return 0
         if args.cmd == "register-agent":
             a = register_agent(args.operator, args.agent, args.name,
                                args.vendor, args.tier)

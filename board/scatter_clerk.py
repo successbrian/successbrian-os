@@ -38,7 +38,11 @@ capture wf3-kept with its workspace_slug, and creates NO board
 packet. EXCEPTION (Brian, 2026-10-25): prices are database state,
 not documents — a price capture's facts are extracted into
 successbrian_os.price_intel rows instead, and no AnythingLLM
-document is created for them. If the filing cannot complete (workspace determined but
+document is created for them. MIXED RULE (2026-11-15 repair):
+that exception covers price OBSERVATIONS. A capture carrying
+a substantial result body is a document that happens to carry
+prices — it takes both branches (price points extracted AND
+document filed); see SUBSTANCE_MIN_CHARS and file_wf3. If the filing cannot complete (workspace determined but
 not yet created, embed failure), the kick-aside law applies: the
 item goes to Workflow #2 as an atlas task for Altair, with the
 reason — never forced, never silently dropped. Every kept filing
@@ -97,6 +101,18 @@ SHELF_LIFE_DAYS = {
     "video": 180,
     "reference": 90,
 }
+
+# MIXED-CAPTURE SUBSTANCE THRESHOLD (2026-11-15 repair): a
+# capture whose body is a fleshed-out result at or above this
+# many characters is a DOCUMENT that may also carry prices —
+# never a pure price observation. Below it, a price capture is
+# a price capture (Brian's rule: prices are database state).
+# Operating default, tunable here — not a Brian-ruled figure.
+# Caught by captures #1834/#1836 (2026-11-15): an 8.5k-char
+# research package and a filing receipt were both swallowed by
+# the price branch on title/body price signals alone, and the
+# documents were never filed.
+SUBSTANCE_MIN_CHARS = 1200
 
 FILINGS_DDL = """
 CREATE TABLE IF NOT EXISTS successbrian_os.wf3_filings (
@@ -1648,6 +1664,20 @@ PRICE_ALTERS = [
 # linked back to its capture.
 
 
+def _price_amount(amt, suffix):
+    """One parsed title amount with its magnitude suffix
+    applied: k/K = thousands, m/M = millions. Titles state
+    prices the way people write them ('$250k', '$1.4M'); before
+    2026-11-15 the parser dropped the suffix and recorded
+    $250k as 250.0 — a 1000x-wrong shelf row (capture #1834)."""
+    v = float(amt.replace(",", ""))
+    if suffix in ("k", "K"):
+        v *= 1000.0
+    elif suffix in ("m", "M"):
+        v *= 1000000.0
+    return v
+
+
 def _price_points(cap):
     """Headline price points from the capture's title:
     '$999.59 at Walmart' pairs first; bare $ amounts otherwise.
@@ -1655,18 +1685,20 @@ def _price_points(cap):
     clerk never invents which price belongs to which source."""
     title = cap.get("title") or ""
     points = []
-    for amt, label in re.findall(
-            r"\$([\d,]+(?:\.\d{1,2})?)\s*(?:at|from)\s*([^,;·—–(-]+)",
+    for amt, suffix, label in re.findall(
+            r"\$([\d,]+(?:\.\d{1,2})?)([kKmM])?\s*"
+            r"(?:at|from)\s*([^,;·—–(-]+)",
             title):
         try:
-            points.append((float(amt.replace(",", "")),
+            points.append((_price_amount(amt, suffix),
                            label.strip() or None))
         except ValueError:
             pass
     if not points:
-        for amt in re.findall(r"\$([\d,]+(?:\.\d{1,2})?)", title):
+        for amt, suffix in re.findall(
+                r"\$([\d,]+(?:\.\d{1,2})?)([kKmM])?", title):
             try:
-                points.append((float(amt.replace(",", "")), None))
+                points.append((_price_amount(amt, suffix), None))
             except ValueError:
                 pass
     return points
@@ -1687,10 +1719,17 @@ def _item_name(cap):
             if "$" in seg:
                 head = re.split(r"\s+(?:at|for)\s*(?=\$)", seg)[0]
                 head = head.split("$")[0].strip(" -—–(")
-                if head:
+                if head and "," not in head:
                     s = head
                 elif i > 0:
+                    # No usable head — or a comma-fragment head
+                    # ("specs, pricing ($250k ...)" — a descriptor
+                    # list, not an item name; capture #1834,
+                    # 2026-11-15): the item is the segment before
+                    # the price segment.
                     s = segs[i - 1]
+                elif head:
+                    s = head
                 break
     return s.strip() or (cap.get("title") or "")[:120]
 
@@ -1905,7 +1944,12 @@ def file_wf3(cap, dry_run=False, sort_info=None):
     None means a directed manual filing.
 
     Prices take the database branch (file_price_intel) — their
-    facts are state, not a document.
+    facts are state, not a document. MIXED captures (price
+    signals + a substantial result body) take BOTH branches:
+    the price points are extracted as state AND the body is
+    filed as a document (2026-11-15 repair, captures
+    #1834/#1836 — the either/or branch silently lost the
+    documents).
     """
     kind, days, basis = assess_shelf_life(cap)
     checked = _checked_on(cap)
@@ -1915,11 +1959,39 @@ def file_wf3(cap, dry_run=False, sort_info=None):
     valid_until = _dt(base.year, base.month, base.day) \
         + _td(days=days)
     if kind == "price":
-        # The recorded observation date is the EFFECTIVE one
-        # (stated checked date, else the filing date = base) —
-        # a trend point is never left dateless.
-        return file_price_intel(cap, kind, base, valid_until,
-                                dry_run=dry_run)
+        substantial = len((cap.get("raw") or "").strip()) \
+            >= SUBSTANCE_MIN_CHARS
+        if not substantial:
+            # The recorded observation date is the EFFECTIVE one
+            # (stated checked date, else the filing date = base) —
+            # a trend point is never left dateless.
+            return file_price_intel(cap, kind, base, valid_until,
+                                    dry_run=dry_run)
+        # MIXED: extract the title price points onto the price
+        # shelf (7-day price life), then fall through and file
+        # the document as reference intel (its own shelf life).
+        priced = bool(_price_points(cap))
+        if priced:
+            price_valid = _dt(base.year, base.month, base.day) \
+                + _td(days=SHELF_LIFE_DAYS["price"])
+            if dry_run:
+                print(f"[dry-run] mixed capture #{cap['id']}: "
+                      f"would also write price row(s) -> "
+                      f"successbrian_os.price_intel "
+                      f"(valid until "
+                      f"{price_valid.date().isoformat()})")
+            else:
+                _write_price_rows(cap, base, price_valid)
+        kind = "reference"
+        days = SHELF_LIFE_DAYS["reference"]
+        valid_until = _dt(base.year, base.month, base.day) \
+            + _td(days=days)
+        basis = (f"reference intel is valuable for {days} days "
+                 f"(operating default); mixed capture — price "
+                 f"signals plus a substantial result body: "
+                 + ("price points extracted to price_intel on "
+                    "the 7-day price shelf, " if priced else "")
+                 + "document filed as reference")
     subject = _wf3_subject(cap["title"])
     if cap.get("_blog_context") is None:
         try:

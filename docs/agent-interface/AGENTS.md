@@ -18,6 +18,9 @@ SBOS is the owner's business operating system — people, calendar,
 goals, decisions, and work in one record. You are a guest worker in
 that home. The owner can replace you with another agent; the record
 stays. Never guess an owner fact: unknown is recorded as unknown.
+At onboarding the owner records the facts above once
+(`set-owner-profile`) and hands you this packet already filled in
+(`render-packet`); the `{{...}}` fields are facts nobody recorded yet.
 
 ## The law here
 
@@ -55,8 +58,10 @@ wrong tier) means stop and report — never work around it.
 
 Your tier says *how* you may work; your **read scopes** say *what* you
 may look at. The owner grants your scope list; new agents start with
-the minimum (board + your own requests), and every widening is an
-explicit owner act, written in the record. An ungranted scope refuses
+the **default minimum** (board + your own requests) — a default, not
+a ceiling: the owner may grant more at onboarding, and every widening
+is an explicit owner act, written in the record. A wider-than-minimum
+grant is normal, not a contradiction. An ungranted scope refuses
 — that is normal; report it, don't route around it.
 
 ## The doors (one shared protocol, every vendor)
@@ -82,9 +87,27 @@ explicit owner act, written in the record. An ungranted scope refuses
   **events** (not a read door — it gates the wake-up changes feed
   below; not in the starting grant set, owner-added only).
 - **Approval door** — live, propose tier+: prepare the draft, file it
-  with `request-action`, stop. The owner approves/denies in SBOS;
-  approval records the go and executes nothing (no execution surface
-  exists yet).
+  with `request-action`, stop. The payload is a JSON object with
+  standard keys, the same for every vendor: send/contact — `draft`,
+  `recipient`, `channel`, `subject`; buy — `item`, `vendor`,
+  `amount`, `currency`, `url`; publish/post — `draft`, `channel`,
+  `title`; any kind may add `notes`. Unknown keys are refused with
+  an error listing the allowed keys. The owner approves/denies in
+  SBOS; approval records the go and executes nothing (no execution
+  surface exists yet).
+- **Resuming** — live: if your session was interrupted, call
+  `where-was-i` (your key + token) before doing anything else. It
+  returns your focus, your open claims **with `claim_lease_until`**
+  and your own progress notes on them, your recent dumps, and your
+  requests with statuses — your state only. **Lapsed-claim rule:**
+  a claim is a lease; if its time has passed, never assume you still
+  hold the item — if it is open again, re-claim it or pick other
+  work; if another agent holds it, it is theirs. The board read
+  also serves `claim_lease_until` and your own notes on items you
+  hold. Receipts talk back: board-focus / board-progress /
+  board-complete echo what was stored (focus / note text, timestamps,
+  completed_by), and `dump` returns a JSON receipt like every other
+  verb.
 - **Email door** — machinery live (Phase 4): the owner's secret
   capability address (`email-address-create`, shown once, hash kept);
   `email-process` gates on the capability address + aligned
@@ -153,3 +176,44 @@ door serves real data and the scorecard door answers honestly that
 no scorecard store exists yet — report that as found, never invent
 numbers. If a step needs hand-holding, report the step — that report
 is the next build item.
+
+---
+
+## Appendix A — CLI syntax (every verb this packet teaches)
+
+Every verb named above, its exact flags, and one example. Checked
+against the tool itself (the module's selftest asserts each verb
+exists and each flag named here appears in that verb's `--help`).
+
+| Verb | Flags | Example |
+|---|---|---|
+| `register-agent` | `--operator --agent --name [--vendor] [--tier] [--scopes]` | `register-agent --operator OWNER --agent my-agent --name "My Agent" --vendor muse --tier propose` |
+| `issue-token` | `--agent [--days]` | `issue-token --agent my-agent --days 30` |
+| `verify-token` | `--agent --token` | `verify-token --agent my-agent --token sbos_...` |
+| `show-agent` | `--agent [--json]` | `show-agent --agent my-agent` |
+| `gate` | `--agent --token --need` | `gate --agent my-agent --token sbos_... --need propose` |
+| `revoke-token` | `--agent` | `revoke-token --agent my-agent` |
+| `set-scopes` | `--agent --scopes --by` | `set-scopes --agent my-agent --scopes board,requests,goals --by OWNER` |
+| `set-owner-profile` | `--operator [--name] [--business] [--business-summary] [--timezone] [--approval-channel] [--install-name]` | `set-owner-profile --operator OWNER --name "Sam Owner" --timezone America/Chicago` |
+| `render-packet` | `--operator [--out]` | `render-packet --operator OWNER --out arrival-packet.md` |
+| `board-focus` | `--agent --token --focus [--note]` | `board-focus --agent my-agent --token sbos_... --focus "Drafting the weekly post"` |
+| `board-post` | `--agent --token --title [--detail]` | `board-post --agent my-agent --token sbos_... --title "Call the supplier"` |
+| `board-claim` | `--agent --token --item` | `board-claim --agent my-agent --token sbos_... --item 12` |
+| `board-progress` | `--agent --token --item [--note] [--attempt]` | `board-progress --agent my-agent --token sbos_... --item 12 --note "Called; left a message"` |
+| `board-complete` | `--agent --token --item [--note]` | `board-complete --agent my-agent --token sbos_... --item 12 --note "Done — order confirmed"` |
+| `dump` | `--agent --token --title --body` | `dump --agent my-agent --token sbos_... --title "Supplier note" --body "Prices rise in March"` |
+| `read` | `--agent --token --scope [--limit]` | `read --agent my-agent --token sbos_... --scope goals --limit 10` |
+| `where-was-i` | `--agent --token` | `where-was-i --agent my-agent --token sbos_...` |
+| `request-action` | `--agent --token --kind [--payload] [--reason]` | `request-action --agent my-agent --token sbos_... --kind send --payload '{"draft": "...", "recipient": "sam@example.com", "channel": "email"}' --reason "weekly update"` |
+| `list-requests` | `--operator [--status] [--json]` | `list-requests --operator OWNER --status pending` |
+| `approve-request` | `--id --owner` | `approve-request --id 7 --owner OWNER` |
+| `deny-request` | `--id --owner` | `deny-request --id 7 --owner OWNER` |
+| `changes` | `--agent --token [--cursor] [--limit]` | `changes --agent my-agent --token sbos_... --cursor "2026-11-15 09:00:00+00"` |
+| `email-address-create` | `--operator [--domain]` | `email-address-create --operator OWNER` |
+| `email-process` | `--file [--json]` | `email-process --file inbound.json` |
+| `compose-digest` | `--operator --to` | `compose-digest --operator OWNER --to owner@example.com` |
+| `webhook-register` | `--operator --url [--secret]` | `webhook-register --operator OWNER --url https://example.com/hook` |
+| `folder-init` | `--operator` | `folder-init --operator OWNER` |
+| `folder-scan` | `--agent --token` | `folder-scan --agent my-agent --token sbos_...` |
+| `folder-draft` | `--agent --token --title --body [--request-id]` | `folder-draft --agent my-agent --token sbos_... --title "Email to Sam" --body "..." --request-id 7` |
+| `ics` | `--agent --token [--out] [--limit]` | `ics --agent my-agent --token sbos_... --out calendar.ics` |

@@ -295,6 +295,76 @@ tables.)
       endpoint — how an owner subscribes a calendar app to the
       generated file is a hosting question for later.
 
+PHASE 7 — the G-PACKAGE POLISH (same ruling; the readiness test's
+named gaps G1–G8, capture #1892 — the test PASSED all six steps and
+named these as the friction; each fix is additive/backward-compatible):
+
+  G1  CLI SYNTAX APPENDIX — the packet's Appendix A lists every verb
+      it teaches with its exact flags + one example. The same list
+      lives in this module as PACKET_CLI_APPENDIX, and selftest7
+      asserts every appendix verb exists in the CLI and every flag
+      it names appears in that verb's --help — the appendix cannot
+      silently drift from the tool.
+  G2  FILLED PACKET AT ONBOARDING — owners record their Section 1
+      facts once (set-owner-profile: owner name, business, business
+      summary, timezone, approval channel, install name — stored in
+      successbrian_os.agent_interface_owners, DDL:
+      tools/agent_interface_phase7.sql), and render-packet produces
+      the arrival packet with Section 1 FILLED from that record for
+      a named operator (to stdout, or --out into the owner's
+      exchange folder). Fields the owner never recorded stay as the
+      template's {{...}} placeholders — unknown stays unknown, never
+      invented. The raw template remains the template.
+  python3 agent_interface.py set-owner-profile --operator OP \
+      [--name "..."] [--business "..."] [--business-summary "..."] \
+      [--timezone "..."] [--approval-channel "..."] \
+      [--install-name "..."]            (owner-side)
+  python3 agent_interface.py render-packet --operator OP \
+      [--out arrival-packet.md]
+  G3  The packet now states plainly (all renderings) that the
+      starting scope set is the DEFAULT MINIMUM (board + own
+      requests) and the owner may grant more at onboarding — a wider
+      grant is normal, not a contradiction.
+  G4  RECEIPT ENRICHMENT — board-focus / board-progress /
+      board-complete receipts now echo what was stored (the focus /
+      note text), carry timestamps, and board-complete names
+      completed_by + item id + status. Fields are ADDED; none are
+      removed or renamed.
+  G5  SESSION RESUMPTION — a "where was I" read for the agent
+      itself (verify-token + READ tier; the agent's OWN data only,
+      no scope grant needed beyond arrival — it serves nothing about
+      anyone else):
+  python3 agent_interface.py where-was-i --agent KEY --token T
+      Returns: my current focus (presence), my open claims WITH
+      claim_lease_until, my own progress notes on those claims, my
+      recent dump-door dumps, and my requests with statuses. The
+      packet (all renderings) carries the resumption guidance,
+      including the LAPSED-CLAIM RULE: if your lease expired, never
+      assume you still hold the item — check where-was-i / the
+      board; if it is open again, re-claim it or pick other work;
+      if another agent holds it, it is theirs.
+  G6  DUMP RECEIPT IS JSON — the dump verb prints a JSON receipt on
+      stdout ({capture_id, status, title, agent_key, operator_key});
+      the human line rides stderr, per this module's convention.
+      (dump_intel() itself still returns the capture id — existing
+      callers are untouched.)
+  G7  REQUEST PAYLOAD SCHEMA — standard keys per kind, named in
+      the packet and enforced for NEW requests (stored payloads are
+      data and are never re-validated):
+        send / contact: draft, recipient, channel, subject
+        buy:            item, vendor, amount, currency, url
+        publish / post: draft, channel, title
+        any kind may also carry: notes
+      An unknown key is refused with a plain ValueError listing the
+      allowed keys for that kind.
+  G8  BOARD READ — the board scope read now serves
+      claim_lease_until on every item, and for items the CALLER
+      holds, the caller's OWN progress notes (my_progress). (The
+      lease + notes also ride the G5 where-was-i read; the board
+      read carries them because that is where an agent checks claim
+      state mid-work.)
+  python3 agent_interface.py selftest7   (phase-7 end-to-end proof)
+
 Exit codes: 0 ok; 1 refused (bad/expired/revoked token, tier too low,
 scope not granted, agent revoked, not found); 2 usage or store errors.
 """
@@ -306,6 +376,7 @@ import os
 import re
 import secrets
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -572,6 +643,14 @@ def board_focus(agent_key, token, focus, note=None):
                                 operator=agent["operator_key"])
     _audit(agent_key, agent["operator_key"], "board_focus",
            {"focus": focus})
+    # G4 receipt enrichment (additive): echo what was stored + when,
+    # so the agent can verify the write landed as intended.
+    out = dict(out)
+    out["focus"] = focus
+    out["status_note"] = note
+    out["at"] = pg_one(
+        "select updated_at::text from successbrian_os.agent_presence "
+        "where agent_key=%s", (agent_key,))
     return out
 
 
@@ -617,6 +696,19 @@ def board_progress(agent_key, token, item_id, note=None, attempt=False):
         return None
     _audit(agent_key, agent["operator_key"], "board_progress",
            {"item_id": item_id, "attempt": attempt})
+    # G4 receipt enrichment (additive): echo the note as STORED in
+    # the Commons progress log + its timestamp, so the agent can
+    # verify the note actually landed (friction 8 in capture #1892:
+    # success-shaped receipts the agent could not verify from).
+    out = dict(out)
+    stored = pg_rows(
+        "select note, created_at::text from "
+        "successbrian_os.agent_work_progress where item_id=%s "
+        "and agent_key=%s order by id desc limit 1",
+        (item_id, agent_key))
+    out["note"] = stored[0][0] if stored else note
+    out["is_attempt"] = attempt
+    out["at"] = stored[0][1] if stored else None
     if attempt:
         # A logged attempt can cross the flag line (attempts >= 5 in
         # the agent_board view). When it does, that is a wake-worthy
@@ -644,6 +736,14 @@ def board_complete(agent_key, token, item_id, note=None):
         return None
     _audit(agent_key, agent["operator_key"], "board_complete",
            {"item_id": item_id})
+    # G4 receipt enrichment (additive): completed_by + the stored
+    # note echo + the item's completion timestamp.
+    out = dict(out)
+    out["completed_by"] = agent_key
+    out["note"] = note
+    out["at"] = pg_one(
+        "select updated_at::text from successbrian_os.agent_work_items "
+        "where id=%s", (item_id,))
     return out
 
 
@@ -692,6 +792,21 @@ def dump_intel(agent_key, token, title, body):
     return capture_id
 
 
+def dump_receipt(agent_key, token, title, body):
+    """G6 (Phase 7): the dump door's receipt as a dict, so the CLI
+    prints JSON on stdout like every other verb. dump_intel() still
+    returns the bare capture id for its existing callers; this is
+    the door-surface receipt built on top of it. Returns None when
+    the gate refuses."""
+    capture_id = dump_intel(agent_key, token, title, body)
+    if capture_id is None:
+        return None
+    a = show_agent(agent_key)
+    return {"capture_id": capture_id, "status": "landed",
+            "title": title, "agent_key": agent_key,
+            "operator_key": a["operator_key"] if a else None}
+
+
 # ------------------------------------------------- pending-approval door
 # The outward-act gate. An agent FILES a request; the owner approves or
 # denies it. Approval moves the record to 'approved' and NOTHING ELSE
@@ -713,11 +828,42 @@ def show_request(request_id):
     return dict(zip(keys, row))
 
 
+# G7 — the standard request-action payload schema (Phase 7). Named
+# in the packet so every vendor's agent files the same shape instead
+# of inventing keys; enforced for NEW requests only — payloads
+# already stored are data and are never re-validated.
+PAYLOAD_KEYS = {
+    "send": ("draft", "recipient", "channel", "subject"),
+    "contact": ("draft", "recipient", "channel", "subject"),
+    "buy": ("item", "vendor", "amount", "currency", "url"),
+    "publish": ("draft", "channel", "title"),
+    "post": ("draft", "channel", "title"),
+}
+PAYLOAD_COMMON_KEYS = ("notes",)
+
+
+def _validate_payload(kind, payload):
+    if payload is None:
+        return {}
+    if not isinstance(payload, dict):
+        raise ValueError(
+            f"payload must be a JSON object; allowed keys for kind "
+            f"'{kind}': {list(PAYLOAD_KEYS[kind]) + list(PAYLOAD_COMMON_KEYS)}")
+    allowed = set(PAYLOAD_KEYS[kind]) | set(PAYLOAD_COMMON_KEYS)
+    unknown = [k for k in payload if k not in allowed]
+    if unknown:
+        raise ValueError(
+            f"unknown payload key(s) {unknown} for kind '{kind}'; "
+            f"allowed keys: {sorted(allowed)}")
+    return payload
+
+
 def request_action(agent_key, token, kind, payload=None, reason=None):
     """File an outward-action request for the owner's decision.
     PROPOSE tier. The request lands 'pending'; nothing is executed."""
     if kind not in REQUEST_KINDS:
         raise ValueError(f"kind must be one of {REQUEST_KINDS}")
+    payload = _validate_payload(kind, payload)
     agent = _gate(agent_key, token, "propose")
     if agent is None:
         return None
@@ -814,17 +960,36 @@ def _read_board(agent, limit):
     rows = pg_rows(
         """select id, title, status, kind, created_by_agent,
                   claimed_by_agent, attempts, flag_reason,
-                  created_at::text
+                  created_at::text, claim_lease_until::text
              from successbrian_os.agent_board
             where operator_key=%s
             order by (flag_reason is not null) desc, id desc
             limit %s""", (agent["operator_key"], limit))
     keys = ("id", "title", "status", "kind", "created_by_agent",
-            "claimed_by_agent", "attempts", "flag_reason", "created_at")
+            "claimed_by_agent", "attempts", "flag_reason", "created_at",
+            "claim_lease_until")
+    items = [dict(zip(keys, r)) for r in rows]
+    # G8 (additive): claim_lease_until rides every row (above), and
+    # for items the CALLER holds, the caller's OWN progress notes
+    # ride along as my_progress — an agent can verify its notes
+    # landed and see when its claim expires (capture #1892,
+    # friction 6 + 8). Other agents' notes are never served here.
+    for it in items:
+        if it["claimed_by_agent"] == agent["agent_key"]:
+            notes = pg_rows(
+                "select note, is_attempt, created_at::text from "
+                "successbrian_os.agent_work_progress "
+                "where item_id=%s and agent_key=%s order by id",
+                (it["id"], agent["agent_key"]))
+            it["my_progress"] = [
+                {"note": n, "is_attempt": a, "at": t}
+                for n, a, t in notes]
     return (True,
             "Agent Commons board (successbrian_os.agent_board view), "
-            "filtered to your owner's board; flagged items first",
-            [dict(zip(keys, r)) for r in rows], None)
+            "filtered to your owner's board; flagged items first; "
+            "claim_lease_until on every item, and your own progress "
+            "notes (my_progress) on items you hold",
+            items, None)
 
 
 def _read_requests(agent, limit):
@@ -2014,6 +2179,264 @@ def ics_feed(agent_key, token, out=None, limit=500, root=None):
             "out": result["out"]})
     return result
 
+# ---------------------------------------------------------------------------
+# PHASE 7 — the G-PACKAGE POLISH (readiness-test gaps G1–G8, capture
+# #1892). G4/G6/G7/G8 fixes live with their doors above (receipt
+# enrichment, the JSON dump receipt, the payload schema, board-read
+# lease + own notes). This section carries G1 (the CLI appendix
+# data), G2 (owner profile + filled packet rendering), and G5
+# (session resumption). DDL: tools/agent_interface_phase7.sql (the
+# owners table + the widened audit vocabulary).
+# ---------------------------------------------------------------------------
+
+OWNER_TAG = "owner-profile"  # audit agent_key for owner-side profile acts
+TEST_OPERATOR7 = "selftest7-operator"
+TEST_AGENT_P7A = "selftest7-outside-agent-a"
+TEST_AGENT_P7B = "selftest7-outside-agent-b"
+
+# ------------------------------------------------------------ G2: profile
+
+_OWNER_FIELDS = ("owner_name", "business", "business_summary",
+                 "timezone", "approval_channel", "install_name")
+
+
+def get_owner_profile(operator_key):
+    row = pg_one(
+        """select operator_key, owner_name, business, business_summary,
+                  timezone, approval_channel, install_name,
+                  updated_at::text
+             from successbrian_os.agent_interface_owners
+            where operator_key=%s""", (operator_key,))
+    if row is None:
+        return None
+    keys = ("operator_key",) + _OWNER_FIELDS + ("updated_at",)
+    return dict(zip(keys, row))
+
+
+def set_owner_profile(operator_key, owner_name=None, business=None,
+                      business_summary=None, timezone=None,
+                      approval_channel=None, install_name=None):
+    """Owner-side: record (or update) the owner's Section 1 facts —
+    the data render-packet fills the arrival packet from. Partial
+    updates touch only the fields named; a field never recorded
+    stays unknown (NULL), never invented."""
+    vals = {"owner_name": owner_name, "business": business,
+            "business_summary": business_summary, "timezone": timezone,
+            "approval_channel": approval_channel,
+            "install_name": install_name}
+    given = [k for k, v in vals.items() if v is not None]
+    pg_exec(
+        """insert into successbrian_os.agent_interface_owners
+             (operator_key, owner_name, business, business_summary,
+              timezone, approval_channel, install_name)
+           values (%s,%s,%s,%s,%s,%s,%s)
+           on conflict (operator_key) do update set
+             owner_name = coalesce(excluded.owner_name,
+                                   agent_interface_owners.owner_name),
+             business = coalesce(excluded.business,
+                                 agent_interface_owners.business),
+             business_summary = coalesce(
+                 excluded.business_summary,
+                 agent_interface_owners.business_summary),
+             timezone = coalesce(excluded.timezone,
+                                 agent_interface_owners.timezone),
+             approval_channel = coalesce(
+                 excluded.approval_channel,
+                 agent_interface_owners.approval_channel),
+             install_name = coalesce(excluded.install_name,
+                                     agent_interface_owners.install_name),
+             updated_at = now()""",
+        (operator_key, owner_name, business, business_summary,
+         timezone, approval_channel, install_name))
+    _audit(OWNER_TAG, operator_key, "owner_profile_set",
+           {"fields_set": given})
+    return get_owner_profile(operator_key)
+
+
+_PACKET_PLACEHOLDERS = (
+    ("{{OWNER_NAME}}", "owner_name"),
+    ("{{OPERATOR_KEY}}", None),  # the operator key itself
+    ("{{OWNER_BUSINESS}}", "business"),
+    ("{{OWNER_BUSINESS_SUMMARY}}", "business_summary"),
+    ("{{OWNER_TIMEZONE}}", "timezone"),
+    ("{{OWNER_APPROVAL_CHANNEL}}", "approval_channel"),
+    ("{{SBOS_INSTALL_NAME}}", "install_name"),
+)
+
+
+def _packet_template_path():
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(repo, "docs", "agent-interface",
+                        "ARRIVAL_PACKET.md")
+
+
+def render_packet(operator_key, out=None, root=None):
+    """G2: render the arrival packet with Section 1 FILLED from the
+    owner's recorded profile (set-owner-profile) for one operator.
+    A field the owner never recorded stays as the template's
+    {{...}} placeholder and is named in 'unfilled' — unknown stays
+    unknown. With out=<filename>, the filled packet is written
+    inside the owner's exchange folder (created via folder-init if
+    needed) and the receipt names the path; without it, the filled
+    packet text rides the receipt. The raw template is never
+    modified."""
+    with open(_packet_template_path(), encoding="utf-8") as fh:
+        text = fh.read()
+    profile = get_owner_profile(operator_key) or {}
+    filled, unfilled = [], []
+    for token, field in _PACKET_PLACEHOLDERS:
+        value = operator_key if field is None else profile.get(field)
+        if value:
+            text = text.replace(token, str(value))
+            filled.append(token)
+        else:
+            unfilled.append(token)
+    receipt = {"operator_key": operator_key, "filled": filled,
+               "unfilled": unfilled, "out": None, "packet": None}
+    if out:
+        odir = _owner_dir(operator_key, root=root)
+        if not os.path.isdir(odir):
+            folder_init(operator_key, root=root)
+        target = os.path.join(odir, os.path.basename(out))
+        if not _within(target, odir):
+            raise ValueError("render-packet --out must stay inside "
+                             "the owner's exchange folder")
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        receipt["out"] = target
+    else:
+        receipt["packet"] = text
+    _audit(OWNER_TAG, operator_key, "packet_rendered",
+           {"filled": filled, "unfilled": unfilled,
+            "out": receipt["out"]})
+    return receipt
+
+
+# ------------------------------------------------------- G5: resumption
+
+def where_was_i(agent_key, token):
+    """G5: the session-resumption read — 'where was I?' for the
+    CALLING agent only (verify-token + READ tier; no scope grant is
+    consulted because nothing here belongs to anyone else): my
+    current focus, my open claims WITH claim_lease_until and my own
+    progress notes on them, my recent dump-door dumps, and my
+    requests with statuses. An interrupted agent rebuilds its state
+    from this one call instead of guessing — and the lease times
+    are what the packet's lapsed-claim rule keys on."""
+    agent = _gate(agent_key, token, "read")
+    if agent is None:
+        return None
+    frow = pg_one(
+        "select current_focus, status_note, updated_at::text from "
+        "successbrian_os.agent_presence where agent_key=%s",
+        (agent_key,))
+    focus = ({"current_focus": frow[0], "status_note": frow[1],
+              "at": frow[2]} if frow else None)
+    claims = []
+    for iid, title, status, lease, attempts in pg_rows(
+            """select id, title, status, claim_lease_until::text,
+                      attempts
+                 from successbrian_os.agent_board
+                where claimed_by_agent=%s
+                  and status in ('claimed','doing','researching')
+                order by id""", (agent_key,)):
+        notes = pg_rows(
+            "select note, is_attempt, created_at::text from "
+            "successbrian_os.agent_work_progress "
+            "where item_id=%s and agent_key=%s order by id",
+            (iid, agent_key))
+        claims.append({
+            "item_id": iid, "title": title, "status": status,
+            "claim_lease_until": lease, "attempts": attempts,
+            "my_progress": [{"note": n, "is_attempt": a, "at": t}
+                            for n, a, t in notes]})
+    dumps = [{"capture_id": cid, "title": t, "at": at}
+             for cid, t, at in pg_rows(
+                 "select id, title, created_at::text from "
+                 "atlas.scattered_captures where context like %s "
+                 "order by id desc limit 10",
+                 (f"%agent_key={agent_key},%",))]
+    _, _, requests, _ = _read_requests(agent, 25)
+    _audit(agent_key, agent["operator_key"], "session_resumed",
+           {"claims": len(claims), "dumps": len(dumps),
+            "requests": len(requests)})
+    return {"agent_key": agent_key,
+            "operator_key": agent["operator_key"],
+            "focus": focus, "my_claims": claims,
+            "my_recent_dumps": dumps, "my_requests": requests}
+
+
+# ------------------------------------------------------------ G1: appendix
+# The packet's Appendix A, as data: every verb the packet teaches,
+# its flags, and one example invocation. selftest7 asserts each verb
+# exists in the CLI and each named flag appears in that verb's
+# --help output, so this list cannot drift from the tool. The three
+# packet renderings carry the same appendix in prose form.
+
+PACKET_CLI_APPENDIX = [
+    ("register-agent", "--operator --agent --name [--vendor] [--tier] [--scopes]",
+     "register-agent --operator OWNER --agent my-agent --name \"My Agent\" --vendor muse --tier propose"),
+    ("issue-token", "--agent [--days]",
+     "issue-token --agent my-agent --days 30"),
+    ("verify-token", "--agent --token",
+     "verify-token --agent my-agent --token sbos_..."),
+    ("show-agent", "--agent [--json]",
+     "show-agent --agent my-agent"),
+    ("gate", "--agent --token --need",
+     "gate --agent my-agent --token sbos_... --need propose"),
+    ("revoke-token", "--agent",
+     "revoke-token --agent my-agent"),
+    ("set-scopes", "--agent --scopes --by",
+     "set-scopes --agent my-agent --scopes board,requests,goals --by OWNER"),
+    ("set-owner-profile", "--operator [--name] [--business] [--business-summary] [--timezone] [--approval-channel] [--install-name]",
+     "set-owner-profile --operator OWNER --name \"Sam Owner\" --timezone America/Chicago"),
+    ("render-packet", "--operator [--out]",
+     "render-packet --operator OWNER --out arrival-packet.md"),
+    ("board-focus", "--agent --token --focus [--note]",
+     "board-focus --agent my-agent --token sbos_... --focus \"Drafting the weekly post\""),
+    ("board-post", "--agent --token --title [--detail]",
+     "board-post --agent my-agent --token sbos_... --title \"Call the supplier\""),
+    ("board-claim", "--agent --token --item",
+     "board-claim --agent my-agent --token sbos_... --item 12"),
+    ("board-progress", "--agent --token --item [--note] [--attempt]",
+     "board-progress --agent my-agent --token sbos_... --item 12 --note \"Called; left a message\""),
+    ("board-complete", "--agent --token --item [--note]",
+     "board-complete --agent my-agent --token sbos_... --item 12 --note \"Done — order confirmed\""),
+    ("dump", "--agent --token --title --body",
+     "dump --agent my-agent --token sbos_... --title \"Supplier note\" --body \"Prices rise in March\""),
+    ("read", "--agent --token --scope [--limit]",
+     "read --agent my-agent --token sbos_... --scope goals --limit 10"),
+    ("where-was-i", "--agent --token",
+     "where-was-i --agent my-agent --token sbos_..."),
+    ("request-action", "--agent --token --kind [--payload] [--reason]",
+     "request-action --agent my-agent --token sbos_... --kind send --payload '{\"draft\": \"...\", \"recipient\": \"sam@example.com\", \"channel\": \"email\"}' --reason \"weekly update\""),
+    ("list-requests", "--operator [--status] [--json]",
+     "list-requests --operator OWNER --status pending"),
+    ("approve-request", "--id --owner",
+     "approve-request --id 7 --owner OWNER"),
+    ("deny-request", "--id --owner",
+     "deny-request --id 7 --owner OWNER"),
+    ("changes", "--agent --token [--cursor] [--limit]",
+     "changes --agent my-agent --token sbos_... --cursor \"2026-11-15 09:00:00+00\""),
+    ("email-address-create", "--operator [--domain]",
+     "email-address-create --operator OWNER"),
+    ("email-process", "--file [--json]",
+     "email-process --file inbound.json"),
+    ("compose-digest", "--operator --to",
+     "compose-digest --operator OWNER --to owner@example.com"),
+    ("webhook-register", "--operator --url [--secret]",
+     "webhook-register --operator OWNER --url https://example.com/hook"),
+    ("folder-init", "--operator",
+     "folder-init --operator OWNER"),
+    ("folder-scan", "--agent --token",
+     "folder-scan --agent my-agent --token sbos_..."),
+    ("folder-draft", "--agent --token --title --body [--request-id]",
+     "folder-draft --agent my-agent --token sbos_... --title \"Email to Sam\" --body \"...\" --request-id 7"),
+    ("ics", "--agent --token [--out] [--limit]",
+     "ics --agent my-agent --token sbos_... --out calendar.ics"),
+]
+
+
 def _cleanup_test5_rows():
     # Disposable phase-5 selftest cleanup (the standing precedent):
     # production records are never deleted; selftest scaffolding
@@ -3162,6 +3585,248 @@ def selftest4():
     return 0
 
 
+def _cleanup_test7_rows(capture_ids=()):
+    # Disposable phase-7 selftest cleanup (the standing precedent):
+    # production records are never deleted; selftest scaffolding
+    # (captures, board items + presence, requests, the owner
+    # profile, audit rows, the test agents) is removed whole.
+    for cid in capture_ids:
+        atlas_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "atlas")
+        if atlas_dir not in sys.path:
+            sys.path.insert(0, atlas_dir)
+        import scattered_brain
+        conn = scattered_brain.pg()
+        try:
+            cur = conn.cursor()
+            cur.execute("delete from atlas.scattered_captures "
+                        "where id=%s", (cid,))
+            conn.commit()
+        finally:
+            conn.close()
+    for key in (TEST_AGENT_P7A, TEST_AGENT_P7B):
+        pg_exec("delete from successbrian_os.agent_work_items "
+                "where created_by_agent=%s or claimed_by_agent=%s",
+                (key, key))
+        pg_exec("delete from successbrian_os.agent_presence "
+                "where agent_key=%s", (key,))
+    pg_exec("delete from successbrian_os.agent_interface_requests "
+            "where operator_key=%s", (TEST_OPERATOR7,))
+    pg_exec("delete from successbrian_os.agent_interface_owners "
+            "where operator_key=%s", (TEST_OPERATOR7,))
+    pg_exec("delete from successbrian_os.agent_interface_audit "
+            "where operator_key=%s", (TEST_OPERATOR7,))
+    pg_exec("delete from successbrian_os.agent_interface_agents "
+            "where operator_key=%s", (TEST_OPERATOR7,))
+
+
+def selftest7():
+    """Phase-7 (G-package) end-to-end proof on disposable rows:
+    G1 the appendix matches the CLI (every verb's --help carries
+    every flag the appendix names) -> G2 an owner profile renders a
+    FILLED packet (recorded fields filled, unrecorded fields left
+    as placeholders, operator key always filled; --out lands inside
+    the owner's exchange folder) -> G4 board receipts echo what was
+    stored (focus, progress note, completed_by + timestamp) -> G8
+    the board read serves claim_lease_until + the caller's own
+    progress notes -> G5 where-was-i rebuilds an agent's state
+    (focus, claims with leases + notes, recent dumps, requests)
+    and serves the agent's OWN data only -> G6 the dump verb prints
+    a parseable JSON receipt -> G7 request-action rejects an
+    unknown payload key (naming the allowed keys) and accepts the
+    standard keys -> cleanup leaves nothing."""
+    print("agent_interface phase-7 (G-package) selftest")
+    fails = []
+
+    def check(label, cond):
+        print(("  ok: " if cond else "  FAIL: ") + label)
+        if not cond:
+            fails.append(label)
+
+    root = tempfile.mkdtemp(prefix="sbos-exchange-selftest7-")
+    capture_ids = []
+    try:
+        _cleanup_test7_rows()
+        here = os.path.abspath(__file__)
+
+        # G1 — appendix vs the real CLI
+        drift = []
+        for verb, flags, _example in PACKET_CLI_APPENDIX:
+            r = subprocess.run([sys.executable, here, verb, "--help"],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                drift.append(f"{verb}: --help failed")
+                continue
+            named = [t for t in flags.replace("[", " ").replace(
+                "]", " ").split() if t.startswith("--")]
+            for tok in named:
+                if tok not in r.stdout:
+                    drift.append(f"{verb}: {tok} not in --help")
+        check("G1 appendix: every verb exists; every named flag is "
+              "in its --help", not drift)
+        if drift:
+            print("    drift: " + "; ".join(drift))
+
+        register_agent(TEST_OPERATOR7, TEST_AGENT_P7A,
+                       "Selftest7 Agent A", vendor="selftest-vendor",
+                       tier="propose")
+        token_a = issue_token(TEST_AGENT_P7A)
+        register_agent(TEST_OPERATOR7, TEST_AGENT_P7B,
+                       "Selftest7 Agent B", vendor="selftest-vendor",
+                       tier="propose")
+        token_b = issue_token(TEST_AGENT_P7B)
+        check("register + issue tokens", bool(token_a)
+              and bool(token_b))
+
+        # G2 — owner profile + filled packet
+        prof = set_owner_profile(
+            TEST_OPERATOR7, owner_name="Test Owner",
+            business="Test Biz", timezone="America/Chicago",
+            approval_channel="the SBOS digest")
+        check("G2 owner profile stored; unrecorded fields stay "
+              "unknown", prof["owner_name"] == "Test Owner"
+              and prof["business_summary"] is None)
+        rec = render_packet(TEST_OPERATOR7, root=root)
+        pkt = rec["packet"] or ""
+        check("G2 render fills recorded Section 1 fields",
+              "Test Owner" in pkt and "Test Biz" in pkt
+              and "America/Chicago" in pkt
+              and "{{OWNER_NAME}}" not in pkt)
+        check("G2 render fills the operator key + leaves unrecorded "
+              "fields as placeholders (unknown stays unknown)",
+              TEST_OPERATOR7 in pkt
+              and "{{OWNER_BUSINESS_SUMMARY}}" in pkt
+              and "{{OWNER_BUSINESS_SUMMARY}}" in rec["unfilled"])
+        rec2 = render_packet(TEST_OPERATOR7, out="arrival.md",
+                             root=root)
+        filled_file = os.path.join(root, TEST_OPERATOR7, "arrival.md")
+        check("G2 render --out lands inside the owner's folder",
+              rec2["out"] == filled_file
+              and os.path.isfile(filled_file)
+              and "Test Owner" in open(filled_file,
+                                       encoding="utf-8").read())
+
+        # G4 + G8 + G5 — one board flow, read back three ways
+        f = board_focus(TEST_AGENT_P7A, token_a,
+                        "selftest7 focus text",
+                        note="selftest7 focus note")
+        check("G4 focus receipt echoes the stored focus + timestamp",
+              f["focus"] == "selftest7 focus text"
+              and f["status_note"] == "selftest7 focus note"
+              and bool(f["at"]))
+        item = board_post(TEST_AGENT_P7A, token_a,
+                          "selftest7 polish task", "detail")
+        iid = item["item_id"]
+        cl = board_claim(TEST_AGENT_P7A, token_a, iid)
+        check("claim returns the lease", bool(cl)
+              and bool(cl.get("claim_lease_until")))
+        pr = board_progress(TEST_AGENT_P7A, token_a, iid,
+                            note="selftest7 progress note")
+        check("G4 progress receipt echoes the note AS STORED + "
+              "timestamp", pr["note"] == "selftest7 progress note"
+              and bool(pr["at"]) and "attempts" in pr)
+        rd = read_door(TEST_AGENT_P7A, token_a, "board")
+        row = next((i for i in rd["items"] if i["id"] == iid), {})
+        check("G8 board read serves claim_lease_until",
+              bool(row.get("claim_lease_until")))
+        check("G8 board read serves the caller's OWN progress notes",
+              any(n["note"] == "selftest7 progress note"
+                  for n in row.get("my_progress", [])))
+        w = where_was_i(TEST_AGENT_P7A, token_a)
+        check("G5 where-was-i returns my focus",
+              w["focus"] and w["focus"]["current_focus"]
+              == "selftest7 focus text")
+        claim = next((c for c in w["my_claims"]
+                      if c["item_id"] == iid), {})
+        check("G5 where-was-i returns my claim WITH its lease",
+              bool(claim.get("claim_lease_until")))
+        check("G5 where-was-i returns my notes on the claim",
+              any(n["note"] == "selftest7 progress note"
+                  for n in claim.get("my_progress", [])))
+
+        # G6 — dump receipt is JSON on stdout
+        r = subprocess.run(
+            [sys.executable, here, "dump", "--agent", TEST_AGENT_P7A,
+             "--token", token_a, "--title", "selftest7 dump title",
+             "--body", "selftest7 dump body"],
+            capture_output=True, text=True)
+        receipt = None
+        try:
+            receipt = json.loads(r.stdout)
+        except ValueError:
+            pass
+        check("G6 dump verb prints a parseable JSON receipt",
+              r.returncode == 0 and receipt is not None
+              and receipt.get("status") == "landed"
+              and isinstance(receipt.get("capture_id"), int))
+        if receipt:
+            capture_ids.append(receipt["capture_id"])
+            w2 = where_was_i(TEST_AGENT_P7A, token_a)
+            check("G5 where-was-i lists my recent dumps",
+                  any(d["capture_id"] == receipt["capture_id"]
+                      for d in w2["my_recent_dumps"]))
+
+        # G7 — payload schema
+        refused = None
+        try:
+            request_action(TEST_AGENT_P7A, token_a, "send",
+                           {"draft": "x", "bogus": 1})
+        except ValueError as e:
+            refused = str(e)
+        check("G7 unknown payload key rejected, allowed keys named",
+              refused is not None and "bogus" in refused
+              and "recipient" in refused)
+        rq = request_action(
+            TEST_AGENT_P7A, token_a, "send",
+            {"draft": "selftest7 draft",
+             "recipient": "sam@example.com", "channel": "email",
+             "subject": "Hi", "notes": "selftest7"},
+            "selftest7 schema proof")
+        check("G7 standard keys accepted; request lands pending",
+              rq is not None and rq["status"] == "pending")
+        w3 = where_was_i(TEST_AGENT_P7A, token_a)
+        check("G5 where-was-i lists my requests with statuses",
+              any(x["id"] == rq["id"] and x["status"] == "pending"
+                  for x in w3["my_requests"]))
+        wb = where_was_i(TEST_AGENT_P7B, token_b)
+        check("G5 resumption read serves the agent's OWN data only",
+              wb["my_claims"] == [] and wb["my_requests"] == []
+              and all(d["capture_id"] not in capture_ids
+                      for d in wb["my_recent_dumps"]))
+
+        cp = board_complete(TEST_AGENT_P7A, token_a, iid,
+                            note="selftest7 done note")
+        check("G4 complete receipt: completed_by + item + status + "
+              "note echo + timestamp",
+              cp["completed_by"] == TEST_AGENT_P7A
+              and cp["item_id"] == iid and cp["status"] == "done"
+              and cp["note"] == "selftest7 done note"
+              and bool(cp["at"]))
+
+        events = [x[0] for x in pg_rows(
+            "select event from successbrian_os.agent_interface_audit "
+            "where operator_key=%s", (TEST_OPERATOR7,))]
+        for expected in ("owner_profile_set", "packet_rendered",
+                         "session_resumed"):
+            check(f"audit contains '{expected}'",
+                  expected in events)
+    finally:
+        _cleanup_test7_rows(capture_ids)
+        shutil.rmtree(root, ignore_errors=True)
+    left = pg_one(
+        "select count(*) from successbrian_os.agent_interface_agents "
+        "where operator_key=%s", (TEST_OPERATOR7,))
+    prof_left = pg_one(
+        "select count(*) from successbrian_os.agent_interface_owners "
+        "where operator_key=%s", (TEST_OPERATOR7,))
+    check("cleanup: no selftest7 rows remain, temp root gone",
+          left == 0 and prof_left == 0 and not os.path.exists(root))
+    if fails:
+        raise AssertionError(f"{len(fails)} check(s) failed: {fails}")
+    print("SELFTEST PASS")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="SBOS Agent Interface v1 — outside-agent registration "
@@ -3373,6 +4038,28 @@ def main(argv=None):
     ic.add_argument("--out")
     ic.add_argument("--limit", type=int, default=500)
     sub.add_parser("selftest6")
+
+    so = sub.add_parser("set-owner-profile")
+    so.add_argument("--operator", required=True)
+    so.add_argument("--name")
+    so.add_argument("--business")
+    so.add_argument("--business-summary")
+    so.add_argument("--timezone")
+    so.add_argument("--approval-channel")
+    so.add_argument("--install-name")
+
+    rp = sub.add_parser("render-packet")
+    rp.add_argument("--operator", required=True)
+    rp.add_argument("--out",
+                    help="filename to write inside the owner's "
+                         "exchange folder (default: print the "
+                         "filled packet to stdout)")
+
+    ww = sub.add_parser("where-was-i")
+    ww.add_argument("--agent", required=True)
+    ww.add_argument("--token", required=True)
+
+    sub.add_parser("selftest7")
     args = ap.parse_args(argv)
 
     try:
@@ -3388,6 +4075,34 @@ def main(argv=None):
             return selftest5()
         if args.cmd == "selftest6":
             return selftest6()
+        if args.cmd == "selftest7":
+            return selftest7()
+        if args.cmd == "set-owner-profile":
+            out = set_owner_profile(
+                args.operator, owner_name=args.name,
+                business=args.business,
+                business_summary=args.business_summary,
+                timezone=args.timezone,
+                approval_channel=args.approval_channel,
+                install_name=args.install_name)
+            print(json.dumps(out, indent=2, default=str))
+            return 0
+        if args.cmd == "render-packet":
+            out = render_packet(args.operator, out=args.out)
+            if out["out"]:
+                print(json.dumps(
+                    {k: v for k, v in out.items() if k != "packet"},
+                    indent=2, default=str))
+            else:
+                sys.stdout.write(out["packet"])
+            return 0
+        if args.cmd == "where-was-i":
+            out = where_was_i(args.agent, args.token)
+            if out is None:
+                print("refused: token or tier", file=sys.stderr)
+                return 1
+            print(json.dumps(out, indent=2, default=str))
+            return 0
         if args.cmd == "folder-init":
             out = folder_init(args.operator)
             print(json.dumps(out, indent=2, default=str))
@@ -3603,12 +4318,14 @@ def main(argv=None):
             print(json.dumps(out, indent=2, default=str))
             return 0
         if args.cmd == "dump":
-            cid = dump_intel(args.agent, args.token, args.title,
-                             args.body)
-            if cid is None:
+            out = dump_receipt(args.agent, args.token, args.title,
+                               args.body)
+            if out is None:
                 print("refused: token or tier", file=sys.stderr)
                 return 1
-            print(f"dumped: Intel Bridge capture #{cid}")
+            print(json.dumps(out, indent=2, default=str))
+            print(f"dumped: Intel Bridge capture "
+                  f"#{out['capture_id']}", file=sys.stderr)
             return 0
         if args.cmd == "request-action":
             out = request_action(args.agent, args.token, args.kind,

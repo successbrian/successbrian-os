@@ -55,6 +55,23 @@ NOTES:
       owner confirmation — it is a coded signal slot that stays
       UNKNOWN in v1 list data, never fabricated. Depth differential
       and account-vintage signals are scored when data exists.
+    - Self-link + photo evidence (Brian, 2026-11-15): a person's
+      own link page (Linktree / AllMyLinks / personal blog or
+      site) declared on two profiles is the person linking their
+      profiles together — scored as shared_link_page; a bio link
+      pointing AT the other profile is its strongest tier. An
+      identical profile photo (same image content hash or same
+      hosted image path — an identical-IMAGE check only, never a
+      face comparison) is scored as shared_photo. Copycat caution
+      from the same ruling ("we also have to be aware of people
+      copying each other"): both signals are copyable, so when the
+      names conflict they are NOT scored — the pair routes to the
+      lookalike scan carrying a copycat_pattern basis instead.
+      Governing principle from the same conversation: if a pair
+      cannot be matched with clarity, it stays logged with its
+      evidence and evidence builds — every resolve appends to the
+      match row's evidence_history on change and records
+      evidence_held / evidence_missing on every scored pair.
     - First validated lookalike case (2026-11-08): Zach Loescher —
       SAME PERSON, self-chosen variant spelling confined to the
       Facebook vanity username (ZLoesher1); the Instagram handle
@@ -171,9 +188,11 @@ STOPWORDS = {
 SIGNAL_WEIGHTS = {
     "identical_handle": 0.35,
     "name_similarity": 0.25,
+    "shared_link_page": 0.25,
     "handle_similarity": 0.15,
     "location_agreement": 0.10,
     "bio_overlap": 0.10,
+    "shared_photo": 0.10,
     "shared_context": 0.05,
 }
 
@@ -376,6 +395,220 @@ def profile_location(profile):
     return _get(profile, "location", "current_location")
 
 
+def _today():
+    import datetime as _dt
+    return _dt.date.today().isoformat()
+
+
+# ------------------------------------------- link / photo evidence
+# Brian's rulings (2026-11-15), wired as first-class signals above:
+# self-link pages are the person declaring the link; identical
+# photos are an identical-IMAGE check only (content hash, or the
+# hosted image path — CDN query strings rotate per fetch, the path
+# carries the media id); both are copyable, so both also feed the
+# lookalike scan and neither scores when the names conflict.
+
+AGGREGATOR_HOSTS = {
+    "linktr.ee", "allmylinks.com", "beacons.ai", "stan.store",
+    "campsite.bio", "solo.to", "linkin.bio", "lnk.bio",
+    "direct.me", "bio.link", "taplink.cc", "myp.bio",
+}
+
+PROFILE_HOSTS = {
+    "instagram.com": "instagram", "facebook.com": "facebook",
+    "fb.com": "facebook", "threads.net": "threads",
+    "threads.com": "threads", "youtube.com": "youtube",
+    "tiktok.com": "tiktok", "x.com": "x", "twitter.com": "x",
+    "linkedin.com": "linkedin", "t.me": "telegram",
+    "telegram.me": "telegram",
+}
+
+# Hosts whose URLs are content/service links, not identity
+# declarations — never identity evidence (a shared Spotify track
+# or Calendly page does not declare an identity).
+NON_IDENTITY_HOSTS = {
+    "open.spotify.com", "spotify.com", "calendly.com", "wa.me",
+    "whatsapp.com", "smule.com", "temu.to", "temu.com",
+    "bit.ly", "tinyurl.com", "goo.gl", "t.co", "amzn.to",
+    "amazon.com", "ebay.com", "etsy.com", "paypal.com",
+    "venmo.com", "cash.app", "gofundme.com", "youtu.be",
+}
+
+
+def _split_url(raw):
+    """(host, path, query) for a URL-ish string, or None."""
+    if not raw:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    text = re.sub(r"^https?://", "", text, flags=re.I)
+    text = text.split("#")[0]
+    if "?" in text:
+        text, query = text.split("?", 1)
+    else:
+        query = ""
+    if "/" in text:
+        host, path = text.split("/", 1)
+        path = "/" + path
+    else:
+        host, path = text, ""
+    host = host.lower().strip()
+    if host.startswith("www."):
+        host = host[4:]
+    path = path.rstrip("/").lower()
+    return host, path, query
+
+
+def normalize_link_target(raw):
+    """Normalize one outbound link into an identity target.
+
+    Returns {"key", "kind"} or None when the URL is not identity
+    evidence (service/content hosts, bare root pages). Aggregator
+    pages key on host+path — the page IS the identity hub. Profile-
+    platform URLs key on host+path — a direct link at a profile.
+    Any other host keys on the host alone: a personal domain the
+    person declares from both profiles."""
+    parts = _split_url(raw)
+    if not parts:
+        return None
+    host, path, query = parts
+    if not host or "." not in host:
+        return None
+    if host in NON_IDENTITY_HOSTS:
+        return None
+    if host in AGGREGATOR_HOSTS:
+        if not path:
+            return None
+        return {"key": host + path, "kind": "aggregator_page"}
+    if host in PROFILE_HOSTS:
+        if not path:
+            return None
+        key = host + path
+        if host in ("facebook.com", "fb.com") and path == "/profile.php":
+            pid = None
+            for part in query.split("&"):
+                if part.startswith("id="):
+                    pid = part[3:]
+            if not pid:
+                return None
+            key = host + "/profile.php?id=" + pid
+        return {"key": key, "kind": "profile_link"}
+    return {"key": host, "kind": "personal_domain"}
+
+
+def _iter_declared_urls(profile):
+    """Every outbound URL a profile declares: the stored
+    declared_links column, the raw import fields (website /
+    bio_links / links), and URLs written into the bio text."""
+    urls = []
+    stored = profile.get("declared_links")
+    if isinstance(stored, str):
+        try:
+            stored = json.loads(stored)
+        except ValueError:
+            stored = None
+    if isinstance(stored, list):
+        urls.extend(stored)
+    for key in ("bio_links", "links"):
+        extra = profile.get(key)
+        if isinstance(extra, list):
+            urls.extend(extra)
+        elif isinstance(extra, str):
+            urls.append(extra)
+    for key in ("website", "external_url", "link"):
+        value = profile.get(key)
+        if value:
+            urls.append(value)
+    bio = profile_bio(profile) or ""
+    urls.extend(re.findall(r"https?://[^\s)\]\"'<>]+", bio))
+    urls.extend(re.findall(
+        r"(?<![\w./-])(?:linktr\.ee|allmylinks\.com|beacons\.ai|"
+        r"stan\.store|campsite\.bio|solo\.to|linkin\.bio|lnk\.bio)"
+        r"/[^\s)\]\"'<>]+", bio))
+    out = []
+    for item in urls:
+        if isinstance(item, dict):
+            item = item.get("url") or item.get("href")
+        if item:
+            out.append(str(item).strip().rstrip(".,;"))
+    return out
+
+
+def profile_link_targets(profile):
+    """{target_key: {"kind", "raw"}} — the identity hubs this
+    profile declares."""
+    targets = {}
+    for raw in _iter_declared_urls(profile):
+        target = normalize_link_target(raw)
+        if target and target["key"] not in targets:
+            targets[target["key"]] = {"kind": target["kind"],
+                                      "raw": raw}
+    return targets
+
+
+def direct_profile_link(a, b, targets_a=None, targets_b=None):
+    """True when one profile's declared links point AT the other
+    profile itself (its handle URL or its facebook id URL) — the
+    strongest form of self-linking: the person names the other
+    account as theirs."""
+    def _points_at(source_targets, target_profile):
+        platform = canonical_platform(target_profile.get("platform"))
+        handle = profile_handle(target_profile)
+        pid = target_profile.get("platform_id")
+        for key, info in source_targets.items():
+            if info["kind"] != "profile_link":
+                continue
+            host = key.split("/")[0]
+            if PROFILE_HOSTS.get(host) != platform:
+                continue
+            if pid and key.endswith("id=" + str(pid)):
+                return True
+            if handle and key.rsplit("/", 1)[-1].lstrip("@") == handle:
+                return True
+        return False
+
+    targets_a = targets_a if targets_a is not None \
+        else profile_link_targets(a)
+    targets_b = targets_b if targets_b is not None \
+        else profile_link_targets(b)
+    return _points_at(targets_a, b) or _points_at(targets_b, a)
+
+
+def _photo_parts(profile):
+    """(content_hash, image_path) for a profile's photo, either
+    None. The platform default avatar (has_anonymous_profile_
+    picture) is shared by thousands of accounts and proves
+    nothing, so it is treated as no photo data at all."""
+    if profile.get("has_anonymous_profile_picture"):
+        return (None, None)
+    digest = _get(profile, "photo_hash")
+    digest = str(digest).strip().lower() if digest else None
+    path = None
+    url = _get(profile, "photo_url", "profile_pic_url", "avatar_url")
+    if url:
+        parts = _split_url(url)
+        if parts:
+            host, pth, _query = parts
+            if pth:
+                path = pth if ("cdninstagram" in host
+                               or "fbcdn" in host) else host + pth
+    return (digest, path)
+
+
+def photo_agreement(a, b):
+    """'identical' / 'different' / None (UNKNOWN — no comparable
+    data). Identical-IMAGE check ONLY: same content hash, or the
+    same hosted image path. Never a face comparison."""
+    hash_a, path_a = _photo_parts(a)
+    hash_b, path_b = _photo_parts(b)
+    if hash_a and hash_b:
+        return "identical" if hash_a == hash_b else "different"
+    if path_a and path_b:
+        return "identical" if path_a == path_b else "different"
+    return None
+
+
 # ------------------------------------------------------ pinned fields
 
 def protected_person_updates(existing, incoming, pinned_fields):
@@ -541,6 +774,88 @@ def score_pair(a, b):
     else:
         signals["shared_context"] = "UNKNOWN"
 
+    # Surname pair (also used by the guard caps below).
+    # Descriptor-suffixed display names ('Zach Loescher -
+    # Soberpreneur') put the surname mid-name; when one name's
+    # token set contains the other's, the contained name defines
+    # the surname for both sides.
+    surname_a = surname_of(name_a)
+    surname_b = surname_of(name_b)
+    _tokens_a = name_tokens(name_a)
+    _tokens_b = name_tokens(name_b)
+    if _tokens_a and _tokens_b:
+        if set(_tokens_a) <= set(_tokens_b):
+            surname_a = surname_b = _tokens_a[-1]
+        elif set(_tokens_b) <= set(_tokens_a):
+            surname_a = surname_b = _tokens_b[-1]
+    names_conflict = bool(
+        (surname_a and surname_b and surname_a != surname_b)
+        or (sim_name is not None and sim_name < 0.50))
+
+    # Self-link evidence (Brian, 2026-11-15): both profiles
+    # declaring the same link hub — a Linktree / AllMyLinks page,
+    # a personal domain, or a link pointing AT the other profile —
+    # is the person declaring the link themselves. Copyable by an
+    # impersonator, so it is evidence, never a deterministic proof,
+    # and it does NOT score when the names conflict: that pair
+    # routes to the lookalike scan with the evidence attached.
+    targets_a = profile_link_targets(a)
+    targets_b = profile_link_targets(b)
+    shared_targets = sorted(set(targets_a) & set(targets_b))
+    direct_link = direct_profile_link(a, b, targets_a, targets_b)
+    if direct_link or shared_targets:
+        tier = "direct_profile_link" if direct_link else \
+            targets_a[shared_targets[0]]["kind"]
+        signals["shared_link_page"] = {
+            "tier": tier,
+            "shared_targets": shared_targets,
+            "basis": "both profiles declare the same link hub "
+                     "(Brian, 2026-11-15: a person's own link page "
+                     "linking their profiles together is clear "
+                     "evidence)",
+            "observed_at": _today(),
+        }
+        if names_conflict:
+            signals["shared_link_page"]["conflict"] = (
+                "shared link hub with conflicting names — copycat "
+                "pattern; routed to lookalike review, not scored")
+        else:
+            values["shared_link_page"] = 1.0
+    elif not targets_a and not targets_b:
+        signals["shared_link_page"] = "UNKNOWN"
+    else:
+        signals["shared_link_page"] = {
+            "observed": "no_shared_target",
+            "targets_a": len(targets_a), "targets_b": len(targets_b),
+            "observed_at": _today(),
+        }
+
+    # Identical-photo evidence (Brian, 2026-11-15): the same
+    # profile image on both accounts. Identical-IMAGE check only —
+    # never a face comparison. Copyable, so with conflicting names
+    # it is NOT scored; the lookalike scan carries it instead.
+    photo_state = photo_agreement(a, b)
+    if photo_state == "identical":
+        signals["shared_photo"] = {
+            "observation": "identical_profile_photo",
+            "method": "identical image (content hash or hosted "
+                      "image path) — never a face comparison",
+            "observed_at": _today(),
+        }
+        if names_conflict:
+            signals["shared_photo"]["conflict"] = (
+                "identical photo with conflicting names — copycat "
+                "pattern; routed to lookalike review, not scored")
+        else:
+            values["shared_photo"] = 1.0
+    elif photo_state == "different":
+        signals["shared_photo"] = {
+            "observation": "different_profile_photos",
+            "observed_at": _today(),
+        }
+    else:
+        signals["shared_photo"] = "UNKNOWN"
+
     if not values:
         return {"score": None, "grade": None, "status": None,
                 "signals": signals, "skip": "no comparable signals"}
@@ -560,18 +875,6 @@ def score_pair(a, b):
 
     # Guard caps.
     caps = []
-    surname_a = surname_of(name_a)
-    surname_b = surname_of(name_b)
-    # Descriptor-suffixed display names ('Zach Loescher - Soberpreneur')
-    # put the surname mid-name; when one name's token set contains the
-    # other's, the contained name defines the surname for both sides.
-    _tokens_a = name_tokens(name_a)
-    _tokens_b = name_tokens(name_b)
-    if _tokens_a and _tokens_b:
-        if set(_tokens_a) <= set(_tokens_b):
-            surname_a = surname_b = _tokens_a[-1]
-        elif set(_tokens_b) <= set(_tokens_a):
-            surname_a = surname_b = _tokens_b[-1]
     if surname_a and surname_b and surname_a != surname_b:
         caps.append(("conflicting_surnames", 0.35))
     tokens_a = name_tokens(name_a)
@@ -583,6 +886,16 @@ def score_pair(a, b):
     if sim_name is not None and sim_name < 0.50 and (
             "shared_context" in values or "bio_overlap" in values):
         caps.append(("shared_context_with_dissimilar_names", 0.35))
+    # Copyable-signal caps (Brian's copycat caution, 2026-11-15):
+    # a link hub or a photo ALONE can support at most a graded
+    # maybe — never a confirmation on its own.
+    if set(values) == {"shared_link_page"}:
+        caps.append(("link_only_evidence", 0.70))
+    if set(values) == {"shared_photo"}:
+        caps.append(("photo_only_evidence", 0.50))
+    if sim_name is not None and sim_name < 0.50 and (
+            "shared_link_page" in values or "shared_photo" in values):
+        caps.append(("link_photo_with_dissimilar_names", 0.35))
     for cap_name, cap_value in caps:
         if score > cap_value:
             score = cap_value
@@ -593,6 +906,15 @@ def score_pair(a, b):
     score = round(score, 4)
     grade = grade_for_score(score)
     status = "pending_review" if grade == "POSSIBLE" else "auto"
+    # Evidence ledger (Brian, 2026-11-15: log it and build
+    # evidence): what this pair HOLDS, and which evidence slots
+    # are still missing — a pair that stays POSSIBLE shows both.
+    signals["evidence_held"] = sorted(values)
+    missing = [slot for slot in ("location_agreement", "bio_overlap",
+                                 "shared_context", "shared_link_page",
+                                 "shared_photo", "content_sync")
+               if signals.get(slot) == "UNKNOWN"]
+    signals["evidence_missing"] = sorted(missing)
     return {"score": Decimal(str(score)), "grade": grade,
             "status": status, "signals": signals}
 
@@ -808,6 +1130,25 @@ def is_lookalike_candidate(a, b):
             return True
     if name_same and handle_a and handle_b:
         return string_similarity(handle_a, handle_b) >= 0.5
+    # Brian's copycat caution (2026-11-15): an identical photo or
+    # a shared link hub combined with conflicting names is a
+    # copycat pattern — a lookalike candidate even when the
+    # handles are entirely unrelated.
+    name_a = profile_name(a)
+    name_b = profile_name(b)
+    if name_a and name_b:
+        sim = name_similarity(name_a, name_b)
+        surname_a = surname_of(name_a)
+        surname_b = surname_of(name_b)
+        if sim < 0.5 or (surname_a and surname_b
+                         and surname_a != surname_b):
+            if photo_agreement(a, b) == "identical":
+                return True
+            targets_a = profile_link_targets(a)
+            targets_b = profile_link_targets(b)
+            if set(targets_a) & set(targets_b) or \
+                    direct_profile_link(a, b, targets_a, targets_b):
+                return True
     return False
 
 
@@ -909,10 +1250,36 @@ def classify_lookalike(a, b, same_person_score=None):
             "shared_anchors": shared_anchors,
             "worlds_disjoint": worlds_disjoint,
             "location_conflict": location_conflict,
+            "photo_agreement": photo_agreement(a, b) or "UNKNOWN",
+            "shared_link_targets": sorted(
+                set(profile_link_targets(a))
+                & set(profile_link_targets(b))),
+            "direct_profile_link": direct_profile_link(a, b),
+            "copycat_pattern": None,
             "activity_presence": "UNKNOWN" if posts_a is None
             and posts_b is None else "observed",
         }
     }
+
+    # Copycat pattern (Brian, 2026-11-15): an identical photo or a
+    # shared link hub is the owner declaring the link ONLY when the
+    # identity agrees; with conflicting names the same facts are
+    # what a copier produces, so they classify here instead of
+    # raising the same-person grade.
+    _sim_names = name_similarity(name_a, name_b) \
+        if name_a and name_b else None
+    _names_conflict = bool(
+        (_sim_names is not None and _sim_names < 0.5)
+        or (surname_of(name_a) and surname_of(name_b)
+            and surname_of(name_a) != surname_of(name_b)))
+    copycat_pattern = None
+    if photo_agreement(a, b) == "identical" and _names_conflict:
+        copycat_pattern = "identical_photo_conflicting_names"
+    elif _names_conflict and (
+            signals["verdict_basis"]["shared_link_targets"]
+            or signals["verdict_basis"]["direct_profile_link"]):
+        copycat_pattern = "shared_link_hub_conflicting_names"
+    signals["verdict_basis"]["copycat_pattern"] = copycat_pattern
 
     namesake_evidence = (worlds_disjoint or location_conflict
                          or anchors_conflict) \
@@ -924,7 +1291,11 @@ def classify_lookalike(a, b, same_person_score=None):
         or (same_person_score is not None
             and float(same_person_score) >= 0.85))
 
-    if namesake_evidence:
+    if copycat_pattern and (same_platform or thin_side):
+        verdict = "likely_clone"
+    elif copycat_pattern:
+        verdict = "unresolved"
+    elif namesake_evidence:
         verdict = "namesake"
     elif owner_evidence:
         verdict = "owner_variant"
@@ -1032,6 +1403,16 @@ def import_profiles(path):
     conn = _dict_conn()
     try:
         cur = conn.cursor()
+        # Evidence-signal storage (2026-11-15), additive only —
+        # the same pattern as the url_source precedent, so imports
+        # work even before --init-schema is re-run.
+        cur.execute("ALTER TABLE people.identity_profiles "
+                    "ADD COLUMN IF NOT EXISTS declared_links "
+                    "JSONB NOT NULL DEFAULT '[]'::jsonb")
+        cur.execute("ALTER TABLE people.identity_profiles "
+                    "ADD COLUMN IF NOT EXISTS photo_url TEXT")
+        cur.execute("ALTER TABLE people.identity_profiles "
+                    "ADD COLUMN IF NOT EXISTS photo_hash TEXT")
         for raw in rows:
             if not isinstance(raw, dict):
                 skipped += 1
@@ -1048,6 +1429,32 @@ def import_profiles(path):
                 continue
             bio = _get(raw, "bio", "biography")
             source = raw.get("source")
+            # Declared links + photo evidence (2026-11-15). The
+            # platform default avatar is not evidence: when the
+            # source says the picture is anonymous, photo fields
+            # are ignored entirely.
+            link_urls = []
+            for key in ("declared_links", "bio_links", "links"):
+                extra = raw.get(key)
+                if isinstance(extra, list):
+                    link_urls.extend(extra)
+                elif isinstance(extra, str):
+                    link_urls.append(extra)
+            for key in ("website", "external_url", "link"):
+                if raw.get(key):
+                    link_urls.append(raw[key])
+            cleaned_links = []
+            for item in link_urls:
+                if isinstance(item, dict):
+                    item = item.get("url") or item.get("href")
+                if item and str(item).strip():
+                    cleaned_links.append(str(item).strip())
+            if raw.get("has_anonymous_profile_picture"):
+                photo_url = photo_hash = None
+            else:
+                photo_url = _get(raw, "photo_url",
+                                 "profile_pic_url", "avatar_url")
+                photo_hash = _get(raw, "photo_hash")
 
             existing = None
             if platform_id:
@@ -1083,12 +1490,15 @@ def import_profiles(path):
                     "INSERT INTO people.identity_profiles "
                     "(platform, platform_id, handle, handle_norm, "
                     "display_name, profile_url, followers, following, "
-                    "bio_current, source) VALUES (%s, %s, %s, %s, %s, "
-                    "%s, %s, %s, %s, %s) RETURNING id",
+                    "bio_current, source, declared_links, photo_url, "
+                    "photo_hash) VALUES (%s, %s, %s, %s, %s, "
+                    "%s, %s, %s, %s, %s, %s::jsonb, %s, %s) "
+                    "RETURNING id",
                     (platform, platform_id, handle, handle_norm,
                      display_name, raw.get("profile_url"),
                      _get(raw, "followers"), _get(raw, "following"),
-                     bio, source))
+                     bio, source, json.dumps(cleaned_links),
+                     photo_url, photo_hash))
                 profile_id = cur.fetchone()["id"]
                 inserted += 1
             else:
@@ -1109,6 +1519,25 @@ def import_profiles(path):
                         pinned = json.loads(pinned)
                     if person and "display_name" in pinned:
                         effective_display = person["display_name"]
+                # Declared links only ever accumulate (evidence
+                # builds, 2026-11-15): union of stored + incoming,
+                # deduped by normalized identity target where the
+                # URL is one, else by the raw URL.
+                existing_links = existing.get("declared_links") or []
+                if isinstance(existing_links, str):
+                    try:
+                        existing_links = json.loads(existing_links)
+                    except ValueError:
+                        existing_links = []
+                merged_links = []
+                seen_keys = set()
+                for url in list(existing_links) + cleaned_links:
+                    target = normalize_link_target(url)
+                    dedup = target["key"] if target else \
+                        str(url).strip().lower()
+                    if dedup not in seen_keys:
+                        seen_keys.add(dedup)
+                        merged_links.append(url)
                 cur.execute(
                     "UPDATE people.identity_profiles SET "
                     "platform_id=COALESCE(platform_id, %s), "
@@ -1119,12 +1548,18 @@ def import_profiles(path):
                     "followers=COALESCE(%s, followers), "
                     "following=COALESCE(%s, following), "
                     "bio_current=COALESCE(%s, bio_current), "
-                    "source=COALESCE(%s, source), last_seen=now() "
+                    "source=COALESCE(%s, source), "
+                    "declared_links=%s::jsonb, "
+                    "photo_url=COALESCE(%s, photo_url), "
+                    "photo_hash=COALESCE(%s, photo_hash), "
+                    "last_seen=now() "
                     "WHERE id=%s",
                     (platform_id, handle, handle_norm,
                      effective_display,
                      raw.get("profile_url"), _get(raw, "followers"),
-                     _get(raw, "following"), bio, source, profile_id))
+                     _get(raw, "following"), bio, source,
+                     json.dumps(merged_links), photo_url, photo_hash,
+                     profile_id))
                 updated += 1
             if _snapshot_bio(cur, profile_id, bio, source) is not None:
                 snapshots += 1
@@ -1299,6 +1734,42 @@ def _blocking_keys(profile):
         keys.add(("email_domain", domain))
     if profile.get("platform_id") is not None:
         keys.add(("platform_id", str(profile["platform_id"])))
+    # Evidence-signal blocking (2026-11-15): two profiles that
+    # declare the same link hub, or carry the same photo, are
+    # candidates even when no name/handle token overlaps.
+    for target_key in profile_link_targets(profile):
+        keys.add(("link_target", target_key))
+    digest, image_path = _photo_parts(profile)
+    if digest:
+        keys.add(("photo_hash", digest))
+    elif image_path:
+        keys.add(("photo_path", image_path))
+    # A profile declaring a link AT another profile blocks with
+    # that profile: both sides emit the same profile_ref key —
+    # the declarer from its link target, the target from its own
+    # platform_id / handle.
+    platform = canonical_platform(profile.get("platform"))
+    if profile.get("platform_id") is not None:
+        keys.add(("profile_ref",
+                  f"{platform}:id:{profile['platform_id']}"))
+    handle_norm = profile_handle(profile)
+    if handle_norm:
+        keys.add(("profile_ref", f"{platform}:handle:{handle_norm}"))
+    for target_key, info in profile_link_targets(profile).items():
+        if info["kind"] != "profile_link":
+            continue
+        host = target_key.split("/")[0]
+        ref_platform = PROFILE_HOSTS.get(host)
+        if not ref_platform:
+            continue
+        if "profile.php?id=" in target_key:
+            keys.add(("profile_ref",
+                      f"{ref_platform}:id:"
+                      f"{target_key.rsplit('id=', 1)[-1]}"))
+        else:
+            keys.add(("profile_ref",
+                      f"{ref_platform}:handle:"
+                      f"{target_key.rsplit('/', 1)[-1].lstrip('@')}"))
     return keys
 
 
@@ -1318,6 +1789,40 @@ def _upsert_match(cur, kind, id_a, id_b, score, grade, signals, method,
         "AND people.identity_matches.grade <> 'REJECTED'",
         (kind, low, high, score, grade, json.dumps(signals), method,
          status))
+
+
+def _merge_evidence_history(signals, prior_signals, score, grade):
+    """Brian's rule (2026-11-15): log it and build evidence.
+
+    Appends an observation to the match row's evidence_history
+    when the grade, score, or fired-signal set changed since the
+    last observation, so a pair that stays POSSIBLE shows its
+    evidence accumulating across resolve runs instead of being
+    silently overwritten. Unchanged observations are not
+    duplicated; history is capped at the 12 most recent entries."""
+    today = _today()
+    signals = dict(signals or {})
+    prior = prior_signals or {}
+    if isinstance(prior, str):
+        try:
+            prior = json.loads(prior)
+        except ValueError:
+            prior = {}
+    history = list(prior.get("evidence_history") or [])
+    fired = sorted((signals.get("fired") or {}).keys())
+    if not fired and signals.get("verdict"):
+        fired = ["lookalike:" + str(signals["verdict"])]
+    entry = {"observed_at": today,
+             "score": float(score) if score is not None else None,
+             "grade": grade, "signals_fired": fired}
+    if not history or any(
+            history[-1].get(k) != entry[k]
+            for k in ("score", "grade", "signals_fired")):
+        history.append(entry)
+    signals["evidence_history"] = history[-12:]
+    signals["first_observed"] = prior.get("first_observed") or today
+    signals["last_observed"] = today
+    return signals
 
 
 def recompute_breadth(cur):
@@ -1502,7 +2007,8 @@ def resolve():
         by_id = {p["id"]: p for p in profiles}
 
         cur.execute("SELECT kind, profile_a_id, profile_b_id, grade, "
-                    "status, method FROM people.identity_matches")
+                    "status, method, signals FROM "
+                    "people.identity_matches")
         existing = {}
         for row in cur.fetchall():
             existing[(row["kind"], row["profile_a_id"],
@@ -1547,7 +2053,12 @@ def resolve():
                         _upsert_match(
                             cur, "same_person", id_a, id_b,
                             result["score"], "EXCLUDED",
-                            result["signals"], "engine", "auto")
+                            _merge_evidence_history(
+                                result["signals"],
+                                prior_same.get("signals")
+                                if prior_same else None,
+                                result["score"], "EXCLUDED"),
+                            "engine", "auto")
                         counts["same_person_written"] += 1
             else:
                 if prior_brian and prior_same.get("status") == "ruled_same":
@@ -1560,8 +2071,13 @@ def resolve():
                 elif not prior_brian:
                     _upsert_match(
                         cur, "same_person", id_a, id_b, result["score"],
-                        result["grade"], result["signals"], "engine",
-                        result["status"])
+                        result["grade"],
+                        _merge_evidence_history(
+                            result["signals"],
+                            prior_same.get("signals")
+                            if prior_same else None,
+                            result["score"], result["grade"]),
+                        "engine", result["status"])
                     counts["same_person_written"] += 1
                     if result["grade"] in ("CONFIRMED", "STRONG"):
                         eligible_links.append(
@@ -1583,8 +2099,13 @@ def resolve():
                                           same_person_score=_same_score)
                 _upsert_match(
                     cur, "lookalike_risk", id_a, id_b, None,
-                    look["grade"], look["signals"], "engine",
-                    look["status"])
+                    look["grade"],
+                    _merge_evidence_history(
+                        look["signals"],
+                        prior_look.get("signals")
+                        if prior_look else None,
+                        None, look["grade"]),
+                    "engine", look["status"])
                 counts["lookalike_written"] += 1
 
         # Link eligible profiles to identity_people anchors
@@ -1757,10 +2278,14 @@ def show_queue():
             fired = signals.get("fired", {})
             evidence = ", ".join(
                 f"{k}={v['value']}" for k, v in fired.items()) or "UNKNOWN"
+            missing = signals.get("evidence_missing") or []
+            miss_txt = (f" · missing: {', '.join(missing)}"
+                        if missing else "")
             print(f"  [{row['id']}] score {row['score']} {row['grade']}: "
                   f"{row['pa_platform']} @{row['pa_handle']} "
                   f"({row['pa_name']}) <-> {row['pb_platform']} "
-                  f"@{row['pb_handle']} ({row['pb_name']}) — {evidence}")
+                  f"@{row['pb_handle']} ({row['pb_name']}) — {evidence}"
+                  f"{miss_txt}")
         cur.execute(
             "SELECT m.*, pa.platform AS pa_platform, pa.handle AS pa_handle,"
             " pa.display_name AS pa_name, pb.platform AS pb_platform,"
@@ -2174,11 +2699,22 @@ def build_card(person_id=None, profile_id=None):
                 other_id = (m["profile_b_id"]
                             if m["profile_a_id"] in member_set
                             else m["profile_a_id"])
+                msig = m.get("signals") or {}
+                if isinstance(msig, str):
+                    try:
+                        msig = json.loads(msig)
+                    except ValueError:
+                        msig = {}
                 pending_pairs.append({
                     "match_id": m["id"], "kind": m["kind"],
                     "grade": m["grade"],
                     "score": m["score"],
-                    "other_profile_id": other_id})
+                    "other_profile_id": other_id,
+                    "evidence_held": msig.get("evidence_held"),
+                    "evidence_missing": msig.get("evidence_missing"),
+                    "evidence_observations": len(
+                        msig.get("evidence_history") or []),
+                })
     finally:
         conn.close()
 
@@ -2351,6 +2887,14 @@ def render_card_text(card):
         lines.append("    - match %d (%s, %s, score %s) vs profile "
                      "%d" % (pp["match_id"], pp["kind"], pp["grade"],
                              pp["score"], pp["other_profile_id"]))
+        if pp.get("evidence_missing"):
+            lines.append("      evidence missing: %s"
+                         % ", ".join(pp["evidence_missing"]))
+        if pp.get("evidence_held"):
+            lines.append("      evidence held: %s (%d observation(s) "
+                         "logged)" % (
+                             ", ".join(pp["evidence_held"]),
+                             pp.get("evidence_observations") or 0))
     if card["intel_queue_pending"]:
         lines.append("  Intel queue: %d pending case(s)"
                      % len(card["intel_queue_pending"]))
@@ -2684,6 +3228,116 @@ def _selftest_lookup_card_roadnote(ck):
        person_id is not None and capture_id is None)
 
 
+def _selftest_evidence_import(ck):
+    """DB fixture round-trip for the 2026-11-15 evidence import.
+
+    Imports two throwaway profiles carrying website / bio_links /
+    photo fields, asserts the values landed on identity_profiles,
+    re-imports with the photo/link data absent and asserts the
+    stored evidence survives (COALESCE discipline — absence never
+    erases evidence), then deletes every fixture row. Each phase
+    uses a short-lived connection: a connection held open across
+    import calls was observed to drop mid-fixture (2026-11-15)."""
+    import tempfile
+    profile_ids = []
+
+    def _import(payload):
+        with tempfile.NamedTemporaryFile(
+                "w", suffix=".json", delete=False) as fh:
+            json.dump(payload, fh)
+            path = fh.name
+        try:
+            import_profiles(path)
+        finally:
+            os.unlink(path)
+
+    def _query(sql, params=()):
+        conn = _dict_conn()
+        try:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            return cur.fetchall()
+        finally:
+            conn.close()
+
+    try:
+        _import({"profiles": [
+            {"platform": "instagram",
+             "platform_id": "selftest-ev-1",
+             "handle": "EvidenceFixtureIG",
+             "display_name": "Evidence Fixture",
+             "website": "https://linktr.ee/evidencefixture",
+             "bio_links": [{"url": "https://blog.example.com/about"}],
+             "profile_pic_url":
+                 "https://scontent.cdninstagram.com/v/t51.999-19/"
+                 "4242_n.jpg?stp=sig",
+             "photo_hash": "evidencehash123",
+             "source": "selftest"},
+            {"platform": "threads",
+             "platform_id": "selftest-ev-2",
+             "handle": "evidencefixtureth",
+             "display_name": "Evidence Fixture",
+             "website": "https://linktr.ee/evidencefixture",
+             "source": "selftest"},
+        ]})
+        rows = _query(
+            "SELECT id, declared_links, photo_url, photo_hash "
+            "FROM people.identity_profiles WHERE platform_id IN "
+            "('selftest-ev-1', 'selftest-ev-2') ORDER BY platform")
+        profile_ids = [r["id"] for r in rows]
+        ig_rows = [r for r in rows if r["photo_hash"]]
+        ck("import stores declared links + photo url/hash",
+           len(rows) == 2 and len(ig_rows) == 1
+           and "https://linktr.ee/evidencefixture"
+           in (ig_rows[0]["declared_links"] or [])
+           and ig_rows[0]["photo_url"] is not None
+           and ig_rows[0]["photo_hash"] == "evidencehash123")
+        _import({"profiles": [
+            {"platform": "instagram",
+             "platform_id": "selftest-ev-1",
+             "handle": "EvidenceFixtureIG",
+             "display_name": "Evidence Fixture",
+             "followers": 42, "source": None}]})
+        rows = _query(
+            "SELECT declared_links, photo_hash FROM "
+            "people.identity_profiles WHERE platform_id = "
+            "'selftest-ev-1'")
+        row = rows[0] if rows else None
+        ck("re-import with absent photo/link data preserves the "
+           "stored evidence (COALESCE discipline)",
+           row is not None
+           and row["photo_hash"] == "evidencehash123"
+           and "https://linktr.ee/evidencefixture"
+           in (row["declared_links"] or []))
+        dicts = _query(
+            "SELECT * FROM people.identity_profiles WHERE id = "
+            "ANY(%s) ORDER BY platform", (profile_ids,))
+        if len(dicts) == 2:
+            res = score_pair(dicts[0], dicts[1])
+            ck("imported link evidence fires shared_link_page "
+               "in scoring",
+               "shared_link_page" in res["signals"].get("fired", {}))
+    finally:
+        if profile_ids:
+            conn = _dict_conn()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "DELETE FROM people.identity_matches WHERE "
+                    "profile_a_id = ANY(%s) OR profile_b_id = ANY(%s)",
+                    (profile_ids, profile_ids))
+                cur.execute(
+                    "DELETE FROM people.identity_bio_snapshots "
+                    "WHERE profile_id = ANY(%s)", (profile_ids,))
+                cur.execute(
+                    "DELETE FROM people.identity_profiles "
+                    "WHERE id = ANY(%s)", (profile_ids,))
+                conn.commit()
+            finally:
+                conn.close()
+    ck("evidence-import fixtures cleaned up", bool(profile_ids))
+
+
 # ------------------------------------------------------------ selftest
 
 def selftest():
@@ -2971,6 +3625,153 @@ def selftest():
                           "https://facebook.com/from.source"})
        == (None, "already_set"))
 
+    # --- Brian's 2026-11-15 evidence signals: self-link pages
+    # and identical photos, with the copycat caution wired in.
+    link_a = {"platform": "instagram", "platform_id": "11001",
+              "handle": "caseycreates", "display_name": "Casey Rivera",
+              "bio": "Digital creator and coach"}
+    link_b = {"platform": "threads", "platform_id": "11002",
+              "handle": "riverafitlife",
+              "display_name": "Casey Rivera",
+              "bio": "Fitness coach and meal plans"}
+    link_base = score_pair(link_a, link_b)
+    link_boosted = score_pair(
+        dict(link_a, bio_links=["https://linktr.ee/caseyrivera"]),
+        dict(link_b, website="https://linktr.ee/caseyrivera"))
+    ck("self-link: shared Linktree page upgrades a POSSIBLE pair "
+       "to STRONG or better",
+       link_base["grade"] == "POSSIBLE"
+       and link_boosted["grade"] in ("STRONG", "CONFIRMED")
+       and "shared_link_page" in link_boosted["signals"].get(
+           "fired", {})
+       and link_boosted["signals"]["shared_link_page"]["tier"]
+       == "aggregator_page")
+    ck("self-link: evidence ledger lists the held + missing "
+       "evidence on the boosted pair",
+       "shared_link_page" in link_boosted["signals"][
+           "evidence_held"]
+       and "shared_photo" in link_boosted["signals"][
+           "evidence_missing"])
+
+    clone_link_a = {"platform": "instagram", "platform_id": "12001",
+                    "handle": "caseycreates",
+                    "display_name": "Casey Rivera",
+                    "bio_links": ["https://linktr.ee/caseyrivera"]}
+    clone_link_b = {"platform": "facebook", "platform_id": "12002",
+                    "handle": "jordanpage",
+                    "display_name": "Jordan Ellis",
+                    "bio_links": ["https://linktr.ee/caseyrivera"]}
+    clone_link_score = score_pair(clone_link_a, clone_link_b)
+    ck("self-link with conflicting names is NOT scored and the "
+       "pair is lookalike-flagged as a copycat pattern",
+       "shared_link_page" not in clone_link_score["signals"].get(
+           "fired", {})
+       and is_lookalike_candidate(clone_link_a, clone_link_b)
+       and classify_lookalike(clone_link_a, clone_link_b)[
+           "signals"]["verdict_basis"]["copycat_pattern"]
+       == "shared_link_hub_conflicting_names")
+
+    photo_clone_a = {"platform": "instagram", "platform_id": "13001",
+                     "handle": "caseycreates",
+                     "display_name": "Casey Rivera",
+                     "photo_hash": "abc123hash"}
+    photo_clone_b = {"platform": "threads", "platform_id": "13002",
+                     "handle": "jordanpage2",
+                     "display_name": "Jordan Ellis",
+                     "photo_hash": "abc123hash"}
+    photo_clone = score_pair(photo_clone_a, photo_clone_b)
+    photo_clone_plain = score_pair(
+        {k: v for k, v in photo_clone_a.items() if k != "photo_hash"},
+        {k: v for k, v in photo_clone_b.items() if k != "photo_hash"})
+    ck("identical photo + conflicting names: NOT scored, score "
+       "unchanged, lookalike-flagged as a copycat pattern",
+       "shared_photo" not in photo_clone["signals"].get("fired", {})
+       and photo_clone["score"] == photo_clone_plain["score"]
+       and is_lookalike_candidate(photo_clone_a, photo_clone_b)
+       and classify_lookalike(photo_clone_a, photo_clone_b)[
+           "signals"]["verdict_basis"]["copycat_pattern"]
+       == "identical_photo_conflicting_names")
+
+    photo_a = {"platform": "instagram", "platform_id": "14001",
+               "handle": "caseycreates",
+               "display_name": "Casey Rivera",
+               "photo_url": "https://scontent.cdninstagram.com/v/"
+                            "t51.123-19/999_n.jpg?stp=x&_nc=1"}
+    photo_b = {"platform": "threads", "platform_id": "14002",
+               "handle": "caseycreatesdaily",
+               "display_name": "Casey Rivera",
+               "photo_url": "https://scontent.cdninstagram.com/v/"
+                            "t51.123-19/999_n.jpg?stp=y&_nc=2"}
+    photo_scored = score_pair(photo_a, photo_b)
+    photo_unscored = score_pair(
+        {k: v for k, v in photo_a.items() if k != "photo_url"},
+        {k: v for k, v in photo_b.items() if k != "photo_url"})
+    ck("identical photo (signed CDN urls, same image path) + "
+       "agreeing identity: photo signal fires and raises the score",
+       "shared_photo" in photo_scored["signals"].get("fired", {})
+       and float(photo_scored["score"])
+       > float(photo_unscored["score"]))
+
+    ck("pair with no link/photo data: new slots UNKNOWN, listed "
+       "as missing, no phantom evidence",
+       name_only["signals"].get("shared_link_page") == "UNKNOWN"
+       and name_only["signals"].get("shared_photo") == "UNKNOWN"
+       and "shared_link_page" in name_only["signals"][
+           "evidence_missing"]
+       and "shared_photo" in name_only["signals"][
+           "evidence_missing"])
+
+    link_only = score_pair(
+        {"platform": "instagram", "platform_id": "15001",
+         "bio_links": ["https://linktr.ee/sharedhub"]},
+        {"platform": "threads", "platform_id": "15002",
+         "website": "https://linktr.ee/sharedhub"})
+    ck("link-only evidence capped at STRONG (a copyable hub "
+       "never confirms a pair on its own)",
+       link_only["score"] is not None
+       and float(link_only["score"]) <= 0.70
+       and link_only["grade"] == "STRONG")
+
+    direct_score = score_pair(
+        {"platform": "instagram", "platform_id": "16001",
+         "handle": "caseycreates", "display_name": "Casey Rivera",
+         "bio_links": ["https://www.facebook.com/caseyrivera"]},
+        {"platform": "facebook", "platform_id": "16002",
+         "handle": "caseyrivera", "display_name": "Casey Rivera"})
+    ck("direct profile link (a bio link AT the other profile) "
+       "fires the top self-link tier",
+       direct_score["signals"]["shared_link_page"]["tier"]
+       == "direct_profile_link"
+       and "shared_link_page" in direct_score["signals"]["fired"])
+
+    ref_a = {"platform": "instagram", "platform_id": "17001",
+             "handle": "someig", "display_name": "Alie Lynn",
+             "bio_links": [
+                 "https://www.facebook.com/profile.php?id=998877"]}
+    ref_b = {"platform": "facebook", "platform_id": "998877",
+             "handle": "somefb", "display_name": "Alicia L"}
+    ck("blocking: a declared direct profile link makes the pair "
+       "a candidate even with no shared name/handle token",
+       ("profile_ref", "facebook:id:998877") in _blocking_keys(ref_a)
+       and ("profile_ref", "facebook:id:998877")
+       in _blocking_keys(ref_b))
+
+    hist1 = _merge_evidence_history(
+        {"fired": {"name_similarity": {}}}, None, Decimal("0.60"),
+        "POSSIBLE")
+    hist2 = _merge_evidence_history(
+        {"fired": {"name_similarity": {}, "shared_link_page": {}}},
+        hist1, Decimal("0.72"), "STRONG")
+    hist3 = _merge_evidence_history(
+        {"fired": {"name_similarity": {}, "shared_link_page": {}}},
+        hist2, Decimal("0.72"), "STRONG")
+    ck("evidence history accumulates on change and does not "
+       "duplicate an unchanged observation",
+       len(hist1["evidence_history"]) == 1
+       and len(hist2["evidence_history"]) == 2
+       and len(hist3["evidence_history"]) == 2
+       and hist3["first_observed"] == hist1["first_observed"])
+
     # Lookup / card / road-note (DB fixtures, created,
     # exercised, and cleaned up in the same pass).
     try:
@@ -2978,6 +3779,10 @@ def selftest():
     except Exception as exc:  # noqa: BLE001
         ck("lookup/card/road-note DB fixtures raised %s"
            % exc, False)
+    try:
+        _selftest_evidence_import(ck)
+    except Exception as exc:  # noqa: BLE001
+        ck("evidence-import DB fixtures raised %s" % exc, False)
 
     failed = [name for name, ok in checks if not ok]
     for name, ok in checks:

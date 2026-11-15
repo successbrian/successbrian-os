@@ -82,6 +82,24 @@ CREATE INDEX IF NOT EXISTS idx_identity_profiles_platform
 ALTER TABLE people.identity_profiles
     ADD COLUMN IF NOT EXISTS url_source TEXT;
 
+-- Evidence-signal storage (Brian, 2026-11-15: self-link pages and
+-- identical photos as logged, accumulating evidence). declared_links
+-- holds every outbound link a profile declares (website + bio
+-- links, as captured); photo_url / photo_hash hold the profile
+-- photo and the sha256 of the image bytes when a capture lane
+-- fetched it — an identical-image check only, never face data.
+-- This module's own table only; additive, same precedent.
+ALTER TABLE people.identity_profiles
+    ADD COLUMN IF NOT EXISTS declared_links JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE people.identity_profiles
+    ADD COLUMN IF NOT EXISTS photo_url TEXT;
+ALTER TABLE people.identity_profiles
+    ADD COLUMN IF NOT EXISTS photo_hash TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_identity_profiles_photo_hash
+    ON people.identity_profiles (photo_hash)
+    WHERE photo_hash IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS people.identity_matches (
     id           BIGSERIAL PRIMARY KEY,
     kind         TEXT NOT NULL CHECK (kind IN ('same_person', 'lookalike_risk')),

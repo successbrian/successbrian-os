@@ -498,7 +498,9 @@ def llm_chat(prompt: str = None, messages=None, url: str = SONIC_URL,
     """
     if messages is None:
         messages = [{"role": "user", "content": prompt}]
-    payload = {"messages": messages, "temperature": temperature}
+    payload = {"messages": messages, "temperature": temperature,
+               "cache_prompt": True}  # reuse the static prefix
+               # (templates/instructions) across calls — 2026-11-15
     if model is not None:
         payload["model"] = model
     if max_tokens is not None:

@@ -14,10 +14,23 @@ import os, json, sys, re
 from datetime import datetime, timezone
 from urllib.parse import quote
 
+
+def _require_env(name):
+    """Credentials come from the environment only -- never from source.
+    A loud failure beats a silent hard-coded fallback."""
+    val = os.environ.get(name)
+    if not val:
+        print("ERROR: required environment variable %s is not set. "
+              "component_scout reads credentials from the environment only "
+              "(production values live in /home/dealsdesk/.env)." % name,
+              file=sys.stderr)
+        sys.exit(1)
+    return val
+
 DB_HOST = 'localhost'
 DB_NAME = 'ecosystem_central'
 DB_USER = 'altair'
-DB_PASS = os.environ.get('PGPASSWORD', '***REMOVED***')
+DB_PASS = _require_env('PGPASSWORD')
 
 try:
     import psycopg2
@@ -39,8 +52,8 @@ def pg(sql, params=None):
 # ── eBay Browse API (HTML scraper gets 403'd by eBay) ──
 import urllib.request, base64, ssl as _ssl
 
-EBAY_CID = os.environ.get('EBAY_CLIENT_ID', '***REMOVED***')
-EBAY_SECRET = os.environ.get('EBAY_CLIENT_SECRET', '***REMOVED***')
+EBAY_CID = _require_env('EBAY_CLIENT_ID')
+EBAY_SECRET = _require_env('EBAY_CLIENT_SECRET')
 
 def get_ebay_token():
     auth_str = f"{EBAY_CID}:{EBAY_SECRET}"

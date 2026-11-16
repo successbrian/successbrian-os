@@ -15,6 +15,27 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 
+# ---------------------------------------------------------------- env
+ENV_PATH = os.path.expanduser("~/successbrian-os/.env")
+
+
+def load_env():
+    """Read ~/successbrian-os/.env (KEY=value lines) without overriding
+    real process environment variables -- same pattern as
+    tools/marketing/blog_manager.py."""
+    if os.path.exists(ENV_PATH):
+        with open(ENV_PATH) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip().strip('"'))
+
+
+load_env()
+
+
 def _require_env(name):
     """Credentials come from the environment only -- never from source.
     A loud failure beats a silent hard-coded fallback."""
@@ -22,7 +43,7 @@ def _require_env(name):
     if not val:
         print("ERROR: required environment variable %s is not set. "
               "component_scout reads credentials from the environment only "
-              "(production values live in /home/dealsdesk/.env)." % name,
+              "(production values live in ~/successbrian-os/.env)." % name,
               file=sys.stderr)
         sys.exit(1)
     return val

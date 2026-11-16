@@ -180,6 +180,14 @@ def raise_capture(need, best):
     except Exception as e:
         raw = raw + (f"\n\nPRICING BRIEF: unavailable ({e}) - "
                      f"judge this price as UNEQUIPPED and route it to a person.")
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from seller_dossier import quick_line
+        _sl = quick_line(best.get('seller'))
+        if _sl:
+            raw = raw + "\n" + _sl
+    except Exception:
+        pass
     pg("""
         INSERT INTO atlas.scattered_captures (title, raw_text, context, status)
         SELECT %s, %s, 'dealsdesk-scout', 'raw'
@@ -215,6 +223,9 @@ def scout_eco_needs():
                     "not working", "box only", "empty box", "read description")
             def caps_in(title):
                 out = set()
+                for a, b, unit in re.findall(r"(\d+)\s*-\s*(\d+)\s*(tb|gb)", title.lower()):
+                    out.add(int(a) * (1000 if unit == "tb" else 1))
+                    out.add(int(b) * (1000 if unit == "tb" else 1))
                 for num, unit in re.findall(r"(\d+)\s*(tb|gb)", title.lower()):
                     out.add(int(num) * (1000 if unit == "tb" else 1))
                 return out
@@ -224,6 +235,17 @@ def scout_eco_needs():
                     and len(caps_in(r["title"])) <= 1]
             if len(kept) < len(all_results):
                 print(f"  capacity/junk filter: {len(all_results)} -> {len(kept)} results")
+            all_results = kept
+        fam = set()
+        for _t in [need["subject"]] + terms:
+            fam |= set(re.findall(r"\b([a-z]\d{2})\b", _t.lower()))
+        if fam:
+            def is_model_menu(title):
+                toks = set(re.findall(r"\b([a-z]\d{2})\b", title.lower()))
+                return len(toks) >= 2 and (toks & fam) and (toks - fam)
+            kept = [r for r in all_results if not is_model_menu(r["title"])]
+            if len(kept) < len(all_results):
+                print(f"  model-menu filter: {len(all_results)} -> {len(kept)} results")
             all_results = kept
         if not all_results:
             print("  No results from eBay")

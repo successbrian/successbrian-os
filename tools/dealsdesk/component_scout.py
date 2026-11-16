@@ -169,6 +169,17 @@ def raise_capture(need, best):
            f"{need['qty_needed'] - need['qty_filled']}. CAUTION: drive health is NOT verified - "
            f"the API carries no health data. Under Brian's rule this is a price lead, not a find, "
            f"until documented health >90% exists.")
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from pricing_brief import build_brief, need_terms
+        raw = raw + "\n\n" + build_brief(
+            need_terms(need), float(best['price']),
+            target=(float(need['target_buy_price'])
+                    if need['target_buy_price'] else None),
+            subject=need['subject'], need_id=need['id'])
+    except Exception as e:
+        raw = raw + (f"\n\nPRICING BRIEF: unavailable ({e}) - "
+                     f"judge this price as UNEQUIPPED and route it to a person.")
     pg("""
         INSERT INTO atlas.scattered_captures (title, raw_text, context, status)
         SELECT %s, %s, 'dealsdesk-scout', 'raw'

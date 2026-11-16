@@ -445,6 +445,17 @@ def selftest():
         feedback_count=900, need=m40, typical_sold=196.0)
     check("slash-capacity title is a trap", r["verdict"], "TRAP")
 
+    # 20. The 12GB card is NOT wanted (Brian, ruled 2026-10-28 and
+    # reaffirmed 2026-11-16: "we do not want Tesla M40 12 GB"). The
+    # dual-unit buy is the 24GB PG600 only; a 12GB listing against
+    # that need is a trap at any price, however good it looks.
+    r = screen_listing(
+        "NVIDIA Tesla M40 12GB GDDR5 GPU PG601", 112.0, shipping=0.0,
+        feedback_pct=100.0, feedback_count=400, need=m40,
+        typical_sold=196.0)
+    check("m40 12gb against the 24gb need is a trap", r["verdict"],
+          "TRAP")
+
     print("PRICE GUARD SELFTEST:", "OK" if not failures else
           f"FAILED ({len(failures)}): {failures}")
     return 0 if not failures else 1

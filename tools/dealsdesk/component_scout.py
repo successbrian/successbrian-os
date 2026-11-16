@@ -112,9 +112,21 @@ def search_ebay(query, limit=5, used_only=False):
                 continue
             title = item.get("title", "").strip()[:80]
             seller = item.get("seller", {}) or {}
+            ship = None
+            _opts = item.get("shippingOptions") or []
+            if _opts:
+                try:
+                    ship = float((_opts[0].get("shippingCost") or {}).get("value"))
+                except (TypeError, ValueError):
+                    ship = None
+            try:
+                fb_count = int(seller.get("feedbackScore"))
+            except (TypeError, ValueError):
+                fb_count = None
             results.append({"title": title, "price": price, "url": item.get("itemWebUrl", ""),
                             "seller": seller.get("username", ""),
-                            "seller_feedback": seller.get("feedbackPercentage", "")})
+                            "seller_feedback": seller.get("feedbackPercentage", ""),
+                            "shipping": ship, "feedback_count": fb_count})
         return results
     except Exception as e:
         print(f"[SCOUT] eBay API search failed: {e}")
@@ -161,9 +173,10 @@ def file_sighting(r, need_id):
           r["url"]))
 
 def raise_capture(need, best):
-    title = f"DealsDesk scout UNDER TARGET: {need['subject']} at ${best['price']:.2f} (need #{need['id']})"
+    price = best.get("total", best["price"])
+    title = f"DealsDesk scout UNDER TARGET: {need['subject']} at ${price:.2f} (need #{need['id']})"
     raw = (f"Component Scout (eBay Browse API) found an under-target price for ecosystem need "
-           f"#{need['id']} ({need['subject']}): ${best['price']:.2f} - {best['title']} - "
+           f"#{need['id']} ({need['subject']}): ${price:.2f} - {best['title']} - "
            f"seller {best.get('seller') or 'unknown'} - {best['url']}. "
            f"Target ${float(need['target_buy_price']):.2f}, qty still needed "
            f"{need['qty_needed'] - need['qty_filled']}. CAUTION: drive health is NOT verified - "
@@ -173,7 +186,7 @@ def raise_capture(need, best):
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from pricing_brief import build_brief, need_terms
         raw = raw + "\n\n" + build_brief(
-            need_terms(need), float(best['price']),
+            need_terms(need), float(price),
             target=(float(need['target_buy_price'])
                     if need['target_buy_price'] else None),
             subject=need['subject'], need_id=need['id'])
@@ -186,6 +199,13 @@ def raise_capture(need, best):
         _sl = quick_line(best.get('seller'))
         if _sl:
             raw = raw + "\n" + _sl
+    except Exception:
+        pass
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from price_guard import guard_line
+        if best.get("guard"):
+            raw = raw + "\n" + guard_line(best["guard"])
     except Exception:
         pass
     pg("""
@@ -226,6 +246,9 @@ def scout_eco_needs():
                 for a, b, unit in re.findall(r"(\d+)\s*-\s*(\d+)\s*(tb|gb)", title.lower()):
                     out.add(int(a) * (1000 if unit == "tb" else 1))
                     out.add(int(b) * (1000 if unit == "tb" else 1))
+                for a, b, unit in re.findall(r"(\d+)\s*/\s*(\d+)\s*(tb|gb)", title.lower()):
+                    out.add(int(a) * (1000 if unit == "tb" else 1))
+                    out.add(int(b) * (1000 if unit == "tb" else 1))
                 for num, unit in re.findall(r"(\d+)\s*(tb|gb)", title.lower()):
                     out.add(int(num) * (1000 if unit == "tb" else 1))
                 return out
@@ -247,18 +270,50 @@ def scout_eco_needs():
             if len(kept) < len(all_results):
                 print(f"  model-menu filter: {len(all_results)} -> {len(kept)} results")
             all_results = kept
+        # PRICE GUARD (Brian's proficiency directive, 2026-11-16):
+        # screen every result before any price is believed. TRAPs are
+        # excluded and counted; SUSPECTs stay but can never outrank a
+        # CLEAN listing; ranking is by TOTAL price, never the sticker.
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from price_guard import screen_listing, need_context, typical_sold_for
+            _nctx = need_context(need["subject"], target=target, terms=terms)
+            _typical = typical_sold_for(need)
+            for r in all_results:
+                r["guard"] = screen_listing(
+                    r["title"], r["price"], shipping=r.get("shipping"),
+                    seller=r.get("seller"),
+                    feedback_pct=r.get("seller_feedback") or None,
+                    feedback_count=r.get("feedback_count"),
+                    need=_nctx, typical_sold=_typical)
+                r["total"] = r["guard"]["total"]
+            _traps = [r for r in all_results
+                      if r["guard"]["verdict"] == "TRAP"]
+            if _traps:
+                print(f"  price guard: {len(_traps)} trap(s) excluded")
+                for r in _traps:
+                    print(f"    TRAP ${r['price']:.2f} {r['title'][:60]}"
+                          f" - {r['guard']['reasons'][0]}")
+            all_results = [r for r in all_results
+                           if r["guard"]["verdict"] != "TRAP"]
+        except Exception as e:
+            print(f"  price guard unavailable ({e}) - results unscreened")
+            for r in all_results:
+                r.setdefault("total", r["price"])
         if not all_results:
             print("  No results from eBay")
             continue
-        all_results.sort(key=lambda x: x["price"])
+        all_results.sort(key=lambda x: (0 if x.get("guard", {}).get("verdict") == "CLEAN" else 1,
+                                        x.get("total", x["price"])))
         for r in all_results[:8]:
             try:
                 file_sighting(r, need["id"])
             except Exception as e:
                 print(f"  sighting file failed: {e}")
         best = all_results[0]
-        print(f"  Best found: ${best['price']:.2f} - {best['title']}")
-        if target and best["price"] <= target:
+        print(f"  Best found: ${best.get('total', best['price']):.2f} total - {best['title']}"
+              + (f" [PRICE GUARD: {best['guard']['verdict']}]" if best.get("guard") else ""))
+        if target and best.get("total", best["price"]) <= target:
             print("  UNDER TARGET on price - capture raised (health still unverified)")
             try:
                 raise_capture(need, best)
@@ -306,14 +361,32 @@ def main():
         results = search_ebay(query, limit=5)
 
         if results:
-            best = min(results, key=lambda x: x['price'])
+            try:
+                sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+                from price_guard import screen_listing
+                for r in results:
+                    r["guard"] = screen_listing(
+                        r["title"], r["price"], shipping=r.get("shipping"),
+                        seller=r.get("seller"),
+                        feedback_pct=r.get("seller_feedback") or None,
+                        feedback_count=r.get("feedback_count"))
+                    r["total"] = r["guard"]["total"]
+                _clean = [r for r in results
+                          if r["guard"]["verdict"] != "TRAP"]
+                if len(_clean) < len(results):
+                    print(f"  price guard: {len(results) - len(_clean)} traps excluded")
+                if _clean:
+                    results = _clean
+            except Exception:
+                pass
+            best = min(results, key=lambda x: x.get('total', x['price']))
             target = float(need['preferred_price']) if need['preferred_price'] else None
-            gap = (target - best['price']) if target else None
+            gap = (target - best.get('total', best['price'])) if target else None
             print(f"  Best found: ${best['price']:.2f} — {best['title']}")
             print(f"  URL: {best['url']}")
             if target:
                 print(f"  Target: ${target:.2f} | GAP: ${gap:+.2f}")
-            if target and best['price'] <= target:
+            if target and best.get('total', best['price']) <= target:
                 print(f"  ✓ UNDER TARGET — flag for purchase")
             else:
                 print(f"  ✗ Above target" if target else "")

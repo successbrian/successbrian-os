@@ -120,12 +120,14 @@ that scope's grant; every read and every refusal is audited:
     calendar  — successbrian_os.life_calendar, open items only;
                 past-due open items are flagged carried_forward (the
                 calendar carries missed items forward, never drops).
-    scorecard — NO data store exists in this install yet: the weekly
-                scorecard is a template/article, not data. The door
-                exists and answers honestly — available=false with the
-                reason, audited like any read — and never fabricates
-                numbers. When a scorecard store is built, this door
-                reads it.
+    scorecard — the owner's weekly scorecard, served from the
+                weekly scorecard store (Phase 8:
+                successbrian_os.weekly_scorecard_* via
+                tools/weekly_scorecard.py) — the owner's OWN card
+                only, reviewed weeks with the owner's exact numbers.
+                An owner with no reviewed week yet gets the honest
+                answer: available=false with the reason, audited like
+                any read, and never a fabricated number.
   Reads never mutate owner data: the doors run SELECTs only; the
   interface's own audit rows are the only writes a read makes.
   python3 agent_interface.py selftest3   (phase-3 end-to-end proof)
@@ -364,6 +366,23 @@ named these as the friction; each fix is additive/backward-compatible):
       read carries them because that is where an agent checks claim
       state mid-work.)
   python3 agent_interface.py selftest7   (phase-7 end-to-end proof)
+
+PHASE 8 (Brian's order, 2026-11-15) lights up the SCORECARD DOOR.
+The weekly scorecard store now exists — tools/weekly_scorecard.py
+(DDL: tools/weekly_scorecard_migration_2026-11-15.sql; design:
+~/workspace/builds/sbos-scorecard/DESIGN-2026-11-15.md): five
+numbers the owner names in their own words, entered by the owner
+at a once-a-week review, plus the two system checks (shoulder
+taps, hours vs cap), the one fix, the one promise, and the
+monthly "enough" number. _read_scorecard serves the reading
+agent's OWNER's card only (per-owner separation, like every
+door): reviewed weeks with the owner's exact numbers, desk
+suggestions labeled as suggestions, derived facts (behind
+streaks, cash pace) computed from stored rows only. An owner
+with no reviewed week yet still gets the honest answer —
+available=false, "not available", audited like any read — and
+no number is ever fabricated.
+  python3 agent_interface.py selftest8   (phase-8 end-to-end proof)
 
 Exit codes: 0 ok; 1 refused (bad/expired/revoked token, tier too low,
 scope not granted, agent revoked, not found); 2 usage or store errors.
@@ -1070,12 +1089,40 @@ def _read_people(agent, limit):
 
 
 def _read_scorecard(agent, limit):
-    return (False, None, [],
-            "not available in this install yet: no weekly-scorecard "
-            "data store exists here — the owner's weekly scorecard "
-            "currently lives as a template/article, not as data, so "
-            "there are no numbers to serve and none are invented. "
-            "When a scorecard store is built, this door will read it.")
+    import weekly_scorecard  # lazy: the store module (Phase 8)
+    card = weekly_scorecard.get_card(agent["operator_key"], weeks=13)
+    if card["reviewed_weeks"] == 0:
+        if card["setup_done"]:
+            note = ("not available yet for this owner: the weekly-"
+                    "scorecard store exists here and the owner's "
+                    "card is set up, but no week has been reviewed "
+                    "yet — there are no numbers to serve and none "
+                    "are invented.")
+        else:
+            note = ("not available in this install yet for this "
+                    "owner: no weekly scorecard has been set up — "
+                    "the store exists (tools/weekly_scorecard.py), "
+                    "but this owner has no scorecard weeks "
+                    "recorded, so there are no numbers to serve "
+                    "and none are invented.")
+        return (False, None, [], note)
+    source = ("the owner's weekly scorecard "
+              "(successbrian_os.weekly_scorecard_* store, via "
+              "tools/weekly_scorecard.py): the last 13 weeks, most "
+              "recent first; 'value' is the owner's own number "
+              "(null = not entered), 'suggested_value' is a desk "
+              "pre-collection and never the owner's number; "
+              "statuses follow the Deiss rule (green on target, "
+              "yellow behind with a plan, red behind with no plan)")
+    pace = card["cash_pace"]
+    if pace is not None and pace["pct_of_enough"] is not None:
+        source += (f"; cash pace over the last "
+                   f"{pace['weeks_counted']} reviewed week(s): near "
+                   f"{pace['monthly_pace']:,} a month, "
+                   f"{pace['pct_of_enough']}% of the owner's "
+                   f"enough number")
+    return (True, source, card["weeks"][:max(1, min(limit, 13))],
+            None)
 
 
 _READERS = {"board": _read_board, "requests": _read_requests,
@@ -2193,6 +2240,10 @@ OWNER_TAG = "owner-profile"  # audit agent_key for owner-side profile acts
 TEST_OPERATOR7 = "selftest7-operator"
 TEST_AGENT_P7A = "selftest7-outside-agent-a"
 TEST_AGENT_P7B = "selftest7-outside-agent-b"
+TEST_OPERATOR8 = "selftest8-operator"
+TEST_AGENT_P8A = "selftest8-outside-agent-a"
+TEST_OPERATOR8B = "selftest8-operator-b"
+TEST_AGENT_P8B = "selftest8-outside-agent-b"
 
 # ------------------------------------------------------------ G2: profile
 
@@ -3827,6 +3878,114 @@ def selftest7():
     return 0
 
 
+def _cleanup_test8_rows():
+    # Disposable phase-8 selftest cleanup (the standing precedent):
+    # production records are never deleted; selftest scaffolding
+    # rows (the test agents, their audit rows, and the test
+    # operators' scorecard rows) are removed whole.
+    import weekly_scorecard
+    for op in (TEST_OPERATOR8, TEST_OPERATOR8B):
+        pg_exec("delete from successbrian_os.agent_interface_audit "
+                "where operator_key=%s", (op,))
+        pg_exec("delete from successbrian_os.agent_interface_agents "
+                "where operator_key=%s", (op,))
+        weekly_scorecard.delete_owner_rows(op)
+
+
+def selftest8():
+    """Phase-8 end-to-end proof on disposable rows: an agent whose
+    owner has no scorecard reads the honest not-available answer ->
+    the owner sets up the card and enters a week through the
+    store's real write path -> the door serves those exact numbers
+    -> a second owner's agent still reads not-available (per-owner
+    separation) -> both scorecard reads are audited -> cleanup."""
+    import weekly_scorecard
+    from datetime import date, timedelta
+    steps = []
+
+    def check(label, cond):
+        steps.append((label, bool(cond)))
+        print(f"  [{'ok' if cond else 'FAIL'}] {label}")
+        if not cond:
+            raise AssertionError(label)
+
+    _cleanup_test8_rows()
+    print("agent_interface phase-8 selftest")
+    # 1. an agent with the scorecard scope, owner has NO card yet
+    register_agent(TEST_OPERATOR8, TEST_AGENT_P8A, "Selftest8 Agent A",
+                   vendor="selftest-vendor", tier="read",
+                   scopes=["board", "requests", "scorecard"])
+    tok_a = issue_token(TEST_AGENT_P8A, days=30)
+    # 2. (a) the door answers honestly with an empty store
+    sc = read_door(TEST_AGENT_P8A, tok_a, "scorecard")
+    check("empty store: door answers honestly, not available, "
+          "no fabricated numbers",
+          sc is not None and sc["available"] is False
+          and sc["items"] == [] and "not available" in sc["note"])
+    # 3. the owner sets up the card and reviews a week through the
+    #    store's REAL write path
+    weekly_scorecard.ensure_setup(TEST_OPERATOR8)
+    weekly_scorecard.set_metric(TEST_OPERATOR8, 1, target=10)
+    weekly_scorecard.set_metric(TEST_OPERATOR8, 5, target=1000)
+    week = weekly_scorecard.monday_of(
+        date.today() - timedelta(days=7))
+    weekly_scorecard.enter_week(
+        TEST_OPERATOR8, week,
+        {1: (7, "Ask past buyers for referrals"), 5: (1500, None)},
+        one_promise="Send the quote")
+    # 4. (b) the door now serves those exact numbers
+    sc = read_door(TEST_AGENT_P8A, tok_a, "scorecard")
+    check("door available once a reviewed week exists",
+          sc is not None and sc["available"] is True
+          and len(sc["items"]) == 1)
+    wk = sc["items"][0]
+    by_slot = {n["slot"]: n for n in wk["numbers"]}
+    check("door serves the owner's exact entered numbers",
+          wk["week_start"] == week.isoformat()
+          and by_slot[1]["value"] == 7
+          and by_slot[5]["value"] == 1500
+          and by_slot[1]["status"] == "yellow"
+          and by_slot[5]["status"] == "green")
+    check("unentered numbers stay null through the door",
+          by_slot[2]["value"] is None
+          and by_slot[2]["status"] is None)
+    check("the week's promise rides the door",
+          wk["one_promise"] == "Send the quote")
+    # 5. per-owner separation: a second owner's agent still reads
+    #    the honest empty answer
+    register_agent(TEST_OPERATOR8B, TEST_AGENT_P8B,
+                   "Selftest8 Agent B", vendor="selftest-vendor",
+                   tier="read", scopes=["board", "requests",
+                                        "scorecard"])
+    tok_b = issue_token(TEST_AGENT_P8B, days=30)
+    sc_b = read_door(TEST_AGENT_P8B, tok_b, "scorecard")
+    check("second owner still reads not-available (no cross-owner "
+          "leak)", sc_b is not None and sc_b["available"] is False
+          and sc_b["items"] == [])
+    # 6. both reads audited, with their availability recorded
+    audited = pg_rows(
+        "select detail->>'available' from "
+        "successbrian_os.agent_interface_audit "
+        "where operator_key in (%s,%s) and event='read' "
+        "and detail->>'scope'='scorecard'",
+        (TEST_OPERATOR8, TEST_OPERATOR8B))
+    check("scorecard reads audited (false before, true after)",
+          sorted(r[0] for r in audited) == ["false", "false", "true"])
+    _cleanup_test8_rows()
+    left_agents = pg_one(
+        "select count(*) from successbrian_os.agent_interface_agents "
+        "where operator_key in (%s,%s)",
+        (TEST_OPERATOR8, TEST_OPERATOR8B))
+    left_card = pg_one(
+        "select count(*) from successbrian_os.weekly_scorecard_weeks "
+        "where operator_key in (%s,%s)",
+        (TEST_OPERATOR8, TEST_OPERATOR8B))
+    check("cleanup: no selftest8 rows remain",
+          left_agents == 0 and left_card == 0)
+    print("SELFTEST PASS")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="SBOS Agent Interface v1 — outside-agent registration "
@@ -4060,6 +4219,7 @@ def main(argv=None):
     ww.add_argument("--token", required=True)
 
     sub.add_parser("selftest7")
+    sub.add_parser("selftest8")
     args = ap.parse_args(argv)
 
     try:
@@ -4077,6 +4237,8 @@ def main(argv=None):
             return selftest6()
         if args.cmd == "selftest7":
             return selftest7()
+        if args.cmd == "selftest8":
+            return selftest8()
         if args.cmd == "set-owner-profile":
             out = set_owner_profile(
                 args.operator, owner_name=args.name,

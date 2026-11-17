@@ -13,6 +13,16 @@ registry drift, fixed on sight (see E).
 
 ## A. MOVE — pure ecosystem machinery; the alpha home is obvious
 
+**Status 2026-11-17 ~04:10 (Brian: "start the move"):** A1 MOVED —
+alpha crontab Mon 07:41, tool verified, Muse cron retired. A2
+MOVED — `tools/sbos_public_push.py` built (selftest OK), first run
+pushed 13 commits with a clean scan, heartbeat 'sbos-public-push'
+in Lyra's table, QA 736 probes it, alpha crontab daily 04:41,
+Muse cron retired. A3 MOVED — alpha crontab every 10m (stopgap;
+NOTE-013 remains the real fix), Muse cron retired. All three
+timekeeper rows now read alpha-crontab. A4 (the keeper) still
+awaits Brian's surface choice.
+
 1. **gamma-ping-weekly-rollup** (Muse cron, Mondays). The tool
    (`tools/gamma_ping_rollup.py`) already lives on alpha; the Muse
    cron only ssh-invokes it. → Alpha crontab (weekly), retire the

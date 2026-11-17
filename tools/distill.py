@@ -84,11 +84,16 @@ def span_ok(span, text):
 
 
 def distill_capture(cap, dry_run=False):
-    text = (cap.get("raw_text") or "")[:6000]
+    # Sizing measured 2026-11-17: Morpheus generation on the
+    # loaded box runs ~1 tok/s-class for long outputs — a 6,000
+    # char prefill + 700-token draft blew a 240s timeout. The
+    # durable content of a capture is front-loaded; 3,000 chars
+    # and a 450-token draft fit the leg's real speed.
+    text = (cap.get("raw_text") or "")[:3000]
     title = cap.get("title") or "capture"
     out, _u = llm_chat(prompt=DRAFT_PROMPT.format(
         title=title, text=text), url=MORPHEUS_URL,
-        model=MORPHEUS_MODEL, max_tokens=700, timeout=240)
+        model=MORPHEUS_MODEL, max_tokens=450, timeout=600)
     cands = parse_drafts(out)
     stats = {"drafted": len(cands), "span_rejected": 0,
              "verify_rejected": 0, "filed": 0, "parked": 0}
@@ -122,13 +127,17 @@ def distill_capture(cap, dry_run=False):
 
 
 def run(limit=8, dry_run=False):
+    # Error outcomes are RETRYABLE (a slow night must not
+    # permanently skip a capture): only non-error log rows count
+    # as processed.
     caps = _rows(
         "SELECT c.id, c.title, c.raw_text, c.workspace_slug FROM "
-        "atlas.scattered_captures c LEFT JOIN altair.distill_log d "
-        "ON d.capture_id = c.id WHERE c.status = 'triaged' AND "
-        "d.capture_id IS NULL AND length(c.raw_text) > 200 AND "
-        "c.title NOT LIKE 'Ruling-audit flag%%' AND c.title NOT "
-        "LIKE 'FRESHNESS ALARM%%' ORDER BY c.created_at LIMIT %s",
+        "atlas.scattered_captures c WHERE c.status = 'triaged' "
+        "AND length(c.raw_text) > 200 AND c.title NOT LIKE "
+        "'Ruling-audit flag%%' AND c.title NOT LIKE 'FRESHNESS "
+        "ALARM%%' AND NOT EXISTS (SELECT 1 FROM altair.distill_log "
+        "d WHERE d.capture_id = c.id AND d.outcome NOT LIKE "
+        "'error%%') ORDER BY c.created_at LIMIT %s",
         (limit,))
     totals = {"captures": 0, "drafted": 0, "span_rejected": 0,
               "verify_rejected": 0, "filed": 0, "parked": 0,
@@ -147,7 +156,9 @@ def run(limit=8, dry_run=False):
         if not dry_run:
             _exec("INSERT INTO altair.distill_log (capture_id, "
                   "outcome, detail) VALUES (%s, %s, %s) ON CONFLICT "
-                  "(capture_id) DO NOTHING",
+                  "(capture_id) DO UPDATE SET outcome = "
+                  "EXCLUDED.outcome, detail = EXCLUDED.detail, "
+                  "created_at = now()",
                   (cap["id"], outcome, detail))
         print("capture %d: %s %s" % (cap["id"], outcome, detail),
               flush=True)

@@ -270,6 +270,26 @@ def scout_eco_needs():
             if len(kept) < len(all_results):
                 print(f"  model-menu filter: {len(all_results)} -> {len(kept)} results")
             all_results = kept
+        # DO-NOT-TRACK filter (Brian 2026-11-17: "ban those models from
+        # all tracking -- they are under spec for what we need"): results
+        # naming a do-not-track model (RTX A1000, A400, T1000/T600/T400)
+        # are dropped before screening, sightings, or best-pick -- the
+        # desk does not track them at all. Registry: hardware_traps.py
+        # check_do_not_track (a tracking class rule, NOT a trap).
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from hardware_traps import check_do_not_track
+            kept = []
+            for r in all_results:
+                _dnt = check_do_not_track(r["title"])
+                if _dnt:
+                    print(f"  do-not-track: dropped {r['title'][:60]}"
+                          f" ({_dnt['name']} -- under spec, not tracked)")
+                else:
+                    kept.append(r)
+            all_results = kept
+        except Exception as e:
+            print(f"  do-not-track filter unavailable ({e}) - results unfiltered")
         # PRICE GUARD (Brian's proficiency directive, 2026-11-16):
         # screen every result before any price is believed. TRAPs are
         # excluded and counted; SUSPECTs stay but can never outrank a

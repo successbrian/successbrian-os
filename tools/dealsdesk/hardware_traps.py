@@ -154,6 +154,67 @@ def check_cpu_class(text):
     return None
 
 
+# --- Do-not-track GPU models (tracking class rule - NOT traps) ---------------
+# Brian 2026-11-17: "we should ban those models from all tracking -- they
+# are under spec for what we need." These cards WORK; nothing here claims
+# a defect. They sit below the fleet's inference floor (8 GB and under),
+# so DealsDesk does not track them at all: no price watches, no sightings,
+# no captures, no surfacing as candidates. This is a tracking class rule
+# like the Xeon Gold rule above -- it is never reported as a trap, and it
+# does not judge a machine that merely contains one of these as a display
+# card; it governs what the desk TRACKS.
+# Named by Brian 2026-11-17, one by one, off the SFF 70-75 W class map:
+# RTX A1000, RTX A400, T1000, T600, T400.
+# Pattern care: \ba400\b must not catch the RTX A4000 (16 GB, a different
+# card) -- the trailing \b sees the extra 0 as a word char, so it cannot.
+# \bt400\b does not catch the Tesla T4 (16 GB, tracked) -- different token.
+# Accepted collision: \bt400\b also matches a ThinkPad T400 laptop title;
+# the desk tracks no T400 laptops, so the match costs nothing.
+
+DO_NOT_TRACK = [
+    {"id": "rtx_a1000", "name": "NVIDIA RTX A1000 (8GB)",
+     "patterns": [r"\ba1000\b"]},
+    {"id": "rtx_a400", "name": "NVIDIA RTX A400 (4GB)",
+     "patterns": [r"\ba400\b"]},
+    {"id": "quadro_t1000", "name": "NVIDIA T1000 (4/8GB)",
+     "patterns": [r"\bt1000\b"]},
+    {"id": "quadro_t600", "name": "NVIDIA T600 (4GB)",
+     "patterns": [r"\bt600\b"]},
+    {"id": "quadro_t400", "name": "NVIDIA T400 (4GB)",
+     "patterns": [r"\bt400\b"]},
+]
+
+_DNT_COMPILED = [
+    (entry, [re.compile(p, re.IGNORECASE) for p in entry["patterns"]])
+    for entry in DO_NOT_TRACK
+]
+
+_DNT_REASON = ("under spec for the fleet's inference work -- Brian "
+               "2026-11-17: banned from all tracking")
+
+
+def check_do_not_track(text):
+    """Return the do-not-track entry (plus 'matched' and 'reason') if
+    text names a model Brian has banned from tracking, else None.
+    A tracking class rule -- NOT a hardware trap verdict."""
+    if not text:
+        return None
+    text = str(text)
+    for entry, patterns in _DNT_COMPILED:
+        for pat in patterns:
+            if pat.search(text):
+                hit = dict(entry)
+                hit["matched"] = pat.pattern
+                hit["reason"] = _DNT_REASON
+                return hit
+    return None
+
+
+def is_do_not_track(text):
+    """True if text names a do-not-track model."""
+    return check_do_not_track(text) is not None
+
+
 def is_trapped(text, kind=None):
     """True if text names any banned part."""
     return check_item(text, kind=kind) is not None
@@ -195,6 +256,20 @@ _CLASS_SELFTEST = [
 ]
 
 
+_DNT_SELFTEST = [
+    ("NVIDIA RTX A1000 8GB Low Profile", "rtx_a1000"),
+    ("PNY RTX A400 4GB", "rtx_a400"),
+    ("Quadro T1000 8GB GDDR6", "quadro_t1000"),
+    ("NVIDIA T600 4GB", "quadro_t600"),
+    ("PNY T400 4GB Low Profile", "quadro_t400"),
+    ("RTX 4000 SFF Ada 20GB", None),     # different card -- NOT banned
+    ("NVIDIA RTX A4000 16GB", None),     # A4000 is not the A400
+    ("Tesla T4 16GB", None),             # T4 is tracked -- not T400
+    ("RTX A2000 12GB", None),            # not ruled -- rule stays silent
+    ("Intel Arc Pro B50 16GB", None),
+]
+
+
 def selftest():
     failures = 0
     for text, want in _CLASS_SELFTEST:
@@ -209,7 +284,14 @@ def selftest():
         ok = got == want
         failures += 0 if ok else 1
         print("%s %-38r -> %s" % ("OK  " if ok else "FAIL", text, got))
-    print("selftest: %d/%d passed" % (len(_SELFTEST) + len(_CLASS_SELFTEST) - failures, len(_SELFTEST) + len(_CLASS_SELFTEST)))
+    for text, want in _DNT_SELFTEST:
+        hit = check_do_not_track(text)
+        got = hit["id"] if hit else None
+        ok = got == want
+        failures += 0 if ok else 1
+        print("%s %-38r -> do-not-track %s" % ("OK  " if ok else "FAIL", text, got))
+    total = len(_SELFTEST) + len(_CLASS_SELFTEST) + len(_DNT_SELFTEST)
+    print("selftest: %d/%d passed" % (total - failures, total))
     return 1 if failures else 0
 
 

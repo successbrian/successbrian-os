@@ -20,11 +20,18 @@ was nothing for the loss to be noticed against.
   621, 622, 627, 629, 636, 718, 723, 725–728). A probe measures the
   machinery, not the intention: sightings flowing, watch running,
   ban holding, gate still set.
-- **Exception sweep**: Muse cron `rulings-census-daily` (~09:59 CST,
-  registered in the SBOS timekeeper as muse-cron) joins census to
-  checks and reports ONLY exceptions to Brian's chat: a failing
-  probe, a probe that has not run in 48h, and — Mondays only — the
-  rows marked `gap`. Silent when all green.
+- **Exception sweep**: `tools/pm/ruling_census_sweep.py` runs ON
+  ALPHA every 30 minutes (alpha crontab; timekeeper row
+  `rulings-census-daily`, source alpha-crontab). Brian ruled
+  2026-11-17 that the liveness check belongs to Lyra / SuccessBrian
+  OS, not a cloud agent's cron — the short-lived Muse sweep cron
+  was retired the same night. The sweep joins census to checks and
+  files exceptions as ONE Intel Bridge capture per changed
+  exception set: a failing probe, a probe that has not run in 48h,
+  and — Mondays only — the rows marked `gap`. Every run writes its
+  heartbeat directly into Lyra's table (worker
+  `ruling-census-sweep`); QA 733 probes that heartbeat, so if the
+  sweep itself dies, Lyra's staleness watch flags the watcher.
 - **Honest statuses**: `live` (probe passing), `gap` (a known hole,
   recorded as a first-class row instead of hidden — e.g. the
   do-not-track ban not yet wired into the PicClick/Craigslist

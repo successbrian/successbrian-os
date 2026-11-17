@@ -45,3 +45,10 @@ SELECT 'seeded', count(*) FROM successbrian_os.ruling_census;
 UPDATE successbrian_os.pm_project_checks SET spec = $spec${"cmd": ["bash", "-lc", "test $(psql ecosystem_central -Atc \"SELECT count(*) FROM bus.events WHERE event_type='clerk_deep_pass' AND created_at > '2026-11-12'::date\") = 0 && echo CLERK-BAN-HOLDS"], "contains": "CLERK-BAN-HOLDS"}$spec$::jsonb WHERE id = 730;
 UPDATE successbrian_os.ruling_census SET check_note = 'Probe: zero clerk_deep_pass events since the 2026-11-12 ban baseline (the 2026-11-10 test events that proved the handler broken predate it). Retire this row when the ban is lifted by the book.', updated_at = now() WHERE qa_check_id = 730;
 UPDATE successbrian_os.pm_project_checks SET next_due_at = now() WHERE id IN (730, 732);
+
+-- Row 21 + QA 733 (added 2026-11-17 when the sweep moved into SBOS):
+-- the check row itself is created with project_qa.py under project
+-- rulings-census, key census-sweep-alive; its spec is the
+-- SWEEP-ALIVE heartbeat probe in the fix file of that night.
+INSERT INTO successbrian_os.ruling_census (ruling, quote, provenance, ruled_on, category, subject, qa_check_id, check_note, status) VALUES
+('The liveness check itself lives in Lyra / SuccessBrian OS — the watcher is watched', 'this liveness check should be part of lyra/successbrian os, right ?', 'verbatim', '2026-11-17', 'recurring', 'ruling_census_sweep (alpha crontab, every 30m)', 733, 'Probe: the sweep heartbeat in Lyra table fresh within 2h. The Muse-side sweep cron was retired the same night.', 'live');

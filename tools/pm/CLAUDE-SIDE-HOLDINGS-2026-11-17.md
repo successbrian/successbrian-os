@@ -20,8 +20,14 @@ pushed 13 commits with a clean scan, heartbeat 'sbos-public-push'
 in Lyra's table, QA 736 probes it, alpha crontab daily 04:41,
 Muse cron retired. A3 MOVED — alpha crontab every 10m (stopgap;
 NOTE-013 remains the real fix), Muse cron retired. All three
-timekeeper rows now read alpha-crontab. A4 (the keeper) still
-awaits Brian's surface choice.
+timekeeper rows now read alpha-crontab. A4 MOVED (Brian, ~04:37:
+"my ecosystem should do the work, not muse" — no chat reader
+kept): `tools/gamma_queue_keeper.py` on alpha crontab every 30m,
+with the dedup fixed properly (exact embedded-title match — its
+first dry-run freed two captures the substring dedup had wrongly
+blocked), heartbeat worker 'gamma-queue-keeper', QA 737 probes
+it, failures file captures. Muse keeper cron retired once the
+first scheduled fire verified.
 
 1. **gamma-ping-weekly-rollup** (Muse cron, Mondays). The tool
    (`tools/gamma_ping_rollup.py`) already lives on alpha; the Muse

@@ -232,8 +232,27 @@ def scout_eco_needs():
         print(f"ECO NEED #{need['id']}: {need['subject']}")
         print(f"  Target: {target} | qty still needed: {need['qty_needed'] - need['qty_filled']}")
         all_results = []
+        def model_tokens(text):
+            return set(re.findall(r"\b[a-z]{1,3}\d{2,4}[a-z]?\b",
+                                  text.lower()))
         for term in terms:
             rs = search_ebay(term, limit=5, used_only=used_only)
+            # MODEL-TOKEN GATE (2026-11-17): the capacity filter below
+            # only checks the size token ("12gb"), which let an RTX
+            # 2060 12GB pose as the best A2000 in need #48's first
+            # run. When the term or subject names model tokens
+            # (a2000, m40, b70, v100), a result must carry at least
+            # one of them. Terms with no model token (a 990 PRO
+            # drive) are ungated, exactly as before.
+            mtoks = model_tokens(term) | model_tokens(need["subject"])
+            if mtoks:
+                gated = [r for r in rs
+                         if any(mt in r["title"].lower().replace(" ", "")
+                                for mt in mtoks)]
+                if len(gated) < len(rs):
+                    print(f"  model-token gate ({'/'.join(sorted(mtoks))}): "
+                          f"{len(rs)} -> {len(gated)} results")
+                rs = gated
             print(f"  '{term}': {len(rs)} results")
             all_results.extend(rs)
         cap_m = re.search(r"(\d+)\s*(TB|GB)", need["subject"], re.I)
@@ -243,13 +262,17 @@ def scout_eco_needs():
                     "not working", "box only", "empty box", "read description")
             def caps_in(title):
                 out = set()
-                for a, b, unit in re.findall(r"(\d+)\s*-\s*(\d+)\s*(tb|gb)", title.lower()):
+                # Board numbers (PG192, PG600) are not capacities:
+                # strip them, or "PG192/12GB" parses as a 192/12
+                # range and real A2000 12GB listings get dropped.
+                title = re.sub(r"\bpg\d{3}[a-z]?\b", " ", title.lower())
+                for a, b, unit in re.findall(r"(?<![a-z0-9])(\d+)\s*-\s*(\d+)\s*(tb|gb)", title):
                     out.add(int(a) * (1000 if unit == "tb" else 1))
                     out.add(int(b) * (1000 if unit == "tb" else 1))
-                for a, b, unit in re.findall(r"(\d+)\s*/\s*(\d+)\s*(tb|gb)", title.lower()):
+                for a, b, unit in re.findall(r"(?<![a-z0-9])(\d+)\s*/\s*(\d+)\s*(tb|gb)", title):
                     out.add(int(a) * (1000 if unit == "tb" else 1))
                     out.add(int(b) * (1000 if unit == "tb" else 1))
-                for num, unit in re.findall(r"(\d+)\s*(tb|gb)", title.lower()):
+                for num, unit in re.findall(r"(\d+)\s*(tb|gb)", title):
                     out.add(int(num) * (1000 if unit == "tb" else 1))
                 return out
             kept = [r for r in all_results

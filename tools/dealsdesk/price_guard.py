@@ -80,11 +80,17 @@ def caps_in(title):
     """Capacities named in a title, in GB — ranges count as both ends
     (the scout's range-aware version; '16-32GB' -> {16, 32})."""
     out = set()
-    t = title.lower()
-    for a, b, unit in re.findall(r"(\d+)\s*-\s*(\d+)\s*(tb|gb)", t):
+    # Board numbers (PG192, PG600) are not capacities: strip them
+    # first, or "PG192/12GB" parses as a 192/12 range. The A2000
+    # ships 6GB and 12GB on the SAME board (PG192) — capacity comes
+    # from the listing's own GB figure, never the board number.
+    t = re.sub(r"\bpg\d{3}[a-z]?\b", " ", title.lower())
+    # Range patterns carry a (?<![a-z0-9]) guard: a model number glued
+    # to a letter ("a2000/12gb") is not a capacity range either.
+    for a, b, unit in re.findall(r"(?<![a-z0-9])(\d+)\s*-\s*(\d+)\s*(tb|gb)", t):
         out.add(int(a) * (1000 if unit == "tb" else 1))
         out.add(int(b) * (1000 if unit == "tb" else 1))
-    for a, b, unit in re.findall(r"(\d+)\s*/\s*(\d+)\s*(tb|gb)", t):
+    for a, b, unit in re.findall(r"(?<![a-z0-9])(\d+)\s*/\s*(\d+)\s*(tb|gb)", t):
         out.add(int(a) * (1000 if unit == "tb" else 1))
         out.add(int(b) * (1000 if unit == "tb" else 1))
     for num, unit in re.findall(r"(\d+)\s*(tb|gb)", t):
@@ -329,6 +335,8 @@ def selftest():
                        terms=["Intel Arc Pro B70"])
     board = need_context("Gigabyte MZ32-AR0 rev 1.x motherboard",
                          target=355.0, terms=["MZ32-AR0"])
+    a2000 = need_context("NVIDIA RTX A2000 12GB GPU", target=None,
+                         terms=["RTX A2000 12GB"])
 
     # 1. The Gunnir menu that produced the "$639 B70" (2026-11-16).
     r = screen_listing(
@@ -455,6 +463,32 @@ def selftest():
         typical_sold=196.0)
     check("m40 12gb against the 24gb need is a trap", r["verdict"],
           "TRAP")
+
+    # 21. A true A2000 12GB naming its PG192 board is clean — the
+    # board number must not parse as a capacity (Brian's A2000
+    # tracking restored 2026-11-17; 12GB only, like the M40 rule).
+    r = screen_listing("PNY NVIDIA RTX A2000 12GB GDDR6 PG192",
+                       549.99, shipping=0.0, feedback_pct=100.0,
+                       feedback_count=900, need=a2000)
+    check("a2000 12gb with board number is clean", r["verdict"],
+          "CLEAN")
+
+    # 22. The 6GB twin on the same PG192 board is a trap against
+    # the 12GB need — capacity from the listing, never the board.
+    r = screen_listing("Dell NVIDIA RTX A2000 6GB GDDR6 W4KXH",
+                       449.99, shipping=0.0, feedback_pct=100.0,
+                       feedback_count=900, need=a2000)
+    check("a2000 6gb against the 12gb need is a trap", r["verdict"],
+          "TRAP")
+
+    # 23. The slash shape that used to break: "PG192/12GB" read as
+    # a 192/12 range before the board-number strip (2026-11-17).
+    r = screen_listing("NVIDIA RTX A2000 PG192/12GB GDDR6",
+                       525.0, shipping=0.0, feedback_pct=100.0,
+                       feedback_count=900, need=a2000)
+    check("a2000 pg192-slash title is clean", r["verdict"], "CLEAN")
+    check("caps_in strips board numbers", caps_in(
+        "NVIDIA RTX A2000 PG192/12GB GDDR6"), {12})
 
     print("PRICE GUARD SELFTEST:", "OK" if not failures else
           f"FAILED ({len(failures)}): {failures}")

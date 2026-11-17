@@ -54,23 +54,38 @@ def semantic_curation():
     if len(items) < 5:
         print("curation: only %d active learnings — skip semantic pass" % len(items))
         return
-    listing = "\n".join("[%s] %s: %s" % tuple(x.split("\t")[:3]) for x in items
-                        if len(x.split("\t")) >= 3)
-    prompt = ("You curate a worker-learnings table. Below are active learnings "
-              "as [id] kind: text. Output actions, one per line:\n"
-              "MERGE <id1>,<id2>,... INTO <keep_id> — near-duplicates saying the same thing\n"
-              "INVALIDATE <id> — stale, wrong, or no longer applicable (say why after a | )\n"
-              "If nothing needs action, output NONE.\n\n" + listing)
-    try:
-        key = whw.get_key()
-        if not key:
-            print("curation: no API key — skip")
-            return
-        out = whw.call_v4pro(key, prompt)
-    except Exception as e:
-        print("curation: V4 call failed: %s" % str(e)[:150])
-        return
+    lines = ["[%s] %s: %s" % tuple(x.split("\t")[:3]) for x in items
+             if len(x.split("\t")) >= 3]
+    # Rerouted 2026-11-17 (Brian: "do everything you are 100%
+    # confident in"): the paid V4 cloud call failed with HTTP 402
+    # (empty DeepSeek balance) for weeks — the semantic pass ran and
+    # thought nothing. Sonic (local fleet engine) does this pass now;
+    # no key, no balance, no cloud. First Sonic run timed out on the
+    # full listing in one call, so the pass runs in batches of 40 —
+    # same actions, applied per batch.
+    sys.path.insert(0, "/home/successbrian/successbrian-os/tools")
+    from sbos_common import llm_chat
     merged = invalidated = 0
+    out_all = []
+    for i in range(0, len(lines), 40):
+        listing = "\n".join(lines[i:i + 40])
+        prompt = ("You curate a worker-learnings table. Below are active learnings "
+                  "as [id] kind: text. Output actions, one per line:\n"
+                  "MERGE <id1>,<id2>,... INTO <keep_id> — near-duplicates saying the same thing\n"
+                  "INVALIDATE <id> — stale, wrong, or no longer applicable (say why after a | )\n"
+                  "If nothing needs action, output NONE.\n\n" + listing)
+        try:
+            out, _usage = llm_chat(prompt=prompt, max_tokens=1200,
+                                   timeout=300)
+        except Exception as e:
+            print("curation: Sonic call failed (batch %d): %s"
+                  % (i // 40 + 1, str(e)[:150]))
+            continue
+        out_all.append(out)
+    out = "\n".join(out_all)
+    if not out.strip():
+        print("curation: no batch produced output — nothing applied")
+        return
     for ln in out.split("\n"):
         t = ln.strip()
         u = t.upper()

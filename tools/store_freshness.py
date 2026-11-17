@@ -35,6 +35,39 @@ STORES = [
 ]
 
 
+def check_distiller():
+    """The distiller's own heartbeat (Distillation System design
+    Part 5): triaged captures waiting + no distill_log activity in
+    24h = the model leg is silently dead — the exact failure shape
+    of November, one level up. Returns True if an alarm was filed."""
+    row = _one(
+        "SELECT (SELECT count(*) FROM atlas.scattered_captures c "
+        "LEFT JOIN altair.distill_log d ON d.capture_id = c.id "
+        "WHERE c.status = 'triaged' AND d.capture_id IS NULL AND "
+        "length(c.raw_text) > 200) AS pending, (SELECT "
+        "extract(epoch FROM (now() - max(created_at))) / 3600 "
+        "FROM altair.distill_log) AS idle_h")
+    pending = row["pending"] or 0
+    idle_h = row["idle_h"]
+    print("distiller: %d captures waiting, last run %s"
+          % (pending, ("%.1fh ago" % idle_h) if idle_h is not None
+             else "never"))
+    if pending > 0 and (idle_h is None or idle_h > 24):
+        _exec("INSERT INTO atlas.scattered_captures (title, raw_text,"
+              " status, workspace_slug) VALUES (%s, %s, 'raw', "
+              "'successbrian-os')",
+              ("FRESHNESS ALARM: distiller idle — %d captures "
+               "waiting, last run %s" % (pending,
+               ("%.0fh ago" % idle_h) if idle_h is not None
+               else "never"),
+               "store_freshness: the distillation model leg "
+               "(distill.py) has not processed captures while work "
+               "waits. Check its cron and the engine endpoints."))
+        print("ALARM FILED for distiller")
+        return True
+    return False
+
+
 def check():
     stale = []
     for table, col in STORES:
@@ -64,6 +97,8 @@ def check():
                "learnings 2026-11-02, unnoticed for 17 days)."
                % (table, age, THRESHOLD_HOURS, last)))
         print("ALARM FILED for %s" % table)
+    if check_distiller():
+        stale.append(("distiller", "idle", None))
     return 1 if stale else 0
 
 

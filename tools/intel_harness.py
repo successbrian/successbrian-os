@@ -171,7 +171,26 @@ def find_blocking_ruling(item_text):
 def what_do_we_know(topic, limit=5):
     if pg_rows is None:
         return {"error": "no db access"}
-    know = {"topic": topic, "decisions": decisions_for(topic, limit=limit)}
+    # RETRIEVE routing (Distillation System design, 2026-11-17):
+    # the curated stores are searched through engine_research.dig2
+    # (hybrid meaning + full-text + fuzzy, with its measured
+    # relevance gate) instead of token matching. found=False from
+    # dig2 means UNKNOWN. Falls back to decisions_for if the
+    # hybrid path errors — a degraded answer beats no answer, and
+    # the fallback is labeled in the result.
+    know = {"topic": topic}
+    try:
+        import engine_research as _er
+        d2 = _er.dig2(topic, limit=limit)
+        know["decisions"] = d2["decisions"]
+        know["learnings"] = d2["learnings"]
+        know["found"] = d2["found"]
+        know["retrieve"] = "dig2-hybrid"
+    except Exception as e:
+        know["decisions"] = decisions_for(topic, limit=limit)
+        know["learnings"] = []
+        know["found"] = bool(know["decisions"])
+        know["retrieve"] = "fallback-token (%s)" % str(e)[:80]
     like = "%" + (topic or "") + "%"
     try:
         caps = pg_rows(

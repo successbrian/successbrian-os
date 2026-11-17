@@ -35,10 +35,19 @@ def deterministic_dedupe():
         lid, kind, text = parts[0].strip(), parts[1].strip(), parts[2].strip()
         key = (kind, text.lower())
         if key in seen:
-            q("UPDATE successbrian_os.v4pro_worker_learnings SET status = "
-              "'superseded', superseded_by = %s WHERE id = %s;"
-              % (seen[key], lid))
-            dupes += 1
+            # Count only CONFIRMED updates (fixed 2026-11-17: q()
+            # returns "" on error and the old code counted phantom
+            # merges for weeks — the table had no UPDATE grant, so
+            # every apply silently failed while logs said "merged").
+            r = q("UPDATE successbrian_os.v4pro_worker_learnings "
+                  "SET status = 'superseded', superseded_by = %s "
+                  "WHERE id = %s AND status = 'active';"
+                  % (seen[key], lid))
+            if r.startswith("UPDATE") and not r.endswith(" 0"):
+                dupes += 1
+            else:
+                print("dedupe: UPDATE failed for id %s: %r"
+                      % (lid, r))
         else:
             seen[key] = lid
     print("dedupe: %d exact-duplicate learning(s) superseded" % dupes)
@@ -66,7 +75,6 @@ def semantic_curation():
     sys.path.insert(0, "/home/successbrian/successbrian-os/tools")
     from sbos_common import llm_chat
     merged = invalidated = 0
-    out_all = []
     for i in range(0, len(lines), 40):
         listing = "\n".join(lines[i:i + 40])
         prompt = ("You curate a worker-learnings table. Below are active learnings "
@@ -81,38 +89,52 @@ def semantic_curation():
             print("curation: Sonic call failed (batch %d): %s"
                   % (i // 40 + 1, str(e)[:150]))
             continue
-        out_all.append(out)
-    out = "\n".join(out_all)
-    if not out.strip():
-        print("curation: no batch produced output — nothing applied")
-        return
-    for ln in out.split("\n"):
-        t = ln.strip()
-        u = t.upper()
-        if u.startswith("MERGE"):
-            try:
-                ids_part = t.split("INTO")[0].replace("MERGE", "").strip()
-                keep = t.split("INTO")[1].strip().split()[0]
-                ids = [x.strip() for x in ids_part.split(",") if x.strip().isdigit()]
-                if keep.isdigit() and ids:
-                    for i in ids:
-                        if i != keep:
-                            q("UPDATE successbrian_os.v4pro_worker_learnings "
-                              "SET status = 'superseded', superseded_by = %s "
-                              "WHERE id = %s AND status = 'active';" % (keep, i))
-                            merged += 1
-            except (IndexError, ValueError):
-                continue
-        elif u.startswith("INVALIDATE"):
-            try:
-                lid = t.split()[1]
-                if lid.isdigit():
-                    q("UPDATE successbrian_os.v4pro_worker_learnings "
-                      "SET status = 'invalidated' WHERE id = %s AND status = 'active';"
-                      % lid)
-                    invalidated += 1
-            except IndexError:
-                continue
+        # Apply THIS batch's actions immediately (fixed 2026-11-17:
+        # the accumulate-then-apply version lost a full 25-minute
+        # run when its timeout killed it before the apply step —
+        # zero actions landed. Per-batch apply means progress
+        # persists even if a later batch or the run itself dies.)
+        for ln in out.split("\n"):
+            t = ln.strip()
+            u = t.upper()
+            if u.startswith("MERGE"):
+                try:
+                    ids_part = t.split("INTO")[0].replace("MERGE", "").strip()
+                    keep = t.split("INTO")[1].strip().split()[0]
+                    ids = [x.strip() for x in ids_part.split(",") if x.strip().isdigit()]
+                    if keep.isdigit() and ids:
+                        for mid in ids:
+                            if mid != keep:
+                                r = q("UPDATE successbrian_os.v4pro_worker_learnings "
+                                      "SET status = 'superseded', superseded_by = %s "
+                                      "WHERE id = %s AND status = 'active';" % (keep, mid))
+                                if r.startswith("UPDATE") and \
+                                        not r.endswith(" 0"):
+                                    merged += 1
+                                else:
+                                    print("curation: MERGE update "
+                                          "failed for id %s: %r"
+                                          % (mid, r))
+                except (IndexError, ValueError):
+                    continue
+            elif u.startswith("INVALIDATE"):
+                try:
+                    lid = t.split()[1]
+                    if lid.isdigit():
+                        r = q("UPDATE successbrian_os.v4pro_worker_learnings "
+                              "SET status = 'invalidated' WHERE id = %s AND status = 'active';"
+                              % lid)
+                        if r.startswith("UPDATE") and \
+                                not r.endswith(" 0"):
+                            invalidated += 1
+                        else:
+                            print("curation: INVALIDATE update "
+                                  "failed for id %s: %r" % (lid, r))
+                except IndexError:
+                    continue
+        print("curation: batch %d applied (running total: %d merged, "
+              "%d invalidated)" % (i // 40 + 1, merged, invalidated),
+              flush=True)
     print("curation: %d merged, %d invalidated" % (merged, invalidated))
 
 

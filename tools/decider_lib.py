@@ -191,6 +191,23 @@ TASK_LINE = re.compile(
     r"(.+?)\s*\|\s*SPEC:\s*(.+)$", re.IGNORECASE)
 
 
+def _spec_with_urls(spec, brief):
+    """Guarantee the engine sees the issue's source URL(s).
+
+    The breakdown seat is told to write self-contained SPECs, but it
+    repeatedly dropped the source URL (pkg #282: penny asked for the
+    URL 3 rounds running while the brief held it plainly). Engines
+    cannot see the brief, so append every URL found in the brief to
+    the SPEC unless already present. Deterministic, not prompt luck.
+    """
+    raw = re.findall(r"https?://\S+", brief or "")
+    urls = sorted({u.rstrip(").,;\"'") for u in raw})
+    missing = [u for u in urls if u not in spec]
+    if not missing:
+        return spec
+    return spec.rstrip() + "\n\nSource URL(s) from the issue brief: " + " ".join(missing)
+
+
 def consume_breakdowns(seat):
     """Turn this seat's finished breakdown jobs into engine
     tasks. Returns tasks created."""
@@ -233,6 +250,7 @@ def consume_breakdowns(seat):
                   % (pkg_id, pkg["round"] + 1))
             continue
         for eng, title, spec in tasks[:5]:
+            spec = _spec_with_urls(spec, pkg["brief"])
             sbos_common.engine_job_enqueue(
                 eng, "decider-" + seat, "chat",
                 "Pkg #%d: %s" % (pkg_id, title[:80]),
@@ -441,6 +459,18 @@ def decider_step(seat, dry_run=False, max_breakdowns=1, max_reviews=2):
 
 
 def selftest():
+    # _spec_with_urls: the pkg #282 regression — penny's SPEC dropped
+    # the source URL 3 rounds running while the brief held it.
+    brief = ("source URL: https://forums.servethehome.com/index.php?"
+             "threads/fs-us-can-4x-rtx-a5000-gpus.56788/; checked 2026-10-27")
+    spec = "From the provided source URL, extract the GPU count and price."
+    out = _spec_with_urls(spec, brief)
+    assert "threads/fs-us-can-4x-rtx-a5000-gpus.56788/" in out, out
+    assert out.startswith(spec)
+    spec_with_url = (spec + " URL: https://forums.servethehome.com/"
+                     "index.php?threads/fs-us-can-4x-rtx-a5000-gpus.56788/")
+    assert _spec_with_urls(spec_with_url, brief) == spec_with_url  # already present: unchanged
+    assert _spec_with_urls(spec, "no links here") == spec
     ensure_schema()
     a = create_package("manual", "selftest:pkg", "Selftest package",
                        "A package that exists only to prove the "

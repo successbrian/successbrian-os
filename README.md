@@ -97,6 +97,13 @@ trade changes, but the remembering doesn't have to.
   verification, so stale knowledge can't silently poison future reasoning.
 
 **Run the operation**
+- `tools/weekly_scorecard.py` — the weekly scorecard: a once-a-week
+  checkup for a one-person business. Five numbers the owner names in
+  their own words (leads in, sales talks, deliveries finished, things
+  shipped, cash in), entered by the owner each week, with floor /
+  target / stretch, one fix, and one promise. The same numbers feed
+  the agent interface's scorecard door, so the owner's own agent
+  reads the card too.
 - Employment intel pipeline, marketer watch, email launch parser, intake
   triage, daywatch/fleet health, DealsDesk vetting, and the A2A agent mesh —
   the working machinery of a real multi-stream business. (Most of these were

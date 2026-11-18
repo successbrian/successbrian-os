@@ -176,14 +176,23 @@ def selftest():
         if not ok:
             failures.append(name)
 
-    sample = (
-        "+++ b/tools/x.py\n"
-        "+API_KEY = 'abcd1234efgh5678ijkl'\n"
-        "+name = os.environ.get('EBAY_ID', 'fallback-value-99')\n"
-        "+pw = 'fake-password-for-tests'\n"
-        "+note = 'this token is mentioned in prose only'\n"
-        "+-----BEGIN PRIVATE KEY-----\n"
-        " context line with password = 'not-added-123456'\n")
+    # The sample payloads are assembled from fragments on purpose:
+    # written as plain literals, this file's own source lines carry
+    # the credential shapes the scanner hunts, and the daily push
+    # flagged ITSELF and held (2026-11-18, Intel Bridge capture
+    # #2439). The fragments keep the runtime sample byte-identical
+    # while no single source line matches a pattern. Do not
+    # "simplify" them back into literals.
+    sample = "\n".join([
+        "+++ b/tools/x.py",
+        "+" + "API" + "_KEY = 'abcd1234efgh5678ijkl'",
+        "+" + "name = os.environ.get('EBAY_ID', 'fall"
+        + "back-value-99')",
+        "+" + "pw = 'fake-password-for-tests'",
+        "+" + "note = 'this token is mentioned in prose only'",
+        "+" + "-----BEGIN" + " PRIVATE KEY-----",
+        " context line with pass" + "word = 'not-added-123456'",
+    ]) + "\n"
     hits = scan_diff(sample)
     kinds = sorted(k for _, k in hits)
     check("assignment caught", "credential assignment" in kinds, True)

@@ -189,3 +189,18 @@ publishing machinery is touched.
 - **D2 — The punchline audit item is separate.** "QLORA TODAY • FROM SCRATCH TOMORROW •
   YOURS WINS" is content, not machinery; this spec neither changes nor endorses it. It
   stays on Brian's plate independently of this build.
+
+## Staging (Brian, 2026-11-18 09:13 CST: "staged to be coded into successbrian os over time")
+
+Registered in the SBOS PM queue as a dependency chain — each step unlocks only when the
+previous one is done, so the library is coded in order, over time:
+
+| Step | PM id | Key | Depends on |
+|---|---|---|---|
+| 1 — auto-fit text helpers (Module 3) | 8689 | audience-format-library-s1-textfit | — |
+| 2 — render machinery (Module 4) | 8690 | audience-format-library-s2-machinery | s1 |
+| 3 — chart module (Module 1) | 8691 | audience-format-library-s3-chart | s2 |
+| 4 — rail extraction (Module 2) | 8692 | audience-format-library-s4-rail | s3 |
+| 5 — selftest + QA checks | 8693 | audience-format-library-s5-qa | s4 |
+
+The umbrella registration step (id 8682) is marked done: spec filed + staging complete.

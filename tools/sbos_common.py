@@ -27,6 +27,9 @@ CONTENTS:
     pg_one(sql, params)     — first row / first value
     pg_exec(sql, params)    — write, committed
     llm_chat(prompt, ...)   — chat/completions -> (text, usage dict)
+    groq_chat(prompt, ...)  — Groq cloud overflow lane (PUBLIC /
+                              SYNTHETIC / BLOG packets ONLY — see the
+                              routing rule at GROQ_URL below)
     SONIC / MORPHEUS / PENNY— local model endpoint presets (env-overridable)
     pulse(source, message, metrics) — one Lyra-table (clerk_checkins) row
     add_queue_task(...)     — qwen_task_queue add WITH the 2026-10-27
@@ -60,6 +63,51 @@ MORPHEUS_MODEL = os.environ.get("MORPHEUS_MODEL", "morpheus")
 PENNY_MODEL = os.environ.get("PENNY_MODEL", "penny")
 MORPHEUS_URL = os.environ.get("MORPHEUS_URL", "http://127.0.0.1:11437/v1/chat/completions")
 PENNY_URL = os.environ.get("PENNY_URL", "http://127.0.0.1:11438/v1/chat/completions")
+
+# ---------------------------------------------------------- groq lane
+# Groq cloud overflow lane (Brian, 2026-11-18 — the first free-cloud
+# lane, wired after the 2026-11-15 free-API survey). OpenAI-compatible
+# endpoint; the key is read from ~/successbrian-os/.env (GROQ_API_KEY),
+# the same .env pattern the DeepSeek lane uses with ~/.hermes/.env.
+#
+# ROUTING RULE (binding): this lane serves PUBLIC / SYNTHETIC / BLOG
+# packets ONLY — public web text, synthetic data, blog drafting and
+# other material that is already public or invented. NEVER route
+# people, company, or private intel packets here: Groq is a
+# third-party cloud, so prompts leave Brian's machines. The local
+# lanes (Sonic / Morpheus / Penny) stay the default for everything
+# else. GROQ_PUBLIC_ONLY is the config flag for that rule; groq_chat()
+# refuses to run at all if the flag is ever flipped off, so widening
+# this lane takes a deliberate code change, never a config slip.
+GROQ_URL = os.environ.get(
+    "GROQ_URL", "https://api.groq.com/openai/v1/chat/completions")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_PUBLIC_ONLY = True
+_SBOS_ENV_FILE = os.path.expanduser("~/successbrian-os/.env")
+
+
+def _groq_api_key():
+    """GROQ_API_KEY from the process environment, else the
+    ~/successbrian-os/.env file. Returns None when unset (the lane is
+    dark — the two keys found elsewhere on alpha 2026-11-18 were both
+    dead at Groq, so none was copied here)."""
+    k = os.environ.get("GROQ_API_KEY")
+    if k:
+        return k.strip() or None
+    try:
+        with open(_SBOS_ENV_FILE) as f:
+            for ln in f:
+                if ln.startswith("GROQ_API_KEY="):
+                    return ln.split("=", 1)[1].strip() or None
+    except OSError:
+        pass
+    return None
+
+
+def groq_available() -> bool:
+    """True iff a GROQ_API_KEY is configured (says nothing about
+    whether Groq accepts it — that takes a live call)."""
+    return bool(_groq_api_key())
 
 # Sonic KV tiers (Brian, 2026-11-08): chat with Altair keeps the
 # server's 96K KV. AUTOMATED tasks size their context by need —
@@ -516,6 +564,32 @@ def llm_chat(prompt: str = None, messages=None, url: str = SONIC_URL,
     return text, normalize_usage(body, fallback_model=model or "")
 
 
+def groq_chat(prompt: str = None, messages=None,
+              model: str = GROQ_MODEL, max_tokens: int = 800,
+              temperature: float = 0.3, timeout: int = 120):
+    """One Groq overflow call, through llm_chat. PUBLIC / SYNTHETIC /
+    BLOG packets ONLY — see the routing rule at GROQ_URL.
+
+    Fails closed: raises RuntimeError naming GROQ_API_KEY when no key
+    is configured, instead of crashing deep in urllib or silently
+    falling back to a local lane. A 401 from Groq (dead/expired key)
+    surfaces as llm_chat's HTTP error — also loud, also closed."""
+    if not GROQ_PUBLIC_ONLY:
+        raise RuntimeError(
+            "groq lane disabled: GROQ_PUBLIC_ONLY is not True "
+            "(routing rule at GROQ_URL in sbos_common.py)")
+    key = _groq_api_key()
+    if not key:
+        raise RuntimeError(
+            "GROQ_API_KEY not set or invalid: no live Groq key in "
+            "~/successbrian-os/.env or the environment — the groq "
+            "overflow lane is dark until Brian supplies a fresh key")
+    return llm_chat(prompt, messages=messages, url=GROQ_URL,
+                    model=model, max_tokens=max_tokens,
+                    temperature=temperature, timeout=timeout,
+                    headers={"Authorization": "Bearer " + key})
+
+
 def http_ok(url: str, timeout: int = 10) -> bool:
     """GET a health URL, True iff HTTP 200 — the sonic_available()
     pattern copied into both the heartbeat and the harness worker."""
@@ -827,6 +901,20 @@ def selftest() -> int:
         pg_exec("DELETE FROM altair.knowledge_bridge WHERE id = %s", (bid,))
     except Exception as e:
         check(f"bridge round-trip raised {e}", False)
+
+    # Groq overflow lane: defined, public-only, fail-closed with no
+    # key. (When a key IS configured the fail-closed check is skipped
+    # — a selftest never burns a live cloud call.)
+    check("groq lane defined, public-only",
+          GROQ_URL.startswith("https://api.groq.com/")
+          and GROQ_PUBLIC_ONLY is True)
+    if not groq_available():
+        try:
+            groq_chat("ping", max_tokens=1)
+            check("groq fails closed without a key", False)
+        except RuntimeError as e:
+            check("groq fails closed without a key",
+                  "GROQ_API_KEY" in str(e))
 
     print("SELFTEST " + ("GREEN" if not fails else f"FAILED: {fails}"))
     return 0 if not fails else 1

@@ -81,7 +81,8 @@ PENNY_URL = os.environ.get("PENNY_URL", "http://127.0.0.1:11438/v1/chat/completi
 # this lane takes a deliberate code change, never a config slip.
 GROQ_URL = os.environ.get(
     "GROQ_URL", "https://api.groq.com/openai/v1/chat/completions")
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_MODEL = os.environ.get(
+    "GROQ_MODEL", "llama-3.3-70b-versatile")
 GROQ_PUBLIC_ONLY = True
 _SBOS_ENV_FILE = os.path.expanduser("~/successbrian-os/.env")
 

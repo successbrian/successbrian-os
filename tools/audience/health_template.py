@@ -20,13 +20,62 @@ footer) with a health visual identity:
 FORMAT RULE — Brian 2026-11-18 23:27 CST: kicker pills carry the
 manufactured finish — gradient marks, soft shadow, 3D bevel, inner
 highlight, sheen — on every template (the crypto kicker pill's
-finish, propagated). This template's kicker is an open assembly —
-white type flanked by pulse glyphs on the teal canvas, no pill
-ground — so the finish lands where it has a surface: the pulse
-glyphs are gradient-filled with a top sheen (icon_pulse), and the
-soft shadow rides via the template's own _icon_shadow idiom at
-the kicker. The bevel / inner highlight / ground gradient have
-no pill surface here and are not faked.
+finish, propagated). At that hour this template's kicker was an
+open assembly with no pill ground, so only the gradient pulse
+glyphs and their shadow landed; the 23:38 CST chassis ruling
+below supersedes that arrangement — the kicker is a real pill
+now and carries the full finish.
+
+FORMAT — CROSSOVER CHASSIS (Brian, 2026-11-18 23:38 CST: "the
+other two templates need to carry these similar placements and
+styles"): this template renders on the crossover chassis shared
+with the AI and crypto templates —
+  - full-height BLACK left rail (format rule, Brian 2026-11-18
+    23:19 CST): photo + frame, BRIAN LATHE / SUCCESS BRIAN, the
+    four nurture icons, a rail content section in the shared
+    panel grammar (this template's: the EKG signature line,
+    the desk's standing rule LIVED EXPERIENCE. REAL TALK., the
+    content lanes — diabetes / GLP-1 / weight loss — and the
+    stethoscope + glucometer medallions), and the standard CTA
+    SLOT at the foot (rail panel width x 161 tall, swappable
+    modules — this template ships the Spencer module);
+  - a REAL kicker pill with the manufactured finish (gradient
+    pulse glyphs, gloss, soft drop shadow, 3D bevel, inner
+    highlight, top sheen);
+  - the right side in the AI template's layout geometry and
+    type system: headline via headline_3d at depth 4 (health's
+    near-black teal extrusion kept), the framed card (444
+    tall, holo ring + header band + garnet footer band — the
+    garnet keeps its teal hairline, the health signature),
+    the connect card in the shared rhythm, and the SIGNATURE
+    BAND as a split row — branding left (BRIAN LATHE / LIVED
+    EXPERIENCE. REAL TALK.), FOLLOW hashtag chip right
+    (HEALTH_BRAND["hashtag"] = "FOLLOW #SuccessBrianHealth",
+    on record in meme_template.py);
+  - case balance per the AI case map (Brian, 2026-11-18
+    23:21 CST): kicker sentence case, headline caps, in-card
+    labels caps, ask caps, subline sentence case, chips caps,
+    buttons Title Case, signature caps;
+  - the Jensen Huang COUNTER STRIP at the foot of the column,
+    764 x 86 like every template, the day derived in code
+    from the Thu Nov 12, 2026 anchor (counters on all
+    templates — Brian, 2026-11-18 22:40 CST).
+The Oliabo Prima capsule emblem has no slot in the crossover
+chassis and is not drawn by the chassis render (capsule_emblem
+is retained; on alpha its photo files do not resolve in any
+case — pre-existing). The headline divider and its flanking
+icons retire with the old layout; the icons live on in the
+rail panel's medallions.
+
+FORMAT PRINCIPLE — THE CAPSULE IS A VARIABLE CONTAINER
+(Brian, 2026-11-18 23:40 CST): the main content capsule (the
+framed card) is ONE frame holding MANY interior layouts —
+the original comparative-card format, charts, Facebook-type
+image+text posts, relayed shared posts with Brian's thoughts
+beside them, and others. The frame is the format; the
+interior is variable. This template's comparative cards
+(plus the optional series dots and counterpoint strip) ride
+as the interior for now.
 
 CONTENT contract mirrors meme_template.render_meme, plus the political
 template's optional headline_size (starting point size, auto-shrinks).
@@ -49,15 +98,20 @@ NOTES:
     emblem must use REAL capsule photos per Brian 2026-10-06 (packet removed,
     exactly one emblem per meme).
 """
+import os
 import sys
+from datetime import date as _date
 from pathlib import Path
 sys.path.insert(0, "/home/hatch/workspace/successbrian-os/tools/audience")
+import meme_template as mt
 from meme_template import (headline_3d, photo_card,
                            font, _centered, grad_rounded, _gbar, icon,
+                           BRAND,
                            HEALTH_BRAND as _HEALTH_BRAND,
-                           INK, GRAY, FAINT, GARNET_BG, YELLOW,
+                           INK, GRAY, FAINT, GARNET_BG, GARNET_EDGE,
+                           YELLOW,
                            W, H, FB, FR)
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageChops
 
 HEALTH_BRAND = dict(_HEALTH_BRAND)
 HEALTH_BRAND.update({
@@ -386,133 +440,847 @@ def footer_health_dark(img, d, hashtag=None, dy=0, brand=None):
     return img, ImageDraw.Draw(img)
 
 
-def render_health_meme(content, photo_path=None, out_path="meme.png",
-                       brand=None, headline_size=None):
-    b = brand or HEALTH_BRAND
-    img = pulse_backdrop(health_background())
-    d = ImageDraw.Draw(img)
 
-    # brand bar (light type on the deep teal canvas)
-    pc = photo_card(photo_path)
-    img.paste(pc, (48, 36), pc)
-    x = 48 + 148 + 24
-    wx = x
-    for word, color in b["wordmark"]:
-        f = font(FB, 46)
-        d.text((wx, 44), word, font=f, fill=color)
-        wx += d.textlength(word, font=f) + 10
-    d.text((x, 104), b["tagline"], font=font(FR, 21), fill="#d7f5ee")
 
-    # Prima capsule specimen badge, top right — the one emblem on the meme
-    emb = capsule_emblem()
-    img.paste(emb, (W - 20 - 440, 30), emb)
-    d = ImageDraw.Draw(img)
+# ================= CROSSOVER CHASSIS =====================================
+# Format convergence (Brian, 2026-11-18 23:38 CST — see the module
+# docstring): this template renders on the crossover chassis shared
+# with the AI and crypto templates. The helpers below follow the
+# desk pattern — each driver carries its own copies (the crypto
+# crossover driver is the reference build).
+RAIL_W = 252
+CX = (RAIL_W + W) // 2 + 14  # content-zone center
+HUANG_COUNT_START = _date(2026, 11, 12)  # DAY 1 = Thu Nov 12, 2026
+GOLD_TXT = "#d9a521"
+RAIL_DIM = "#9aa7ba"
 
-    # strong cyan vitality glow behind the headline
-    glow = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    ImageDraw.Draw(glow).ellipse([W / 2 - 360, 170, W / 2 + 360, 450],
-                                 fill=(0, 229, 255, 85))
-    img = Image.alpha_composite(img.convert("RGBA"),
-                                glow.filter(ImageFilter.GaussianBlur(40))).convert("RGB")
-    d = ImageDraw.Draw(img)
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_SP = os.path.join(_HERE, "assets", "spencer-badge.webp")
+if os.path.exists(_SP):
+    mt.SPENCER_PHOTO = _SP
 
-    # kicker with pulse glyphs
-    d = kicker_health(img, 216, content["kicker"])
 
-    # headline: gradient + 3D, always (auto-fit so the extrusion never clips)
-    size = headline_size or 92
-    _tmp = ImageDraw.Draw(Image.new("RGB", (10, 10)))
-    while size > 40:
-        f_big = font(FB, size)
-        tw = _tmp.textlength(content["headline"], font=f_big)
-        if tw + 2 * 24 + 7 + 14 + 24 <= W - 24:
+def _photo_resolved(p):
+    """The caller's photo if it exists, else the desk's alpha asset
+    (the legacy /home/hatch paths do not resolve on alpha)."""
+    if p and os.path.exists(p):
+        return p
+    alt = os.path.join(_HERE, "assets", "brian-gina.jpg")
+    return alt if os.path.exists(alt) else p
+
+
+def cx_text(d, cx, y, text, fnt, fill, tracking=0):
+    if tracking:
+        tw = d.textlength(text, font=fnt) + tracking * (len(text) - 1)
+        x = cx - tw / 2
+        for ch in text:
+            d.text((x, y), ch, font=fnt, fill=fill)
+            x += d.textlength(ch, font=fnt) + tracking
+        return tw
+    tw = d.textlength(text, font=fnt)
+    d.text((cx - tw / 2, y), text, font=fnt, fill=fill)
+    return tw
+
+
+def _lx_text(d, x, y, text, fnt, fill, tracking=0):
+    """Left-aligned text with optional tracking; returns the x just
+    past the last glyph."""
+    if tracking:
+        for ch in text:
+            d.text((x, y), ch, font=fnt, fill=fill)
+            x += d.textlength(ch, font=fnt) + tracking
+        return x
+    d.text((x, y), text, font=fnt, fill=fill)
+    return x + d.textlength(text, font=fnt)
+
+
+def _fit(text, size, maxw, floor=12):
+    """Largest FB size (<= size) whose plain text width fits maxw."""
+    _d = ImageDraw.Draw(Image.new("RGBA", (10, 10)))
+    s = size
+    while s > floor and _d.textlength(text, font=font(FB, s)) > maxw:
+        s -= 1
+    return font(FB, s), s
+
+
+def _vgrad(w, h, top, bot, radius):
+    """Vertical two-stop gradient with rounded corners."""
+    _g = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    _gd = ImageDraw.Draw(_g)
+    _t, _b = mt._hex(top), mt._hex(bot)
+    for _yy in range(h):
+        _f = _yy / max(1, h - 1)
+        _gd.line([(0, _yy), (w, _yy)],
+                 fill=tuple(int(a + (c - a) * _f)
+                            for a, c in zip(_t, _b)) + (255,))
+    _mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(_mask).rounded_rectangle(
+        [0, 0, w - 1, h - 1], radius, fill=255)
+    _g.putalpha(_mask)
+    return _g
+
+
+def _kicker_finish(w, h, ground, radius, bevel_peak, sheen_peak,
+                   hl_peak, bevel_w=3):
+    """The manufactured finish core (the crypto/AI construction):
+    soft SHEEN across the top of the ground, a 3D BEVEL ring
+    (pale top edge rolling through a neutral mid to near-black
+    at the bottom), and a fine INNER HIGHLIGHT line just inside
+    the bevel. Built at 4x; `ground` is a 4x RGBA image."""
+    S = 4
+    W4, H4 = w * S, h * S
+    R4 = radius * S
+    pill = ground
+    bw = bevel_w * S
+
+    def _ring(inset, thick):
+        _m = Image.new("L", (W4, H4), 0)
+        _md = ImageDraw.Draw(_m)
+        _md.rounded_rectangle([inset, inset, W4 - 1 - inset,
+                               H4 - 1 - inset],
+                              max(4, R4 - inset), fill=255)
+        _inner = Image.new("L", (W4, H4), 0)
+        ImageDraw.Draw(_inner).rounded_rectangle(
+            [inset + thick, inset + thick,
+             W4 - 1 - inset - thick, H4 - 1 - inset - thick],
+            max(4, R4 - inset - thick), fill=255)
+        return ImageChops.subtract(_m, _inner)
+
+    def _vgrad_rgba(stops, alpha_mask, peak=255):
+        _g = Image.new("RGBA", (W4, H4), (0, 0, 0, 0))
+        _gd = ImageDraw.Draw(_g)
+        for _yy in range(H4):
+            _f = _yy / max(1, H4 - 1)
+            for _i in range(len(stops) - 1):
+                _f0, _c0 = stops[_i]
+                _f1, _c1 = stops[_i + 1]
+                if _f0 <= _f <= _f1:
+                    _g2 = (_f - _f0) / max(1e-6, _f1 - _f0)
+                    _col = tuple(int(p + (q - p) * _g2)
+                                 for p, q in zip(_c0, _c1))
+                    break
+            else:
+                _col = stops[-1][1]
+            _gd.line([(0, _yy), (W4, _yy)], fill=_col + (255,))
+        _g.putalpha(alpha_mask.point(lambda v: v * peak // 255))
+        return _g
+
+    _sa = Image.new("L", (W4, H4), 0)
+    _sd = ImageDraw.Draw(_sa)
+    for _yy in range(H4):
+        _f = _yy / max(1, H4 - 1)
+        _sd.line([(0, _yy), (W4, _yy)],
+                 fill=int(sheen_peak * max(0.0, 1 - _f / 0.55)))
+    _sa = _sa.filter(ImageFilter.GaussianBlur(3 * S))
+    _interior = Image.new("L", (W4, H4), 0)
+    ImageDraw.Draw(_interior).rounded_rectangle(
+        [bw, bw, W4 - 1 - bw, H4 - 1 - bw], R4 - bw, fill=255)
+    _sheen = Image.new("RGBA", (W4, H4), (255, 255, 255, 0))
+    _sheen.putalpha(ImageChops.darker(_sa, _interior))
+    pill.alpha_composite(_sheen)
+    _bevel = _vgrad_rgba(
+        ((0.0, (242, 250, 253)), (0.35, (158, 168, 178)),
+         (0.65, (58, 64, 72)), (1.0, (6, 8, 12))),
+        _ring(0, bw), peak=bevel_peak)
+    pill.alpha_composite(_bevel)
+    _ha = Image.new("L", (W4, H4), 0)
+    _hd = ImageDraw.Draw(_ha)
+    for _yy in range(H4):
+        _f = _yy / max(1, H4 - 1)
+        _hd.line([(0, _yy), (W4, _yy)],
+                 fill=int(hl_peak * max(0.0, 1 - _f / 0.6)))
+    _hl = Image.new("RGBA", (W4, H4), (255, 255, 255, 0))
+    _hl.putalpha(ImageChops.darker(_ha, _ring(bw, 1 * S + 2)))
+    pill.alpha_composite(_hl)
+    return pill.resize((w, h), Image.LANCZOS)
+
+
+def _kicker_pill(w, h, colors, base_alpha):
+    """The kicker pill, manufactured: the holo gradient ground in
+    the template's colors, finished with _kicker_finish at the
+    format peaks (bevel 238, sheen 52, highlight 130). The soft
+    drop shadow is cast by the caller."""
+    S = 4
+    ground = mt.holo_pill((w * S, h * S), colors=tuple(colors),
+                          radius=26 * S, base_alpha=base_alpha)
+    return _kicker_finish(w, h, ground, 26, 238, 52, 130)
+
+
+def _polished_bar(w, h, stops, radius=14):
+    """A bar with the manufactured finish: three-stop gradient
+    ground finished with _kicker_finish at the bar peaks (bevel
+    205, sheen 46, highlight 115). The caller casts the shadow."""
+    S = 4
+    W4, H4 = w * S, h * S
+    cols = [mt._hex(s) for s in stops]
+    bar = Image.new("RGBA", (W4, H4), (0, 0, 0, 0))
+    bd = ImageDraw.Draw(bar)
+    for yy in range(H4):
+        f = yy / max(1, H4 - 1)
+        if f < 0.5:
+            a, c, g = cols[0], cols[1], f / 0.5
+        else:
+            a, c, g = cols[1], cols[2], (f - 0.5) / 0.5
+        bd.line([(0, yy), (W4, yy)],
+                fill=tuple(int(p + (q - p) * g)
+                           for p, q in zip(a, c)) + (255,))
+    _mask = Image.new("L", (W4, H4), 0)
+    ImageDraw.Draw(_mask).rounded_rectangle(
+        [0, 0, W4 - 1, H4 - 1], radius * S, fill=255)
+    bar.putalpha(_mask)
+    return _kicker_finish(w, h, bar, radius, 205, 46, 115,
+                          bevel_w=2)
+
+
+def _bar_shadow(img, x, top, w, h, radius):
+    _pad = 18
+    _sh = Image.new("RGBA", (w + 2 * _pad, h + 2 * _pad),
+                    (0, 0, 0, 0))
+    ImageDraw.Draw(_sh).rounded_rectangle(
+        [_pad, _pad, _pad + w - 1, _pad + h - 1], radius,
+        fill=(0, 0, 0, 120))
+    _sh = _sh.filter(ImageFilter.GaussianBlur(7))
+    img.paste(_sh, (x - _pad, top + 4 - _pad), _sh)
+
+
+_KEEP_CAPS = {"AI", "USA", "US", "MMN", "CVN", "EVOO"}
+
+
+def _sentence_case(text):
+    """The kicker role's case (format case map): sentence case.
+    Tokens carrying digits, and the desk's standing acronyms
+    (AI, USA, MMN, CVN, EVOO), keep their case — ordinary short
+    words (IT, A, ON) lowercase like everything else."""
+    out = []
+    for w in text.split():
+        core = w.strip("—–-•·\"'“”")
+        if any(ch.isdigit() for ch in w) or (core.isupper()
+                                             and core in _KEEP_CAPS):
+            out.append(w)
+        else:
+            out.append(w.lower())
+    s = " ".join(out)
+    for i, ch in enumerate(s):
+        if ch.isalpha():
+            s = s[:i] + ch.upper() + s[i + 1:]
             break
-        size -= 2
-    colors = content.get("grad_colors", HL_COLORS)
-    hl, (lw, lh) = headline_3d(img, content["headline"], f_big, colors,
-                               extrusion=HL_EXTRUSION)
-    img.paste(hl, ((W - lw) // 2, 254), hl)
-    # colorful gradient divider under headline
-    div = grad_rounded((440, 9), HL_COLORS, 4)
-    img.paste(div, ((W - 440) // 2, 398), div)
-    # relevant icons flanking the divider — stethoscope left, glucometer
-    # right (Brian 2026-10-06). 48px, clear of EKG edges and card tops.
-    _isz, _iy = 48, 374
-    _st, _gm = icon_stethoscope(_isz), icon_glucometer(_isz)
-    img.paste(_st, (236, _iy), _st)
-    img.paste(_gm, (796, _iy), _gm)
+    return s
+
+
+def _ask_parts(content):
+    """The connect card's ask + subline from the content's
+    curiosity line (format case map: ask ALL CAPS, subline
+    sentence case). An explicit content["ask"] wins."""
+    if content.get("ask"):
+        return content["ask"], content.get("ask_sub", "")
+    cur = content.get("curiosity", "")
+    if "?" in cur:
+        a, _, rest = cur.partition("?")
+        return (a + "?").upper(), (rest.strip()
+                                   or "Drop your answer in the comments.")
+    return cur.upper(), ""
+
+
+def _yt_icon(size=26):
+    _im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    _d = ImageDraw.Draw(_im)
+    _d.rounded_rectangle([2, 2, size - 2, size - 2], size // 4,
+                         fill=(235, 25, 35, 255))
+    _d.polygon([(size * 0.40, size * 0.32), (size * 0.40, size * 0.68),
+                (size * 0.70, size * 0.50)], fill=(255, 255, 255, 255))
+    return _im
+
+
+def _sharp_icon(kind, size=42):
+    big = size * 4
+    _b = _yt_icon(big) if kind == "youtube" else mt.icon(kind, big)
+    return _b.resize((size, size), Image.LANCZOS)
+
+
+def _panel_frame(img, outline):
+    """The rail content section's frame (the shared panel
+    grammar): one bordered panel, x14-238, y450-861."""
     d = ImageDraw.Draw(img)
-    # series progress dots (optional): CONTENT["series_day"] = 1..5
+    d.rounded_rectangle([14, 450, RAIL_W - 14, 861], 18,
+                        fill=(22, 23, 31, 255),
+                        outline=mt._hex(outline) + (255,), width=2)
+    return 450
+
+
+def _panel_header(d, y0, text):
+    cx_text(d, RAIL_W // 2, y0 + 20, text, font(FB, 18),
+            GOLD_TXT, tracking=2)
+    d.line([(40, y0 + 54), (RAIL_W - 40, y0 + 54)],
+           fill=(217, 165, 33, 255), width=2)
+
+
+def _medallion(img, mcx, top, glyph, color, size=58):
+    """A drawn medallion in the shared grammar: dark disc ringed
+    in the mark's color, the glyph centered inside."""
+    S = 4
+    m = Image.new("RGBA", (size * S, size * S), (0, 0, 0, 0))
+    md = ImageDraw.Draw(m)
+    c = size * S // 2
+    r = c - 4 * S
+    md.ellipse([c - r, c - r, c + r, c + r], fill=(35, 35, 46, 255),
+               outline=mt._hex(color) + (255,), width=3 * S)
+    m = m.resize((size, size), Image.LANCZOS)
+    img.paste(m, (mcx - size // 2, top), m)
+    g = glyph
+    maxg = size - 16
+    if g.width > maxg or g.height > maxg:
+        if g.width >= g.height:
+            g = g.resize((maxg, int(g.height * maxg / g.width)),
+                         Image.LANCZOS)
+        else:
+            g = g.resize((int(g.width * maxg / g.height), maxg),
+                         Image.LANCZOS)
+    img.paste(g, (mcx - g.width // 2, top + (size - g.height) // 2), g)
+
+
+def _spencer_cta(img, accent):
+    """The Spencer CTA module in the standard slot (the AI
+    crossover's geometry: gold rule 881, lines 895/914, badge
+    935-1019, name 1027 — slot 881-1042, 161 tall)."""
+    d = ImageDraw.Draw(img)
+    d.line([(36, 881), (RAIL_W - 36, 881)],
+           fill=(217, 165, 33, 255), width=3)
+    for _i, _line in enumerate(mt.SPENCER_CTA):
+        cx_text(d, RAIL_W // 2, 895 + _i * 19, _line, font(FB, 13),
+                accent if _i else "#ffffff")
+    _badge = mt.spencer_badge(84)
+    img.paste(_badge, (RAIL_W // 2 - 42, 935), _badge)
+    d = ImageDraw.Draw(img)
+    cx_text(d, RAIL_W // 2, 1027, "SPENCER", font(FB, 15), "#ffffff")
+
+
+def _rail(img, photo_path, edge_colors, brand_color, glow_color,
+          panel_fn, cta_accent):
+    """The full-height BLACK left rail (format rule): black
+    ground, gradient edge, photo + frame + verified badge,
+    BRIAN LATHE / SUCCESS BRIAN, the four nurture icons, the
+    template's content section, the standard CTA slot."""
+    rail = Image.new("RGBA", (RAIL_W, H), (0, 0, 0, 0))
+    rd = ImageDraw.Draw(rail)
+    for yy in range(H):
+        t = yy / H
+        col = tuple(int(a + (b - a) * t)
+                    for a, b in zip((25, 27, 35), (15, 15, 20)))
+        rd.line([(0, yy), (RAIL_W, yy)], fill=col + (255,))
+    img.alpha_composite(rail, (0, 0))
+    strip = grad_rounded((6, H), list(edge_colors), 3)
+    img.paste(strip, (RAIL_W, 0), strip)
+    glow = mt._radial_glow(300, 300, glow_color, 70)
+    img.paste(glow, (RAIL_W // 2 - 150, -20), glow)
+    pc = photo_card(_photo_resolved(photo_path), size=192)
+    img.paste(pc, (RAIL_W // 2 - 96, 40), pc)
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([RAIL_W // 2 - 102, 34, RAIL_W // 2 + 102, 238],
+                        32, outline=(217, 165, 33, 255), width=4)
+    d.rounded_rectangle([RAIL_W // 2 - 109, 27, RAIL_W // 2 + 109, 245],
+                        36, outline=(217, 165, 33, 140), width=2)
+    bx, by, br = RAIL_W // 2 + 74, 200, 20
+    d.ellipse([bx - br, by - br, bx + br, by + br],
+              fill=(10, 165, 224, 255),
+              outline=(255, 255, 255, 255), width=3)
+    d.line([(bx - 10, by), (bx - 3, by + 8), (bx + 11, by - 8)],
+           fill=(255, 255, 255, 255), width=4)
+    cx_text(d, RAIL_W // 2, 272, "BRIAN LATHE", font(FB, 32),
+            "#ffffff", tracking=1)
+    cx_text(d, RAIL_W // 2, 314, "SUCCESS BRIAN", font(FB, 17),
+            brand_color, tracking=3)
+    for _i, _kind in enumerate(("facebook", "instagram",
+                                "youtube", "blog")):
+        _ix = RAIL_W // 2 - 42 - 8 if _i % 2 == 0 else RAIL_W // 2 + 8
+        _iy = 338 if _i < 2 else 338 + 42 + 12
+        _ic = _sharp_icon(_kind, 42)
+        img.paste(_ic, (_ix, _iy), _ic)
+    panel_fn(img)
+    _spencer_cta(img, cta_accent)
+
+
+def _kicker(img, text, colors, base_alpha, text_fill, mark_l, mark_r):
+    """The kicker as a REAL pill (format): AI proportions (y24,
+    height 66, radius 26, text FB18), the manufactured finish,
+    the template's own marks inside the pill ends, sentence
+    case per the case map."""
+    d = ImageDraw.Draw(img)
+    kt = _sentence_case(text)
+    kf = font(FB, 18)
+    ktw = d.textlength(kt, font=kf) + 3 * (len(kt) - 1)
+    pw, ph = int(ktw) + 120, 66
+    px = int(CX - pw / 2)
+    _pad = 32
+    _shadow = Image.new("RGBA", (pw + 2 * _pad, ph + 2 * _pad),
+                        (0, 0, 0, 0))
+    ImageDraw.Draw(_shadow).rounded_rectangle(
+        [_pad, _pad, _pad + pw - 1, _pad + ph - 1], 26,
+        fill=(0, 0, 0, 165))
+    _shadow = _shadow.filter(ImageFilter.GaussianBlur(11))
+    img.paste(_shadow, (px - _pad, 24 + 7 - _pad), _shadow)
+    _pill = _kicker_pill(pw, ph, colors, base_alpha)
+    img.paste(_pill, (px, 24), _pill)
+    if mark_l is not None:
+        img.paste(mark_l, (px + 14, 24 + (66 - mark_l.height) // 2),
+                  mark_l)
+    if mark_r is not None:
+        img.paste(mark_r, (px + pw - 14 - mark_r.width,
+                           24 + (66 - mark_r.height) // 2), mark_r)
+    d = ImageDraw.Draw(img)
+    cx_text(d, CX, 24 + (66 - 18) // 2 - 1, kt, kf, text_fill,
+            tracking=3)
+
+
+def _headline(img, text, colors, start=96, extrusion=None):
+    """The shared 3D headline treatment: headline_3d at depth 4,
+    fitted from `start` on the TRUE rendered layer width (<= 814)
+    and the format's layer height (<= 120), pasted at y94;
+    returns the framed card's top (94 + layer height + 14)."""
+    size = start
+    _dummy = Image.new("RGBA", (10, 10))
+    while size > 28:
+        f_big = font(FB, size)
+        kw = {"depth": 4}
+        if extrusion:
+            kw["extrusion"] = extrusion
+        hl, (lw, lh) = headline_3d(_dummy, text, f_big,
+                                   list(colors), **kw)
+        if lw <= W - RAIL_W - 14 and lh <= 120:
+            break
+        size -= 1
+    img.paste(hl, (int(CX - lw / 2), 94), hl)
+    return 94 + lh + 14
+
+
+def _framed(img, cy, colors, fill, outline):
+    """THE CAPSULE — the framed card at the format's geometry
+    (x286-1050, 444 tall, radius 24): holo ring outside, outline
+    width 5, 14px holo header band flush inside the top. The
+    interior is the caller's (variable container — see the
+    module docstring); the garnet footer band closes it."""
+    x0, x1 = RAIL_W + 34, W - 30
+    _frame = mt.holo_pill((x1 - x0 + 6, 444 + 6),
+                          colors=tuple(colors), radius=27,
+                          base_alpha=255)
+    img.paste(_frame, (x0 - 3, cy - 3), _frame)
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([x0, cy, x1, cy + 444], 24, fill=fill,
+                        outline=outline, width=5)
+    _bw = (x1 - 4) - (x0 + 4)
+    _band = mt.holo_pill((_bw, 14), colors=tuple(colors), radius=1,
+                         base_alpha=255)
+    _bm = Image.new("L", (_bw * 3, 14 * 3), 0)
+    ImageDraw.Draw(_bm).rounded_rectangle(
+        [0, 0, _bw * 3 - 1, 14 * 3 + 60], radius=60, fill=255)
+    _band.putalpha(_bm.resize((_bw, 14), Image.LANCZOS))
+    img.paste(_band, (x0 + 4, cy + 4), _band)
+    return x0, x1
+
+
+def _garnet(img, cy, x0, x1, text, hairline=GARNET_EDGE):
+    """The capsule's garnet footer band (48 tall, flush inside
+    the bottom border): shaded garnet gradient, hairline on its
+    top edge, the punchline in YELLOW at the format tier (FB23)."""
+    _gbw = x1 - x0 - 8
+    _gb = _vgrad(_gbw, 48, "#a83a50", "#7e2e3f", 1)
+    _gm = Image.new("L", (_gbw * 3, 48 * 3), 0)
+    ImageDraw.Draw(_gm).rounded_rectangle(
+        [0, -60, _gbw * 3 - 1, 48 * 3 - 1], radius=60, fill=255)
+    _gb.putalpha(_gm.resize((_gbw, 48), Image.LANCZOS))
+    _gy = cy + 444 - 4 - 48
+    img.paste(_gb, (x0 + 4, _gy), _gb)
+    d = ImageDraw.Draw(img)
+    d.line([x0 + 4, _gy, x1 - 4, _gy], fill=hairline, width=2)
+    _pf, _psz = _fit(text.upper(), 23, _gbw - 40, floor=14)
+    cx_text(d, (x0 + x1) // 2, _gy + (48 - _psz) // 2 - 1,
+            text.upper(), _pf, YELLOW)
+
+
+def _chip(img, cx_center, label, kind, top, fill, outline, ink):
+    """A LIKE / COMMENT / SHARE chip (232x44) in the shared
+    grammar, skinned by the caller."""
+    chw, chh = 232, 44
+    cx0 = int(cx_center - chw / 2)
+    _s = Image.new("RGBA", (chw + 20, chh + 20), (0, 0, 0, 0))
+    ImageDraw.Draw(_s).rounded_rectangle(
+        [10, 10, chw + 10, chh + 10], 22, fill=(0, 0, 0, 90))
+    _s = _s.filter(ImageFilter.GaussianBlur(6))
+    img.paste(_s, (cx0 - 10, top - 6), _s)
+    _cd = ImageDraw.Draw(img)
+    _cd.rounded_rectangle([cx0, top, cx0 + chw, top + chh], 22,
+                          fill=fill, outline=outline, width=2)
+    if kind == "like":
+        hx, hy = cx0 + 22, top + 10
+        _cd.ellipse([hx, hy, hx + 12, hy + 12], fill="#e0245e")
+        _cd.ellipse([hx + 11, hy, hx + 23, hy + 12], fill="#e0245e")
+        _cd.polygon([(hx + 1, hy + 9), (hx + 22, hy + 9),
+                     (hx + 11, hy + 24)], fill="#e0245e")
+        ix = cx0 + 22 + 23 + 12
+    elif kind == "share":
+        nx, ny = cx0 + 22, top + 8
+        _cd.line([(nx + 7, ny + 14), (nx + 24, ny + 5)], fill=ink,
+                 width=3)
+        _cd.line([(nx + 7, ny + 14), (nx + 24, ny + 23)], fill=ink,
+                 width=3)
+        for cxp, cyp in [(nx + 26, ny + 5), (nx + 5, ny + 14),
+                         (nx + 26, ny + 23)]:
+            _cd.ellipse([cxp - 5, cyp - 5, cxp + 5, cyp + 5],
+                        outline=ink, width=3)
+        ix = cx0 + 22 + 31 + 12
+    else:
+        bx0, by0 = cx0 + 22, top + 10
+        _cd.rounded_rectangle([bx0, by0, bx0 + 30, by0 + 20], 6,
+                              outline=ink, width=3)
+        _cd.polygon([(bx0 + 6, by0 + 20), (bx0 + 6, by0 + 29),
+                     (bx0 + 15, by0 + 20)], fill=ink)
+        for _dx in (8, 15, 22):
+            _cd.ellipse([bx0 + _dx - 2, by0 + 8, bx0 + _dx + 2,
+                         by0 + 12], fill=ink)
+        ix = cx0 + 22 + 30 + 12
+    _cd.text((ix, top + 11), label, font=font(FB, 17), fill=ink)
+
+
+def _cta(img, cx0, top, w, h, c_top, c_bot, line1, line2):
+    _b = _vgrad(w, h, c_top, c_bot, 16)
+    img.paste(_b, (cx0, top), _b)
+    _bd = ImageDraw.Draw(img)
+    _f1 = font(FB, 19)
+    _w1 = _bd.textlength(line1, font=_f1)
+    _bd.text((cx0 + (w - _w1) / 2, top + 9), line1, font=_f1,
+             fill=(255, 255, 255, 255))
+    _f2 = font(FB, 12)
+    _w2 = _bd.textlength(line2, font=_f2)
+    _bd.text((cx0 + (w - _w2) / 2, top + 35), line2, font=_f2,
+             fill=(255, 255, 255, 235))
+
+
+def _connect(img, T, *, card_fill, card_outline, strip_colors,
+             ask, sub, ask_fill, sub_fill, chip_fill, chip_outline,
+             chip_ink, band_stops, band_outline, band_line,
+             hashtag, chip_stops, tag_ink):
+    """THE CONNECT CARD in the shared rhythm (272 tall): ask
+    (FB28, ALL CAPS) -> subline (FB18, sentence case) -> chips
+    -> destinations (Substack polished bar + WhatsApp) -> the
+    SIGNATURE BAND as a split row: branding LEFT, the FOLLOW
+    hashtag chip RIGHT."""
+    _csh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(_csh).rounded_rectangle(
+        [RAIL_W + 34, T + 7, W - 30, T + 272 + 7], 24,
+        fill=(0, 0, 0, 110))
+    _csh = _csh.filter(ImageFilter.GaussianBlur(10))
+    img.alpha_composite(_csh)
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([RAIL_W + 34, T, W - 30, T + 272], 24,
+                        fill=card_fill, outline=card_outline,
+                        width=3)
+    _astrip = mt.holo_pill((W - 30 - (RAIL_W + 34) - 8, 7),
+                           colors=tuple(strip_colors), radius=3,
+                           base_alpha=220)
+    img.paste(_astrip, (RAIL_W + 38, T + 6), _astrip)
+    d = ImageDraw.Draw(img)
+    _af, _asz = _fit(ask, 28, 724, floor=16)
+    cx_text(d, CX, T + 16, ask, _af, ask_fill)
+    if sub:
+        cx_text(d, CX, T + 54, sub, font(FB, 18), sub_fill)
+    _chip(img, 424, "LIKE", "like", T + 78, chip_fill,
+          chip_outline, chip_ink)
+    _chip(img, 668, "COMMENT", "comment", T + 78, chip_fill,
+          chip_outline, chip_ink)
+    _chip(img, 912, "SHARE", "share", T + 78, chip_fill,
+          chip_outline, chip_ink)
+    # destinations: the Substack bar, polished (Title Case name
+    # + lowercase address), and the green WhatsApp pill
+    _bar_shadow(img, 292, T + 126, 368, 58, 16)
+    _sb = _polished_bar(368, 58, ("#ff9a4d", "#ff7a29", "#cf4300"),
+                        16)
+    img.paste(_sb, (292, T + 126), _sb)
+    d = ImageDraw.Draw(img)
+    _f1 = font(FB, 19)
+    _w1 = d.textlength("Read My Blog", font=_f1)
+    d.text((292 + (368 - _w1) / 2, T + 126 + 9), "Read My Blog",
+           font=_f1, fill=(255, 255, 255, 255))
+    _f2 = font(FB, 12)
+    _url = BRAND["blog_url"]
+    _w2 = d.textlength(_url, font=_f2)
+    d.text((292 + (368 - _w2) / 2, T + 126 + 35), _url, font=_f2,
+           fill=(255, 255, 255, 235))
+    _cta(img, 676, T + 126, 368, 58, "#2fce6e", "#0f9d4c",
+         "Message Me on WhatsApp",
+         dict(BRAND["handles"])["whatsapp"])
+    # THE SIGNATURE BAND — split row, polished navy-style bar in
+    # the template's skin
+    _bx0, _bx1 = RAIL_W + 46, W - 42
+    _bw = _bx1 - _bx0
+    _by, _bh = T + 198, 62
+    _bar_shadow(img, _bx0, _by, _bw, _bh, 14)
+    _pq = _polished_bar(_bw, _bh, band_stops, 14)
+    img.paste(_pq, (_bx0, _by), _pq)
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([_bx0, _by, _bx1, _by + _bh], 14,
+                        outline=band_outline, width=2)
+    _nend = _lx_text(d, _bx0 + 24, _by + 7, "BRIAN LATHE",
+                     font(FB, 30), "white", tracking=1)
+    _mend = _lx_text(d, _bx0 + 24, _by + 42, band_line,
+                     font(FB, 13), "#f2cf7a", tracking=1)
+    if hashtag:
+        _tf, _tsz = _fit(hashtag, 15, 300, floor=11)
+        _cw = int(d.textlength(hashtag, font=_tf) + 42)
+        _ch = 34
+        _cx1 = _bx1 - 20
+        _cx0 = _cx1 - _cw
+        _cy0 = _by + (_bh - _ch) // 2
+        _lend = max(_nend, _mend)
+        if _cx0 - _lend > 70:
+            _dvx = (_lend + _cx0) // 2
+            d.line([_dvx, _by + 14, _dvx, _by + _bh - 14],
+                   fill=(70, 96, 138, 255), width=2)
+        _bar_shadow(img, _cx0, _cy0, _cw, _ch, 18)
+        _chipim = _polished_bar(_cw, _ch, chip_stops, 18)
+        img.paste(_chipim, (_cx0, _cy0), _chipim)
+        d = ImageDraw.Draw(img)
+        cx_text(d, (_cx0 + _cx1) // 2, _cy0 + (_ch - _tsz) // 2 - 1,
+                hashtag, _tf, tag_ink)
+
+
+def _counter(img, T, edge_colors):
+    """THE COUNTER STRIP — the format's counter slot at the foot
+    of the column (764 x 86, the same size on every template):
+    navy gradient block, blue outline, holo top edge in the
+    template's colors, DAY n derived from the Thu Nov 12, 2026
+    anchor — never hard-coded."""
+    _day = (_date.today() - HUANG_COUNT_START).days + 1
+    cs0, cs1 = T + 272 + 14, T + 272 + 14 + 86
+    _sb = _vgrad(W - 30 - (RAIL_W + 34), cs1 - cs0,
+                 "#1d2c49", "#131f36", 18)
+    img.paste(_sb, (RAIL_W + 34, cs0), _sb)
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([RAIL_W + 34, cs0, W - 30, cs1], 18,
+                        outline="#0aa5e0", width=2)
+    _edge = mt.holo_pill((W - 30 - (RAIL_W + 34) - 8, 5),
+                         colors=tuple(edge_colors), radius=2,
+                         base_alpha=200)
+    img.paste(_edge, (RAIL_W + 38, cs0 + 3), _edge)
+    d = ImageDraw.Draw(img)
+    d.text((RAIL_W + 62, cs0 + 24), f"DAY {_day}",
+           font=font(FB, 34), fill="white")
+    _st = "JENSEN HUANG \u2022 DAYS SINCE HE RESIGNED"
+    _sf = font(FB, 16)
+    _sw = d.textlength(_st, font=_sf)
+    d.text((W - 58 - _sw, cs0 + 18), _st, font=_sf, fill="#ffd23f")
+    _ss = "COUNT STARTED THU NOV 12"
+    _ssf = font(FB, 12)
+    _ssw = d.textlength(_ss, font=_ssf)
+    d.text((W - 58 - _ssw, cs0 + 44), _ss, font=_ssf,
+           fill="#9fb4cc")
+
+
+def _pulse_wide(w=184, h=46):
+    """A wide EKG pulse line with icon_pulse's manufactured
+    finish (vertical gradient — lit mint -> the glyph's teal ->
+    deep teal — plus a top sheen), drawn at 4x."""
+    S = 4
+    w4, h4 = w * S, h * S
+    sil = Image.new("L", (w4, h4), 0)
+    ImageDraw.Draw(sil).line(
+        _pulse_points(6 * S, 6 * S, (w - 12) * S, (h - 12) * S),
+        fill=255, width=5 * S, joint="curve")
+    stops = ((150, 255, 222), (0, 158, 110), (0, 92, 64))
+    grad = Image.new("RGBA", (w4, h4), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(grad)
+    for yy in range(h4):
+        f = yy / max(1, h4 - 1)
+        if f < 0.45:
+            a, c, g = stops[0], stops[1], f / 0.45
+        else:
+            a, c, g = stops[1], stops[2], (f - 0.45) / 0.55
+        gd.line([(0, yy), (w4, yy)],
+                fill=tuple(int(p + (q - p) * g)
+                           for p, q in zip(a, c)) + (255,))
+    grad.putalpha(sil)
+    sa = Image.new("L", (w4, h4), 0)
+    sd = ImageDraw.Draw(sa)
+    for yy in range(h4):
+        f = yy / max(1, h4 - 1)
+        sd.line([(0, yy), (w4, yy)],
+                fill=int(80 * max(0.0, 1 - f / 0.5)))
+    sheen = Image.new("RGBA", (w4, h4), (255, 255, 255, 0))
+    sheen.putalpha(ImageChops.darker(sa, sil))
+    grad.alpha_composite(sheen)
+    return grad.resize((w, h), Image.LANCZOS)
+
+
+def _health_panel(img):
+    """The health rail section in the shared panel grammar:
+    header + gold rule, the EKG signature line, the desk's
+    standing rule as the panel's statement (LIVED EXPERIENCE.
+    REAL TALK.), a hairline, the content lanes as lit rows,
+    and the desk's two drawn instruments as medallions."""
+    y0 = _panel_frame(img, TEAL_DARK)
+    d = ImageDraw.Draw(img)
+    _panel_header(d, y0, "HEALTH DESK")
+    pw_ = _pulse_wide()
+    img.paste(pw_, (RAIL_W // 2 - 92, y0 + 70), pw_)
+    d = ImageDraw.Draw(img)
+    cx_text(d, RAIL_W // 2, y0 + 138, "LIVED EXPERIENCE.",
+            font(FB, 19), "#ffffff")
+    cx_text(d, RAIL_W // 2, y0 + 166, "REAL TALK.",
+            font(FB, 19), "#ffffff")
+    d.line([(56, y0 + 204), (196, y0 + 204)],
+           fill=(70, 74, 90, 255), width=2)
+    cx_text(d, RAIL_W // 2, y0 + 220, "THE LANE", font(FB, 11),
+            RAIL_DIM, tracking=3)
+    for _i, _lane in enumerate(("DIABETES", "GLP-1", "WEIGHT LOSS")):
+        _yy = y0 + 246 + _i * 30
+        d.ellipse([44 - 9, _yy + 1, 44 + 9, _yy + 19],
+                  fill=(0, 255, 170, 40))
+        d.ellipse([44 - 4, _yy + 6, 44 + 4, _yy + 14],
+                  fill=(64, 255, 170, 255))
+        _lx_text(d, 62, _yy, _lane, font(FB, 14), "#ffffff",
+                 tracking=1)
+    _medallion(img, 56, y0 + 334, icon_stethoscope(34), TEAL_EDGE,
+               size=52)
+    _medallion(img, 196, y0 + 334, icon_glucometer(34), TEAL_EDGE,
+               size=52)
+    d = ImageDraw.Draw(img)
+    cx_text(d, 56, y0 + 334 + 56, "STETHOSCOPE", font(FB, 9),
+            "#ffffff")
+    cx_text(d, 196, y0 + 334 + 56, "GLUCOMETER", font(FB, 9),
+            "#ffffff")
+
+
+def _health_interior(img, content, cy, x0, x1):
+    """The health capsule interior (variable container — the
+    desk's comparative cards ride as the interior for now),
+    reflowed to the frame: cards across the interior width,
+    the optional series dots above them, the optional
+    counterpoint strip in the skeptics-strip position."""
+    d = ImageDraw.Draw(img)
+    cards = content["cards"]
+    n = len(cards)
+    ix0, ix1 = x0 + 20, x1 - 20
+    top = cy + 26
     if content.get("series_day"):
         _sd = content["series_day"]
         _r, _gap = 7, 12
         _total = 5 * _r * 2 + 4 * _gap
-        _sx = (W - _total) / 2
+        _sx = CX - _total / 2
         for _i in range(5):
             _cx = _sx + _r + _i * (_r * 2 + _gap)
             if _i < _sd:
-                d.ellipse([_cx - _r, 416 - _r, _cx + _r, 416 + _r],
-                          fill=TEAL_DARK)
+                d.ellipse([_cx - _r, cy + 40 - _r, _cx + _r,
+                           cy + 40 + _r], fill=TEAL_DARK)
             else:
-                d.ellipse([_cx - _r, 416 - _r, _cx + _r, 416 + _r],
-                          outline="#b9c4d6", width=2)
-
-    # cards: tinted, soft shadow, gradient bars (same as AI template)
-    cards = content["cards"]
-    n = len(cards)
-    gap, margin = 32, 48
-    cw = (W - 2 * margin - gap * (n - 1)) / n
-    cy0, ch = 424, 252
+                d.ellipse([_cx - _r, cy + 40 - _r, _cx + _r,
+                           cy + 40 + _r], outline="#b9c4d6",
+                          width=2)
+        top = cy + 58
+    cp = content.get("counterpoint")
+    bot = cy + 322 if cp else cy + 392
+    chh = bot - top
+    gap = 24
+    cw = (ix1 - ix0 - gap * (n - 1)) / n
     for i, c in enumerate(cards):
-        x = margin + i * (cw + gap)
+        x = ix0 + i * (cw + gap)
         tint = c.get("tint", "#ffffff")
-        d.rounded_rectangle([x + 6, cy0 + 10, x + cw + 6, cy0 + ch + 10], 26,
+        d.rounded_rectangle([x + 6, top + 10, x + cw + 6,
+                             top + chh + 10], 26,
                             fill=(178, 188, 205, 255))
-        d.rounded_rectangle([x, cy0, x + cw, cy0 + ch], 26, fill=tint,
+        d.rounded_rectangle([x, top, x + cw, top + chh], 26,
+                            fill=tint,
                             outline=(210, 218, 230, 255), width=2)
-        cx = x + cw / 2
-        _psz = c.get("price_size", 66)
-        for txt, fnt, col, yy in [
-            (c["tag"], font(FB, 19), FAINT, cy0 + 24),
-            (c["title"], font(FB, 30), INK, cy0 + 54),
-            (c["price"], font(FB, _psz), c["bar_color"], cy0 + 96),
-        ]:
+        ccx = x + cw / 2
+        for txt, fnt, col, fr_ in [
+                (c["tag"], font(FB, 19), FAINT, 0.09),
+                (c["title"], font(FB, 30), INK, 0.21),
+                (c["price"], font(FB, c.get("price_size", 66)),
+                 c["bar_color"], 0.37)]:
             tw = d.textlength(txt, font=fnt)
-            d.text((cx - tw / 2, yy), txt, font=fnt, fill=col)
+            d.text((ccx - tw / 2, top + chh * fr_), txt, font=fnt,
+                   fill=col)
         t = c["sub"]
         tw = d.textlength(t, font=font(FR, 22))
-        d.text((cx - tw / 2, cy0 + 178), t, font=font(FR, 22), fill=GRAY)
-        bx, bw, bh, by = x + 36, cw - 72, 24, cy0 + 214
+        d.text((ccx - tw / 2, top + chh * 0.70), t,
+               font=font(FR, 22), fill=GRAY)
+        bx, bw, bh, by = x + 36, cw - 72, 24, top + chh * 0.85
         d.rounded_rectangle([bx, by, bx + bw, by + bh], 12,
                             fill=(226, 231, 241, 255))
-        _gbar(img, [bx, by, bx + bw * c["bar_frac"], by + bh], c["bar_color"])
+        _gbar(img, [bx, by, bx + bw * c["bar_frac"], by + bh],
+              c["bar_color"])
         d = ImageDraw.Draw(img)
-
-    # optional counterpoint strip (debate-style memes)
-    cp = content.get("counterpoint")
-    dy = 0
     if cp:
-        cs0, cs1 = 688, 758
-        d.rounded_rectangle([48, cs0, W - 48, cs1], 16, fill="#ffffff",
-                            outline="#5eead4", width=3)
-        _centered(d, cs0 + 8, cp["label"], font(FB, 19), FAINT)
-        _centered(d, cs0 + 34, cp["quote"], font(FB, 23), INK)
-        dy = 68
+        sy = cy + 334
+        d.rounded_rectangle([x0 + 20, sy, x1 - 20, sy + 44], 14,
+                            fill="#f0fdf9", outline=TEAL_EDGE,
+                            width=2)
+        cx_text(d, CX, sy + 5, cp["label"], font(FB, 12), FAINT,
+                tracking=1)
+        cx_text(d, CX, sy + 23, cp["quote"], font(FB, 17), INK)
 
-    # punchline strip (garnet — Brian's birthstone; strong teal edge for health)
-    py0, py1 = 700 + dy, 782 + dy
-    d.rounded_rectangle([48, py0, W - 48, py1], 18, fill=GARNET_BG,
-                        outline=TEAL_EDGE, width=3)
-    _centered(d, py0 + 22, content["punchline"], font(FB, 29), YELLOW)
 
-    # curiosity line (replaces technical callouts)
-    if content.get("curiosity"):
-        _centered(d, 804 + dy, content["curiosity"], font(FB, 26), "#ffffff")
+def _pulse_mark():
+    """The kicker's pulse mark: icon_pulse's gradient glyph on a
+    deep-teal underlay grown from its own silhouette (the
+    outline element of the manufactured finish, for a stroke
+    glyph), finished with the template's soft-shadow idiom."""
+    g = icon_pulse(22)
+    a = g.split()[3].filter(ImageFilter.MaxFilter(5))
+    under = Image.new("RGBA", g.size, (0, 38, 30, 255))
+    under.putalpha(a)
+    out = Image.new("RGBA", g.size, (0, 0, 0, 0))
+    out.alpha_composite(under)
+    out.alpha_composite(g)
+    return _icon_shadow(out)
 
-    img, d = footer_health_dark(img, d, hashtag=content.get("hashtag"), dy=dy,
-                               brand=b)
 
-    img.save(out_path)
+def render_health_meme(content, photo_path=None, out_path="meme.png",
+                       brand=None, headline_size=None):
+    """Render a health meme on the crossover chassis. The
+    capsule interior is the desk's comparative cards (plus the
+    optional series dots and counterpoint strip)."""
+    b = brand or HEALTH_BRAND
+    img = pulse_backdrop(health_background()).convert("RGBA")
+    d = ImageDraw.Draw(img)
+
+    _rail(img, photo_path, HL_COLORS, TEAL_EDGE, (0, 200, 160),
+          _health_panel, "#22d3ee")
+
+    # kicker: a real pill now, pulse glyphs inside as its marks
+    _pm = _pulse_mark()
+    _kicker(img, content["kicker"], HL_COLORS, 130,
+            (235, 255, 248), _pm, _pm)
+
+    # headline: electric gradient + the shared 3D treatment,
+    # health's near-black teal extrusion
+    cy = _headline(img, content["headline"],
+                   content.get("grad_colors", HL_COLORS),
+                   start=headline_size or 96,
+                   extrusion=HL_EXTRUSION)
+
+    # THE CAPSULE — the desk's cards are the interior
+    x0, x1 = _framed(img, cy, HL_COLORS, "white", "#083f38")
+    _health_interior(img, content, cy, x0, x1)
+    _garnet(img, cy, x0, x1, content["punchline"],
+            hairline=TEAL_EDGE)
+
+    # connect card + counter strip
+    T = cy + 444 + 26
+    ask, sub = _ask_parts(content)
+    _connect(img, T,
+             card_fill="#0b3f38", card_outline=TEAL_EDGE,
+             strip_colors=HL_COLORS,
+             ask=ask, sub=sub, ask_fill="white",
+             sub_fill="#bfe9df",
+             chip_fill=(16, 84, 74), chip_outline=TEAL_EDGE,
+             chip_ink="white",
+             band_stops=("#14665a", "#0a4a41", "#052e29"),
+             band_outline=TEAL_EDGE,
+             band_line=b["tagline"],
+             hashtag=content.get("hashtag") or b.get("hashtag"),
+             chip_stops=("#8ff5d2", "#00c98a", "#009e6e"),
+             tag_ink=(4, 43, 36))
+    _counter(img, T, HL_COLORS)
+
+    img.convert("RGB").save(out_path)
     return out_path
 
 
@@ -525,10 +1293,12 @@ if __name__ == "__main__":
             "cards": [
                 {"tag": "BEFORE", "title": "BLOOD SUGAR",
                  "price": "HIGH", "sub": "nerves on fire",
-                 "bar_frac": 0.85, "bar_color": "#f59e0b", "tint": "#fff8f0"},
+                 "bar_frac": 0.85, "bar_color": "#f59e0b",
+                 "tint": "#fff8f0"},
                 {"tag": "AFTER", "title": "98-109 CLUB",
                  "price": "STEADY", "sub": "nerves calming down",
-                 "bar_frac": 0.35, "bar_color": "#00b894", "tint": "#f0fdf9"},
+                 "bar_frac": 0.35, "bar_color": "#00b894",
+                 "tint": "#f0fdf9"},
             ],
             "punchline": "YOUR NUMBERS ARE A STORY. READ THEM.",
             "curiosity": "What changed first for you — the numbers or the symptoms?",

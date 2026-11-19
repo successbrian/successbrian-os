@@ -113,6 +113,21 @@ lines. Hierarchy stands: ASK BRIAN FOR -> 7 DAY FREE TRIAL ->
 24/7 6TB CLOUD BACKUP. The room comes from the rail crunch —
 the HODL panels ride higher; their substance is unchanged.
 
+CTA-slot ruling (Brian, 2026-11-18 22:23 CST): "it needs to be
+the same SIZE as the spencer call to action -- i'm going to now
+multiple call to actions all the same size and we can swap them
+out per post." The CTA slot is ONE standard size across the
+format — CTAs are interchangeable modules swapped per post
+(Spencer / the Muse AI agent on the AI piece, this unnamed
+trial offer on the crypto piece, more to come). The standard
+footprint is the Spencer block's, measured in
+render_crossover_graph.py: the gold rule at y881, CTA lines
+895/914, badge 935-1019, name 1027 — a slot 180 wide (x36-216,
+the rule's extent) x 161 tall (y881-1042) at the rail foot.
+This offer card is built to exactly that footprint; the
+stand-out treatment (gold card, gold pill, medallion) lives
+INSIDE the slot and takes no extra rail room.
+
 Content (the crypto desk as rebranded, commit 25e4179): headline
 "BUY FEAR. SELL GREED.", the six coins as comparative cards, the
 skeptics strip, punchline "SUPPORT IS WHERE YOU BUY. RESISTANCE IS
@@ -254,7 +269,7 @@ def main():
         big = size * 4
         _b = _yt_icon(big) if kind == "youtube" else mt.icon(kind, big)
         return _b.resize((size, size), Image.LANCZOS)
-    _isz, _hgap, _vgap, _iy0 = 42, 16, 12, 352
+    _isz, _hgap, _vgap, _iy0 = 42, 16, 12, 338
     for _i, _kind in enumerate(("facebook", "instagram", "youtube", "blog")):
         _ix = RAIL_W // 2 - _isz - _hgap // 2 if _i % 2 == 0 else RAIL_W // 2 + _hgap // 2
         _iy = _iy0 if _i < 2 else _iy0 + _isz + _vgap
@@ -372,7 +387,7 @@ def main():
         panel's bottom y."""
         _pd = ImageDraw.Draw(img)
         _rows = (len(items) + len(col_cxs) - 1) // len(col_cxs)
-        _y1 = y0 + 72 + (_rows - 1) * 88 + 92
+        _y1 = y0 + 72 + (_rows - 1) * 84 + 92
         _pd.rounded_rectangle([14, y0, RAIL_W - 14, _y1], 18,
                               fill=(22, 23, 31, 255),
                               outline=mt._hex(ct.KASPA_DK) + (255,),
@@ -383,7 +398,7 @@ def main():
                  fill=(217, 165, 33, 255), width=2)
         for _i, (_kind, _label, _color) in enumerate(items):
             _mcx = col_cxs[_i % len(col_cxs)]
-            _mtop = y0 + 72 + (_i // len(col_cxs)) * 88
+            _mtop = y0 + 72 + (_i // len(col_cxs)) * 84
             _med = _medallion(_kind, _color)
             img.paste(_med, (_mcx - 29, _mtop), _med)
             cx_text(_pd, _mcx, _mtop + 64, _label, font(FB, 11), INK_D,
@@ -392,7 +407,7 @@ def main():
 
     _coins = [(_c["title"], _c["title"], _c["bar_color"])
               for _c in content["cards"]]
-    _ybot = _hodl_panel(470, "HODL Coins", _coins, (56, 126, 196))
+    _ybot = _hodl_panel(446, "HODL Coins", _coins, (56, 126, 196))
     # Brian's two HODL stocks (ruled 2026-11-18 22:01 CST): O =
     # Realty Income (realty) in silver-blue, MAIN = Main Street
     # Capital (BDC lender, not realty) in money green — colors
@@ -417,38 +432,47 @@ def main():
     # the desk's idiom — no scraped art, no brand marks. ----
     # Offer treatment (Brian, 2026-11-18 22:20 CST: "my 7 day offer
     # needs to stand out more -- i want people buy it, ask about
-    # it, etc."): the block is now a filled AD CARD in the format's
-    # panel grammar — a warm gold-gradient fill with a gold border
-    # lifts it off the rail's dark ground, the cloud medallion sits
-    # INSIDE the card with the offer, and "7 DAY FREE TRIAL" rides
-    # a filled gold pill (dark text, the holo_pill idiom) as the
-    # strongest element on the rail, readable at thumbnail scale.
-    # Words unchanged (22:16 ruling); hierarchy: ASK BRIAN FOR ->
-    # 7 DAY FREE TRIAL -> 24/7 6TB CLOUD BACKUP. Room comes from
-    # the rail crunch above (coins panel at 470, stocks gap 12).
-    _cy0, _cy1 = _sbot + 12, 1072
-    _card = _vgrad(RAIL_W - 28, _cy1 - _cy0, "#6d5718", "#382b0b", 18)
-    img.paste(_card, (14, _cy0), _card)
+    # it, etc."), sized by the CTA-slot ruling (22:23 CST: "it
+    # needs to be the same SIZE as the spencer call to action --
+    # i'm going to now multiple call to actions all the same size
+    # and we can swap them out per post"). The block is a filled
+    # AD CARD — warm gold gradient, gold border — built to the
+    # STANDARD CTA SLOT, the Spencer block's exact footprint
+    # measured in render_crossover_graph.py: x36-216 (180 wide,
+    # the rule's extent) x y881-1042 (161 tall: rule 881, lines
+    # 895/914, badge 935-1019, name 1027), same rail-foot position.
+    # CTAs are interchangeable modules at this size, swapped per
+    # post; the stand-out treatment lives INSIDE the footprint —
+    # the card's gold outline takes the rule's place at the slot's
+    # top edge, "7 DAY FREE TRIAL" rides a filled gold pill (dark
+    # text, the holo_pill idiom), and the cloud medallion sits at
+    # the badge position. Internal order mirrors Spencer's:
+    # invitation line -> hook -> badge -> closing line. Words
+    # unchanged (22:16 ruling). The HODL panels crunch up to clear
+    # the slot (stocks bottom 870, slot top 881); their substance
+    # is unchanged.
+    _sx0, _sx1, _sy0, _sy1 = 36, RAIL_W - 36, 881, 1042
+    _card = _vgrad(_sx1 - _sx0, _sy1 - _sy0, "#6d5718", "#382b0b", 16)
+    img.paste(_card, (_sx0, _sy0), _card)
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle([14, _cy0, RAIL_W - 14, _cy1], 18,
+    d.rounded_rectangle([_sx0, _sy0, _sx1, _sy1], 16,
                         outline=(217, 165, 33, 255), width=3)
-    _cmed = _medallion("CLOUD", _coins[0][2], 46)
-    img.paste(_cmed, (RAIL_W // 2 - 23, _cy0 + 10), _cmed)
-    d = ImageDraw.Draw(img)
-    cx_text(d, RAIL_W // 2, _cy0 + 62, "ASK BRIAN FOR",
-            font(FB, 13), (250, 240, 214), tracking=3)
-    _pf, _ = _fit("7 DAY FREE TRIAL", 21, 184)
+    cx_text(d, RAIL_W // 2, 895, "ASK BRIAN FOR",
+            font(FB, 12), (250, 240, 214), tracking=2)
+    _pf, _ = _fit("7 DAY FREE TRIAL", 17, 146)
     _ptw = d.textlength("7 DAY FREE TRIAL", font=_pf)
-    _pw2 = int(_ptw) + 34
+    _pw2 = int(_ptw) + 30
     _px0 = RAIL_W // 2 - _pw2 // 2
-    _py0 = _cy0 + 84
-    _pill = _vgrad(_pw2, 44, "#f7c948", "#d9a521", 22)
-    img.paste(_pill, (_px0, _py0), _pill)
+    _pill = _vgrad(_pw2, 36, "#f7c948", "#d9a521", 18)
+    img.paste(_pill, (_px0, 915), _pill)
     d = ImageDraw.Draw(img)
-    cx_text(d, RAIL_W // 2, _py0 + (44 - _pf.size) // 2 - 1,
+    cx_text(d, RAIL_W // 2, 915 + (36 - _pf.size) // 2 - 1,
             "7 DAY FREE TRIAL", _pf, (26, 21, 4))
-    _sf, _ = _fit("24/7 6TB CLOUD BACKUP", 13, 200, floor=9)
-    cx_text(d, RAIL_W // 2, _py0 + 52, "24/7 6TB CLOUD BACKUP",
+    _cmed = _medallion("CLOUD", _coins[0][2], 46)
+    img.paste(_cmed, (RAIL_W // 2 - 23, 959), _cmed)
+    d = ImageDraw.Draw(img)
+    _sf, _ = _fit("24/7 6TB CLOUD BACKUP", 11, 168, floor=9)
+    cx_text(d, RAIL_W // 2, 1013, "24/7 6TB CLOUD BACKUP",
             _sf, ct.KASPA, tracking=1)
     d = ImageDraw.Draw(img)
 

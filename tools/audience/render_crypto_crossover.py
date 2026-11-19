@@ -157,6 +157,23 @@ stand out against the pill's gradient ground, at full size
 and at thumbnail scale. The pill itself and the candle fills
 are unchanged.
 
+Kicker-pill quality ruling (Brian, 2026-11-18 22:31 CST):
+"please look at that top pill and make it higher quality --
+the red and green should have some gradient or other high
+value effect. give it a drop shadow (soft). give a 3d border
+to the pill. the whole thing should say 'high quality'." The
+kicker pill is now manufactured, not drawn-flat: (1) the
+candle fills are vertical gradients — emerald lit at the top
+deepening to a rich green base, bright red deepening to
+crimson — with a soft gloss on the body; the 22:27 black
+outlines stay. (2) The pill casts a SOFT DROP SHADOW onto the
+backdrop (blurred, small offset, subtle). (3) The pill's edge
+is a 3D BEVEL — a light top edge rolling to a dark bottom
+edge, with a fine inner highlight line just inside it — and
+a soft sheen lies across the pill's top. Built at 4x in the
+desk's supersampled idiom (_kicker_pill); text untouched,
+nothing else in the piece moves.
+
 Content (the crypto desk as rebranded, commit 25e4179): headline
 "BUY FEAR. SELL GREED.", the six coins as comparative cards, the
 skeptics strip, punchline "SUPPORT IS WHERE YOU BUY. RESISTANCE IS
@@ -252,14 +269,21 @@ def _candle_outlined(size=30, up=True):
     black to stand out more"). Same geometry as
     crypto_template.icon_candle — wick line + body — drawn at 4x
     in the desk's supersampled idiom: the candle silhouette in
-    black, slightly larger, behind the green/red fill, so a
-    clean black border rings body and wick against the pill's
-    gradient ground. Fills unchanged: green up, red down."""
+    black, slightly larger, behind the fill, so a clean black
+    border rings body and wick against the pill's gradient
+    ground.
+
+    Quality pass (Brian, 2026-11-18 22:31 CST): the fill is no
+    longer flat — a vertical three-stop GRADIENT, lit at the
+    top and deepening to a rich base (emerald -> desk green ->
+    deep green; bright red -> desk red -> deep crimson), plus
+    a soft gloss streak down the body's upper left, so the
+    candle reads glossy and dimensional while staying
+    instantly green-up / red-down. The black outline stays."""
     S = 4
     s = size * S
     im = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
-    col = (22, 199, 132, 255) if up else (234, 57, 67, 255)
     blk = (0, 0, 0, 255)
     cx, cy = s / 2, s / 2
     bw, bh, wk = s * 0.42, s * 0.52, s * 0.18
@@ -270,12 +294,136 @@ def _candle_outlined(size=30, up=True):
            fill=blk, width=ww + 2 * b)
     d.rectangle([cx - bw / 2 - b, cy - bh / 2 - b,
                  cx + bw / 2 + b, cy + bh / 2 + b], fill=blk)
-    # the candle itself, fills as the template draws them
-    d.line([(cx, cy - bh / 2 - wk), (cx, cy + bh / 2 + wk)],
-           fill=col, width=ww)
-    d.rectangle([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2],
-                fill=col)
+    # the candle's own silhouette (wick + body) as a mask
+    _sil = Image.new("L", (s, s), 0)
+    _sd = ImageDraw.Draw(_sil)
+    _sd.line([(cx, cy - bh / 2 - wk), (cx, cy + bh / 2 + wk)],
+             fill=255, width=ww)
+    _sd.rectangle([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2],
+                  fill=255)
+    # vertical gradient fill: lit top -> desk color -> deep base
+    _stops = (((140, 255, 200), (22, 199, 132), (4, 105, 66)) if up
+              else ((255, 158, 152), (234, 57, 67), (146, 16, 34)))
+    _grad = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    _gd = ImageDraw.Draw(_grad)
+    _y0, _y1 = cy - bh / 2 - wk, cy + bh / 2 + wk
+    for _yy in range(int(_y0), int(_y1) + 1):
+        _f = (_yy - _y0) / max(1, _y1 - _y0)
+        if _f < 0.45:
+            _a, _c, _g = _stops[0], _stops[1], _f / 0.45
+        else:
+            _a, _c, _g = _stops[1], _stops[2], (_f - 0.45) / 0.55
+        _gd.line([(0, _yy), (s, _yy)],
+                 fill=tuple(int(p + (q - p) * _g)
+                            for p, q in zip(_a, _c)) + (255,))
+    _grad.putalpha(_sil)
+    # soft gloss: a blurred white streak on the body's upper
+    # left, clipped to the body — the high-value shine (white
+    # RGB throughout; only the alpha is shaped, so the blur
+    # cannot bleed dark fringes)
+    from PIL import ImageChops
+    _body = Image.new("L", (s, s), 0)
+    ImageDraw.Draw(_body).rectangle(
+        [cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], fill=255)
+    _ga = Image.new("L", (s, s), 0)
+    ImageDraw.Draw(_ga).rounded_rectangle(
+        [cx - bw * 0.34, cy - bh / 2 + 2 * S,
+         cx - bw * 0.02, cy + bh * 0.08], 3 * S, fill=88)
+    _ga = _ga.filter(ImageFilter.GaussianBlur(2 * S))
+    _gloss = Image.new("RGBA", (s, s), (255, 255, 255, 0))
+    _gloss.putalpha(ImageChops.darker(_ga, _body))
+    _grad.alpha_composite(_gloss)
+    im.alpha_composite(_grad)
     return im.resize((size, size), Image.LANCZOS)
+
+
+def _kicker_pill(w, h):
+    """The kicker pill, manufactured (Brian, 2026-11-18 22:31
+    CST: "give it a drop shadow (soft). give a 3d border to
+    the pill. the whole thing should say 'high quality'").
+    The holo_pill gradient ground, finished at 4x in the
+    desk's supersampled idiom with: a soft SHEEN across the
+    top of the ground; a 3D BEVEL ring — pale at the top
+    edge, rolling through a neutral mid to near-black at the
+    bottom edge, so the pill reads as a raised physical
+    object; and a fine INNER HIGHLIGHT line just inside the
+    bevel, bright at the top and gone by mid-height. The
+    soft drop shadow is cast by the caller onto the backdrop
+    before this pill is pasted. Same footprint, same colors,
+    same translucency as the holo_pill it replaces."""
+    from PIL import ImageChops
+    S = 4
+    W4, H4 = w * S, h * S
+    R4 = 26 * S
+    pill = mt.holo_pill((W4, H4), colors=HL, radius=R4,
+                        base_alpha=130)
+    bw = 3 * S              # bevel width, ~3px at final size
+
+    def _ring(inset, thick):
+        _m = Image.new("L", (W4, H4), 0)
+        _md = ImageDraw.Draw(_m)
+        _md.rounded_rectangle([inset, inset, W4 - 1 - inset,
+                               H4 - 1 - inset],
+                              max(4, R4 - inset), fill=255)
+        _inner = Image.new("L", (W4, H4), 0)
+        ImageDraw.Draw(_inner).rounded_rectangle(
+            [inset + thick, inset + thick,
+             W4 - 1 - inset - thick, H4 - 1 - inset - thick],
+            max(4, R4 - inset - thick), fill=255)
+        return ImageChops.subtract(_m, _inner)
+
+    def _vgrad_rgba(stops, alpha_mask, peak=255):
+        """Vertical multi-stop gradient, alpha = mask x peak."""
+        _g = Image.new("RGBA", (W4, H4), (0, 0, 0, 0))
+        _gd = ImageDraw.Draw(_g)
+        for _yy in range(H4):
+            _f = _yy / max(1, H4 - 1)
+            for _i in range(len(stops) - 1):
+                _f0, _c0 = stops[_i]
+                _f1, _c1 = stops[_i + 1]
+                if _f0 <= _f <= _f1:
+                    _g2 = (_f - _f0) / max(1e-6, _f1 - _f0)
+                    _col = tuple(int(p + (q - p) * _g2)
+                                 for p, q in zip(_c0, _c1))
+                    break
+            else:
+                _col = stops[-1][1]
+            _gd.line([(0, _yy), (W4, _yy)], fill=_col + (255,))
+        _g.putalpha(alpha_mask.point(lambda v: v * peak // 255))
+        return _g
+
+    # sheen: soft white light across the top of the ground,
+    # clipped inside the bevel
+    _sa = Image.new("L", (W4, H4), 0)
+    _sd = ImageDraw.Draw(_sa)
+    for _yy in range(H4):
+        _f = _yy / max(1, H4 - 1)
+        _sd.line([(0, _yy), (W4, _yy)],
+                 fill=int(52 * max(0.0, 1 - _f / 0.55)))
+    _sa = _sa.filter(ImageFilter.GaussianBlur(3 * S))
+    _interior = Image.new("L", (W4, H4), 0)
+    ImageDraw.Draw(_interior).rounded_rectangle(
+        [bw, bw, W4 - 1 - bw, H4 - 1 - bw], R4 - bw, fill=255)
+    _sheen = Image.new("RGBA", (W4, H4), (255, 255, 255, 0))
+    _sheen.putalpha(ImageChops.darker(_sa, _interior))
+    pill.alpha_composite(_sheen)
+    # the 3D bevel: light top edge -> dark bottom edge
+    _bevel = _vgrad_rgba(
+        ((0.0, (242, 250, 253)), (0.35, (158, 168, 178)),
+         (0.65, (58, 64, 72)), (1.0, (6, 8, 12))),
+        _ring(0, bw), peak=238)
+    pill.alpha_composite(_bevel)
+    # the fine inner highlight line, bright at the top
+    _ha = Image.new("L", (W4, H4), 0)
+    _hd = ImageDraw.Draw(_ha)
+    for _yy in range(H4):
+        _f = _yy / max(1, H4 - 1)
+        _hd.line([(0, _yy), (W4, _yy)],
+                 fill=int(130 * max(0.0, 1 - _f / 0.6)))
+    _hl = Image.new("RGBA", (W4, H4), (255, 255, 255, 0))
+    _hl.putalpha(ImageChops.darker(_ha, _ring(bw, 1 * S + 2)))
+    pill.alpha_composite(_hl)
+    return pill.resize((w, h), Image.LANCZOS)
 
 
 def main():
@@ -563,13 +711,28 @@ def main():
     # ---- kicker pill (crossover pill, crypto palette, candle
     # glyphs instead of sparkles — the crypto kicker signature;
     # the candles are BLACK-OUTLINED per Brian, 2026-11-18 22:27
-    # CST, so they stand out against the pill's gradient) ----
+    # CST, so they stand out against the pill's gradient.
+    # Quality pass per Brian, 2026-11-18 22:31 CST: the pill is
+    # manufactured — soft drop shadow cast on the backdrop,
+    # 3D bevel + inner highlight + top sheen (_kicker_pill),
+    # gradient candle fills (_candle_outlined)) ----
     _kt = content["kicker"]  # "THE CRYPTO DESK IS OPEN"
     _kf = font(FB, 17)
     _ktw = d.textlength(_kt, font=_kf) + 3 * (len(_kt) - 1)
     _pw, _ph = int(_ktw) + 150, 56
-    _pill = mt.holo_pill((_pw, _ph), colors=HL, radius=26, base_alpha=130)
-    img.paste(_pill, (int(CX - _pw / 2), 24), _pill)
+    _px = int(CX - _pw / 2)
+    # soft drop shadow: the pill's silhouette in blurred black,
+    # offset a breath down — premium, not heavy
+    _pad = 32
+    _shadow = Image.new("RGBA", (_pw + 2 * _pad, _ph + 2 * _pad),
+                        (0, 0, 0, 0))
+    ImageDraw.Draw(_shadow).rounded_rectangle(
+        [_pad, _pad, _pad + _pw - 1, _pad + _ph - 1], 26,
+        fill=(0, 0, 0, 165))
+    _shadow = _shadow.filter(ImageFilter.GaussianBlur(11))
+    img.paste(_shadow, (_px - _pad, 24 + 7 - _pad), _shadow)
+    _pill = _kicker_pill(_pw, _ph)
+    img.paste(_pill, (_px, 24), _pill)
     d = ImageDraw.Draw(img)
     cx_text(d, CX, 24 + (56 - 17) // 2 - 1, _kt, _kf, (234, 252, 247), tracking=3)
     for _up, _gx in ((True, int(CX - _pw / 2 + 18)), (False, int(CX + _pw / 2 - 48))):

@@ -47,11 +47,32 @@ turn -- no other season is implemented in this file yet.
 THANKSGIVING TREATMENT: a harvest palette (deep amber,
 cranberry -- kin to the format's garnet -- warm gold, sage,
 cream, bark) and drawn motifs in the desk's supersampled
-idiom (leaf, pumpkin, wheat -- no scraped clip-art), a
-seasonal header strip for the capsule, and type dressing
-that follows the format's case map: header and card labels
-ALL CAPS, display words ALL CAPS on cards, quotes and notes
-in sentence case.
+idiom (the five dishes below, dressed with leaf, pumpkin
+and wheat -- no scraped clip-art), a seasonal header strip
+for the capsule, and type dressing that follows the
+format's case map: header and card labels ALL CAPS,
+display words ALL CAPS on cards, quotes and notes in
+sentence case.
+
+THANKSGIVING IS THREE STRANDS (Brian's completion,
+2026-11-18 23:50 CST: "well, it has gratitude,
+thankfulness to GOD, and food !!"), completing his
+23:49 CST ruling ("thanksgiving has TURKEY, pumpkin
+pie -- cranberry, potatoes, stuffing"):
+  1. FOOD -- the five dishes lead the original-card
+     capsule, each drawn and named: TURKEY, PUMPKIN PIE,
+     CRANBERRY, POTATOES, STUFFING -- plus a THANKSGIVING
+     DINNER title card in the sixth slot.
+  2. GRATITUDE -- the THANKFUL FOR register rides every
+     card, and the quote capsule keeps its gratitude
+     quote.
+  3. THANKFULNESS TO GOD -- plain words, in Brian's own
+     register (his public identity line carries FAITH):
+     the quote capsule's subline thanks God for the
+     table, and the title card's note does the same.
+     Plain-spoken, never preachy, never denominational.
+All three strands land in one look across the two proof
+capsules: the grid is the table, the quote is the thanks.
 """
 
 import math
@@ -97,36 +118,40 @@ THANKSGIVING = {
     "ink": "#2b1a10",
 }
 
-# Sample proof content -- season-true, generic gratitude content
-# in Brian's voice register. No promotions, no product claims.
-# Drivers may pass their own content; these defaults exist so a
-# proof render always has honest sample content.
+# Sample proof content -- season-true, in Brian's voice
+# register, carrying the three strands: the food leads,
+# gratitude rides every card's THANKFUL FOR tag, and the
+# thanks to God is said in plain words. No promotions, no
+# product claims. Drivers may pass their own content; these
+# defaults exist so a proof render always has honest
+# sample content.
 SAMPLE_QUOTE_LINES = (
     "Gratitude turns",
     "ordinary days",
     "into blessings.",
 )
-SAMPLE_QUOTE_SUBLINE = "Thankful for family, friends, and the road ahead."
+SAMPLE_QUOTE_SUBLINE = \
+    "Thank God for this table, this food, and the people around it."
 
 THANKSGIVING_CARDS = (
-    {"tag": "THANKFUL FOR", "title": "FAMILY",
-     "note": "the people at the table", "frac": 0.92,
-     "color": THANKSGIVING["cranberry"], "glyph": "pumpkin"},
-    {"tag": "THANKFUL FOR", "title": "FRIENDS",
-     "note": "the ones who show up", "frac": 0.86,
-     "color": THANKSGIVING["amber"], "glyph": "leaf"},
-    {"tag": "THANKFUL FOR", "title": "HEALTH",
-     "note": "strength for the season", "frac": 0.78,
-     "color": THANKSGIVING["sage"], "glyph": "leaf"},
-    {"tag": "THANKFUL FOR", "title": "WORK",
-     "note": "the chance to build", "frac": 0.82,
-     "color": THANKSGIVING["gold"], "glyph": "wheat"},
-    {"tag": "THANKFUL FOR", "title": "COMMUNITY",
-     "note": "neighbors who care", "frac": 0.88,
+    {"tag": "THANKFUL FOR", "title": "TURKEY",
+     "note": "golden, carved, and gone", "frac": 0.95,
+     "color": THANKSGIVING["deep_amber"], "glyph": "turkey"},
+    {"tag": "THANKFUL FOR", "title": "PUMPKIN PIE",
+     "note": "save room for a slice", "frac": 0.9,
+     "color": THANKSGIVING["amber"], "glyph": "pumpkin_pie"},
+    {"tag": "THANKFUL FOR", "title": "CRANBERRY",
+     "note": "tart, bright, and red", "frac": 0.82,
+     "color": THANKSGIVING["cranberry"], "glyph": "cranberry"},
+    {"tag": "THANKFUL FOR", "title": "POTATOES",
+     "note": "mashed, with butter on top", "frac": 0.88,
+     "color": THANKSGIVING["gold"], "glyph": "potatoes"},
+    {"tag": "THANKFUL FOR", "title": "STUFFING",
+     "note": "everyone wants seconds", "frac": 0.93,
+     "color": THANKSGIVING["sage"], "glyph": "stuffing"},
+    {"tag": "THANKFUL FOR", "title": "THANKSGIVING DINNER",
+     "note": "and thanks to God for it all", "frac": 1.0,
      "color": THANKSGIVING["garnet"], "glyph": "wheat"},
-    {"tag": "THANKFUL FOR", "title": "TOMORROW",
-     "note": "another day to begin", "frac": 0.95,
-     "color": THANKSGIVING["deep_amber"], "glyph": "pumpkin"},
 )
 
 
@@ -203,7 +228,9 @@ def _clip(img, tile, box, radius=18):
 
 
 # ------------------------------------------------------------------
-# Drawn harvest glyphs -- leaf, pumpkin, wheat. 4x supersampled.
+# Drawn glyphs -- the five dishes of the Thanksgiving table
+# (turkey, pumpkin pie, cranberry, potatoes, stuffing),
+# dressed with leaf, pumpkin, wheat. 4x supersampled.
 # ------------------------------------------------------------------
 def glyph(kind, size, color=None):
     S = 4
@@ -276,6 +303,196 @@ def glyph(kind, size, color=None):
                            int(gy - tile.height / 2)))
         d = ImageDraw.Draw(im)
         d.line([(cx, bot), (cx, top)], fill=dark, width=2 * S)
+    elif kind == "turkey":
+        # a roast turkey: two drumsticks up behind a plump
+        # browned body, the bird resting on a platter
+        body_c = _rgba("#b06a24")
+        deep = _rgba("#7e4410")
+        lite = _rgba("#d18f3e")
+        bone = _rgba("#f7ecd4")
+        cx, cy = s * 0.5, s * 0.60
+        # platter (behind everything)
+        d.ellipse([s * 0.05, s * 0.76, s * 0.95, s * 0.94],
+                  fill=_rgba(P["sage"]))
+        d.ellipse([s * 0.10, s * 0.775, s * 0.90, s * 0.915],
+                  fill=_rgba("#a7b184"))
+        # drumsticks: bone out to a knobbed tip, meat bulb
+        # at its base, peeking past the body's shoulders
+        for sgn in (-1, 1):
+            tx, ty = cx + sgn * s * 0.40, cy - s * 0.40
+            mx, my = cx + sgn * s * 0.30, cy - s * 0.20
+            d.line([(mx, my), (tx, ty)], fill=bone,
+                   width=max(2, int(s * 0.05)))
+            for dx in (-0.032, 0.032):
+                d.ellipse([tx + dx * s - s * 0.042, ty - s * 0.042,
+                           tx + dx * s + s * 0.042, ty + s * 0.042],
+                          fill=bone)
+            d.ellipse([mx - s * 0.105, my - s * 0.09,
+                       mx + s * 0.105, my + s * 0.09], fill=deep)
+            d.ellipse([mx - s * 0.088, my - s * 0.078,
+                       mx + s * 0.088, my + s * 0.068], fill=body_c)
+        # the body: layered ellipses for roasted shading
+        rx, ry = s * 0.355, s * 0.265
+        d.ellipse([cx - rx, cy - ry, cx + rx, cy + ry], fill=deep)
+        d.ellipse([cx - rx * 0.95, cy - ry * 0.96,
+                   cx + rx * 0.95, cy + ry * 0.86], fill=body_c)
+        d.ellipse([cx - rx * 0.58, cy - ry * 0.80,
+                   cx + rx * 0.28, cy + ry * 0.05], fill=lite)
+        # platter front rim over the body's foot
+        d.pieslice([s * 0.05, s * 0.76, s * 0.95, s * 0.94],
+                   0, 180, fill=_rgba(P["sage"]))
+        d.arc([s * 0.05, s * 0.76, s * 0.95, s * 0.94],
+              0, 180, fill=_rgba("#5f6b41"),
+              width=max(2, int(s * 0.02)))
+    elif kind == "pumpkin_pie":
+        # a slice of pumpkin pie on a plate: crimped crust
+        # along the back edge, a whipped-cream dollop on top
+        crust = _rgba("#a8702a")
+        crust_dk = _rgba("#7e4f16")
+        fill0 = _rgba("#d97b29")
+        fill1 = _rgba("#e8933f")
+        cream = _rgba("#fff8ec")
+        cream_sh = _rgba("#eedfc2")
+        # plate
+        d.ellipse([s * 0.13, s * 0.815, s * 0.87, s * 0.915],
+                  fill=_rgba("#e9dcbc"))
+        d.ellipse([s * 0.17, s * 0.82, s * 0.83, s * 0.895],
+                  fill=_rgba("#f7eeda"))
+        # crust wedge, slightly proud of the filling
+        d.polygon([(s * 0.14, s * 0.30), (s * 0.86, s * 0.30),
+                   (s * 0.50, s * 0.86)], fill=crust)
+        # filling, with a lit inner wedge
+        d.polygon([(s * 0.20, s * 0.38), (s * 0.80, s * 0.38),
+                   (s * 0.50, s * 0.80)], fill=fill0)
+        d.polygon([(s * 0.26, s * 0.42), (s * 0.74, s * 0.42),
+                   (s * 0.50, s * 0.72)], fill=fill1)
+        # crimped crust rim along the back edge
+        d.rounded_rectangle([s * 0.12, s * 0.24, s * 0.88, s * 0.38],
+                            int(s * 0.05), fill=crust_dk)
+        d.rounded_rectangle([s * 0.14, s * 0.25, s * 0.86, s * 0.35],
+                            int(s * 0.04), fill=crust)
+        # the dollop: lobes on a shaded base, peak on top
+        for base, col in ((0.016, cream_sh), (0.0, cream)):
+            for (dx, dy, r) in ((-0.10, 0.02, 0.085),
+                                (0.10, 0.02, 0.085),
+                                (0.0, -0.015, 0.105),
+                                (0.0, -0.085, 0.055)):
+                ccx, ccy = s * (0.5 + dx), s * (0.30 + dy + base)
+                d.ellipse([ccx - r * s, ccy - r * s,
+                           ccx + r * s, ccy + r * s], fill=col)
+    elif kind == "cranberry":
+        # a bowl of cranberry sauce, whole berries heaped
+        # and glistening on top of the sauce's surface
+        red = _rgba(P["cranberry"])
+        red_lt = _rgba("#c92a38")
+        berry = _rgba("#b81d2c")
+        bowl = _rgba(P["cream"])
+        bowl_dk = _rgba("#d9c491")
+        # bowl foot, then the bowl's shaded under-edge
+        d.rounded_rectangle([s * 0.42, s * 0.87, s * 0.58, s * 0.95],
+                            int(s * 0.02), fill=bowl_dk)
+        d.pieslice([s * 0.08, s * 0.06, s * 0.92, s * 0.94],
+                   0, 180, fill=bowl_dk)
+        d.pieslice([s * 0.08, s * 0.02, s * 0.92, s * 0.90],
+                   0, 180, fill=bowl)
+        # sauce surface (its rim sits at y .46)
+        d.ellipse([s * 0.10, s * 0.35, s * 0.90, s * 0.57], fill=red)
+        d.ellipse([s * 0.16, s * 0.355, s * 0.84, s * 0.50],
+                  fill=red_lt)
+        # the berries, each with a lit speck
+        for (dx, dy, r) in ((-0.20, -0.02, 0.085),
+                            (-0.07, -0.075, 0.095),
+                            (0.07, -0.075, 0.095),
+                            (0.20, -0.02, 0.085),
+                            (0.0, -0.01, 0.09),
+                            (-0.13, 0.015, 0.08),
+                            (0.13, 0.015, 0.08)):
+            ccx, ccy = s * (0.5 + dx), s * (0.36 + dy)
+            d.ellipse([ccx - r * s, ccy - r * s,
+                       ccx + r * s, ccy + r * s], fill=berry)
+            d.ellipse([ccx - r * s * 0.45, ccy - r * s * 0.55,
+                       ccx - r * s * 0.05, ccy - r * s * 0.15],
+                      fill=_rgba("#e88a94"))
+    elif kind == "potatoes":
+        # a bowl of mashed potatoes: a creamy cloud of a
+        # mound with a pat of butter melting on top
+        bowl = _rgba(P["garnet"])
+        bowl_dk = _rgba("#5e2432")
+        mound = _rgba("#fff3d6")
+        mound_sh = _rgba("#e0c48c")
+        butter = _rgba("#f2c230")
+        # bowl: shaded under-edge, body, gold rim (rim at y .46)
+        d.rounded_rectangle([s * 0.42, s * 0.87, s * 0.58, s * 0.95],
+                            int(s * 0.02), fill=bowl_dk)
+        d.pieslice([s * 0.08, s * 0.06, s * 0.92, s * 0.94],
+                   0, 180, fill=bowl_dk)
+        d.pieslice([s * 0.08, s * 0.02, s * 0.92, s * 0.90],
+                   0, 180, fill=bowl)
+        # the mound: shaded lobes under lit ones
+        lobes = ((0.30, 0.40, 0.15), (0.50, 0.33, 0.175),
+                 (0.70, 0.40, 0.15), (0.40, 0.28, 0.12),
+                 (0.60, 0.28, 0.12), (0.50, 0.43, 0.125))
+        for (lx, ly, r) in lobes:
+            d.ellipse([s * (lx - r), s * (ly - r + 0.025),
+                       s * (lx + r), s * (ly + r + 0.025)],
+                      fill=mound_sh)
+        for (lx, ly, r) in lobes:
+            d.ellipse([s * (lx - r), s * (ly - r),
+                       s * (lx + r), s * (ly + r)], fill=mound)
+        # the rim's front arc, tracing the bowl's mouth in
+        # front of the mound's foot
+        d.arc([s * 0.08, s * 0.35, s * 0.92, s * 0.57],
+              0, 180, fill=_rgba(P["gold"]),
+              width=max(2, int(s * 0.025)))
+        # the butter pat, tilted, on the mound's peak
+        bcx, bcy, bd = s * 0.5, s * 0.185, s * 0.075
+        ca, sa = math.cos(0.35), math.sin(0.35)
+        pts = []
+        for (px, py) in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+            pts.append((bcx + (px * ca - py * sa) * bd,
+                        bcy + (px * sa + py * ca) * bd))
+        d.polygon(pts, fill=butter, outline=_rgba("#c9930a"))
+    elif kind == "stuffing":
+        # a baking dish heaped with stuffing: a crumbly
+        # golden-brown mound, flecked with herb, in a
+        # cream dish with a cranberry stripe
+        dish = _rgba(P["cream"])
+        dish_dk = _rgba("#d9c491")
+        crumbs = ("#c98d3f", "#a96f27", "#e0aa54", "#b57e2f")
+        # dish body, then its rim
+        d.polygon([(s * 0.08, s * 0.50), (s * 0.92, s * 0.50),
+                   (s * 0.86, s * 0.88), (s * 0.14, s * 0.88)],
+                  fill=dish)
+        d.polygon([(s * 0.095, s * 0.66), (s * 0.905, s * 0.66),
+                   (s * 0.885, s * 0.76), (s * 0.115, s * 0.76)],
+                  fill=_rgba(P["cranberry"]))
+        d.ellipse([s * 0.06, s * 0.40, s * 0.94, s * 0.62],
+                  fill=dish_dk)
+        d.ellipse([s * 0.10, s * 0.425, s * 0.90, s * 0.595],
+                  fill=_rgba("#c9b183"))
+        # the mound: overlapping crumb circles along an arc,
+        # roughed up with smaller crumbs in the gaps so it
+        # reads crumbly, not like a row of rolls
+        mound_pts = ((0.20, 0.44, 0.10), (0.32, 0.36, 0.115),
+                     (0.47, 0.315, 0.125), (0.62, 0.36, 0.115),
+                     (0.76, 0.44, 0.10), (0.38, 0.44, 0.10),
+                     (0.58, 0.44, 0.10), (0.26, 0.40, 0.065),
+                     (0.40, 0.315, 0.07), (0.55, 0.325, 0.06),
+                     (0.69, 0.405, 0.065), (0.47, 0.42, 0.07))
+        for i, (lx, ly, r) in enumerate(mound_pts):
+            d.ellipse([s * (lx - r), s * (ly - r),
+                       s * (lx + r), s * (ly + r)],
+                      fill=_rgba(crumbs[i % len(crumbs)]))
+        # flecks: dark crumb and sage herb specks
+        for i, (fx, fy) in enumerate(((0.30, 0.38), (0.44, 0.33),
+                                      (0.55, 0.40), (0.66, 0.35),
+                                      (0.36, 0.46), (0.60, 0.46),
+                                      (0.50, 0.29), (0.24, 0.45),
+                                      (0.71, 0.44), (0.42, 0.40))):
+            col = _rgba("#6d4a15") if i % 2 == 0 else _rgba(P["sage"])
+            r = s * 0.017
+            d.ellipse([s * fx - r, s * fy - r, s * fx + r,
+                       s * fy + r], fill=col)
     else:
         raise ValueError(f"unknown glyph: {kind}")
     return im.resize((size, size), Image.LANCZOS)
@@ -374,15 +591,18 @@ def draw_quote_capsule(img, box, skin="dark", lines=None,
         sf, _ = _fit(subline, 17, w - 120, bold=False, floor=12)
         _centered(d, w / 2, h - 92, subline, sf,
                   _rgba(muted) if isinstance(muted, tuple) else muted)
-    # the glyph row: leaf - pumpkin - wheat, drawn, centred
-    kinds = ("leaf", "pumpkin", "wheat")
-    sizes = (40, 52, 40)
-    total_w = sum(sizes) + 28
+    # the glyph row: the table itself, drawn and centred --
+    # cranberry, potatoes, the turkey in the middle,
+    # stuffing, pumpkin pie, all bottom-aligned
+    kinds = ("cranberry", "potatoes", "turkey", "stuffing",
+             "pumpkin_pie")
+    sizes = (36, 40, 54, 40, 36)
+    total_w = sum(sizes) + 12 * (len(sizes) - 1)
     gx = (w - total_w) // 2
     for kind, gs in zip(kinds, sizes):
         g = glyph(kind, gs)
-        tile.alpha_composite(g, (gx, h - 66 + (52 - gs) // 2))
-        gx += gs + 14
+        tile.alpha_composite(g, (gx, h - 12 - gs))
+        gx += gs + 12
     _clip(img, tile, box, radius=18)
     return box
 

@@ -174,6 +174,37 @@ a soft sheen lies across the pill's top. Built at 4x in the
 desk's supersampled idiom (_kicker_pill); text untouched,
 nothing else in the piece moves.
 
+Garnet-band ruling (Brian, 2026-11-18 22:35 CST): "on this
+one, I believe we can go with a brighter garnet color -- and
+the text on it can be navy or black, whichever looks better."
+The punchline band's garnet is lifted from the muted
+#ad5f71 -> #9a475c (hairline #c0788a) to a brighter, richer
+garnet -- #c22440 -> #9c1b30, hairline #e0707f -- in the same
+two-stop _vgrad idiom, so the band holds dimension like the
+upgraded kicker pill. The text leaves gold: BOTH candidates
+were rendered and judged at full size, at a crop and at
+feed-thumbnail, and BLACK ships over navy: against the brightened garnet the plaque navy (#1d2c49) sits back and turns muddy at crop and thumbnail size, while black stays crisp at every size and ties the band to the kicker candles black outlines. Nothing else in the piece
+moves.
+
+Connect-card ruling (Brian, 2026-11-18 22:36 CST): "we need
+to keep the green whatsapp. but the orange substack, needs
+to be substack, ddd, hh." The green WhatsApp pill stays
+exactly as it is -- same slot, same size, same words, same
+number. The orange pill -- one pill for Substack alone --
+becomes THREE destination bars stacked in its slot, in
+Brian's order: Substack (its known address
+successbrianhub.substack.com riding beside the name),
+Driving Dollars Digest, Hashrate Harbor; the two blogs are
+named only -- neither has a domain on record and none is
+invented. The teal "MY BLOGS: HASHRATE HARBOR / DRIVING
+DOLLARS DIGEST" line is folded away -- the three bars ARE
+the blog pitch now -- and the card reflows inside its
+existing height (the format fixes it; the piece has no
+slack below the card), the three bars sharing the old
+pill's column plus the freed blogs-line space. The ask,
+the LIKE/COMMENT/SHARE chips, the signature plaque and
+the hashtag line are unchanged.
+
 Content (the crypto desk as rebranded, commit 25e4179): headline
 "BUY FEAR. SELL GREED.", the six coins as comparative cards, the
 skeptics strip, punchline "SUPPORT IS WHERE YOU BUY. RESISTANCE IS
@@ -821,7 +852,7 @@ def main():
     # garnet punchline band — the card's footer, flush inside the
     # bottom border exactly as in the crossover
     _gbw = x1 - x0 - 8
-    _gb = _vgrad(_gbw, 48, "#ad5f71", "#9a475c", 1)
+    _gb = _vgrad(_gbw, 48, "#c22440", "#9c1b30", 1)
     _gm = Image.new("L", (_gbw * 3, 48 * 3), 0)
     ImageDraw.Draw(_gm).rounded_rectangle(
         [0, -60, _gbw * 3 - 1, 48 * 3 - 1], radius=60, fill=255)
@@ -829,15 +860,15 @@ def main():
     _gby = cy + card_h - 4 - 48
     img.paste(_gb, (x0 + 4, _gby), _gb)
     d = ImageDraw.Draw(img)
-    d.line([x0 + 4, _gby, x1 - 4, _gby], fill="#c0788a", width=2)
+    d.line([x0 + 4, _gby, x1 - 4, _gby], fill="#e0707f", width=2)
     _plf, _plsz = _fit(content["punchline"], 23, _gbw - 40, floor=14)
     cx_text(d, (x0 + x1) // 2, _gby + (48 - _plsz) // 2 - 1,
-            content["punchline"], _plf, mt.YELLOW)
+            content["punchline"], _plf, "#000000")
     cy = cy + card_h + 12
 
     # ---- THE CONNECT CARD (the crossover's unified card, dark
-    # edition): ask -> chips -> CTA pills -> blogs line -> signature
-    # plaque -> hashtag line. NO scorecard strip — that is AI-meme
+    # edition): ask -> chips -> destination bars + WhatsApp pill ->
+    # signature plaque -> hashtag line. NO scorecard strip — that is AI-meme
     # content. ----
     T = cy + 2
     _card_h = 284
@@ -913,21 +944,46 @@ def main():
         _w2 = _bd.textlength(line2, font=_f2)
         _bd.text((cx0 + (w - _w2) / 2, top + 35), line2, font=_f2,
                  fill=(255, 255, 255, 235))
-    _cta(292, T + 120, 368, 56, "#ff7a29", "#e04e00",
-         "Read My Blog", mt.BRAND["blog_url"])
+    # THE THREE DESTINATIONS (Brian, 2026-11-18 22:36 CST: "we
+    # need to keep the green whatsapp. but the orange substack,
+    # needs to be substack, ddd, hh."). The orange slot becomes
+    # three labeled bars in Brian's order -- Substack (its known
+    # address riding beside the name), Driving Dollars Digest,
+    # Hashrate Harbor -- the two blogs BY NAME only (neither has
+    # a domain on record; none is invented). The card's height
+    # is fixed by the format, so the three bars share the old
+    # pill's column plus the space freed by the folded blogs
+    # line (below). The green WhatsApp pill beside them is
+    # untouched, exactly as it was.
+    def _dest(top, label, sub=None):
+        _b = _vgrad(368, 26, "#ff7a29", "#e04e00", 13)
+        img.paste(_b, (292, top), _b)
+        _bd = ImageDraw.Draw(img)
+        if sub:
+            _f1 = font(FB, 15)
+            _f2 = font(FR, 10)
+            _w1 = _bd.textlength(label, font=_f1)
+            _w2 = _bd.textlength(sub, font=_f2)
+            _x = 292 + (368 - (_w1 + 7 + _w2)) / 2
+            _bd.text((_x, top + 6), label, font=_f1,
+                     fill=(255, 255, 255, 255))
+            _bd.text((_x + _w1 + 7, top + 9), sub, font=_f2,
+                     fill=(255, 255, 255, 235))
+        else:
+            _f1, _sz1 = _fit(label, 15, 344)
+            _w1 = _bd.textlength(label, font=_f1)
+            _bd.text((292 + (368 - _w1) / 2, top + 6), label,
+                     font=_f1, fill=(255, 255, 255, 255))
+    _dest(T + 120, "Substack", mt.BRAND["blog_url"])
+    _dest(T + 148, "Driving Dollars Digest")
+    _dest(T + 176, "Hashrate Harbor")
     _cta(676, T + 120, 368, 56, "#2fce6e", "#0f9d4c",
          "Message Me on WhatsApp",
          dict(mt.BRAND["handles"])["whatsapp"])
 
-    # THE BLOGS LINE — Brian's ruling 2026-11-18 21:57 CST: this
-    # meme pitches Substack AND Driving Dollars Digest AND Hashrate
-    # Harbor. The two blogs are pitched BY NAME (neither has a
-    # domain on record — no URL is shown); the crypto blog leads on
-    # the crypto meme. This is the two blogs' mutual cross-promotion
-    # in action; the blogs remain independent.
-    cx_text(d, CX, T + 182,
-            "MY BLOGS: HASHRATE HARBOR \u2022 DRIVING DOLLARS DIGEST",
-            font(FB, 15), ct.KASPA, tracking=1)
+    # (The teal "MY BLOGS" line that sat here under the
+    # 21:57 ruling is folded away by the 22:36 ruling above:
+    # the three destination bars ARE the blog pitch now.)
 
     # THE SIGNATURE — the crossover's navy plaque (slimmed vs the
     # AI card so the blogs line and the desk's hashtag line also

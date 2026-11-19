@@ -205,12 +205,69 @@ pill's column plus the freed blogs-line space. The ask,
 the LIKE/COMMENT/SHARE chips, the signature plaque and
 the hashtag line are unchanged.
 
+Counter ruling (Brian, 2026-11-18 22:40 CST): "jensen huang
+counter needs to go on this --- counters go on all meme
+templates." Counters are a STANDARD element of the format on
+ALL meme templates, and the crypto piece now carries the
+counter strip in the format's counter slot — the foot of the
+right column, below the connect card — mirroring the AI
+crossover's scorecard strip in form and wording: navy gradient
+block, blue outline, holo top edge, "DAY n" at the left,
+"JENSEN HUANG • DAYS SINCE HE RESIGNED" in gold and "COUNT
+STARTED THU NOV 12" in slate at the right. (This supersedes
+the earlier note here that the strip was AI-meme content not
+carried over.) The count's anchor is Brian's: DAY 1 = Thu
+Nov 12, 2026, the day the count started on the AI piece; the
+driver DERIVES the day number from the render date in code
+(HUANG_COUNT_START), never hard-codes it, so future renders
+stay correct. The crypto column was full to the canvas edge,
+so the strip's room comes from a spacing reflow inside the
+format's grammar: the headline's gap is measured from its
+glyphs (the layer's transparent padding is not design
+spacing), the central card's internal gaps tighten 12 -> 10
+and the coin cards' interior rhythm compresses (card height
+188 -> 162, all content, colors and words unchanged), the
+skeptics strip slims 54 -> 50, and the connect card reflows
+inside its fixed format height. No approved element's
+content, colors, or words change.
+
+Connect-card refinement ruling (Brian, 2026-11-18 22:43
+CST): "orange - substack, that can stay as long as it looks
+nicer ---- the other two need to be one row, and colored to
+match their blog branding." The orange Substack bar STAYS —
+full width of its column, name + successbrianhub.substack.com
+— polished to the piece's manufactured standard (the kicker
+pill's finish: three-stop gradient depth, 3D bevel, inner
+highlight, sheen, soft drop shadow; _polished_bar). Driving
+Dollars Digest and Hashrate Harbor leave the stacked orange
+bars and become ONE ROW of two side-by-side buttons under
+the Substack bar, each in its own blog's branding:
+- Hashrate Harbor: the Kaspa-teal family — this template's
+  own identity for the blog (crypto_template KASPA #70c7ba /
+  KASPA_DK #2fa08e), gradient lit teal -> deep teal, dark ink
+  text.
+- Driving Dollars Digest: NO brand color exists on record —
+  its charter (~/campaignsdesk/charters/
+  driving-dollars-digest-blog-charter.md) and its
+  campaignsdesk.blogs registry note were both checked
+  2026-11-18 and carry no color, palette, or logo. The
+  button's navy-and-gold finance treatment (the piece's own
+  plaque navy #1d2c49 family, gold text) is therefore
+  AGENT-CHOSEN as the most defensible finance identity
+  beside HH's teal, and is flagged as such pending Brian's
+  ruling — it is NOT presented as his branding.
+The green WhatsApp pill is untouched; the ask, the
+LIKE/COMMENT/SHARE chips, the signature plaque and the
+hashtag line are unchanged; the card keeps its fixed format
+height and reflows inside it. (This refines the dest-bar
+arrangement of the 22:36 CST ruling above; its WhatsApp
+half stands exactly as ruled.)
+
 Content (the crypto desk as rebranded, commit 25e4179): headline
 "BUY FEAR. SELL GREED.", the six coins as comparative cards, the
 skeptics strip, punchline "SUPPORT IS WHERE YOU BUY. RESISTANCE IS
 WHERE YOU SELL.", the curiosity line as the connect card's ask,
-FOLLOW #SuccessBrianCrypto. The AI piece's DAY/Huang counter strip
-is AI-meme content and is NOT carried over.
+FOLLOW #SuccessBrianCrypto.
 
 Open items flagged for Brian (not decided here):
 - D1 (rail brand line per-theme vs global) is UNRULED. The rail's
@@ -230,6 +287,7 @@ Open items flagged for Brian (not decided here):
 """
 import os
 import sys
+from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import meme_template as mt
@@ -245,6 +303,10 @@ OUT = ("/home/successbrian/successbrian-os/tools/audience/out/"
 
 W = H = 1080
 RAIL_W = 252
+# The Huang counter anchor (Brian's count, carried from the AI
+# piece): DAY 1 = Thu Nov 12, 2026 — the day the count started.
+# The strip derives its DAY number from the render date.
+HUANG_COUNT_START = date(2026, 11, 12)
 CX = (RAIL_W + W) // 2 + 14  # content-zone center
 INK_D = ct.INK_D
 DIM_D = ct.DIM_D
@@ -455,6 +517,108 @@ def _kicker_pill(w, h):
     _hl.putalpha(ImageChops.darker(_ha, _ring(bw, 1 * S + 2)))
     pill.alpha_composite(_hl)
     return pill.resize((w, h), Image.LANCZOS)
+
+
+def _polished_bar(w, h, stops, radius=14):
+    """A destination bar with the kicker pill's manufactured
+    finish (Brian, 2026-11-18 22:43 CST: the Substack bar "can
+    stay as long as it looks nicer" — and the two blog buttons
+    ride the same standard). Built at 4x in the desk's
+    supersampled idiom, mirroring _kicker_pill: a vertical
+    THREE-STOP gradient ground (lit top -> mid -> deep base),
+    a soft SHEEN across the top, a 3D BEVEL ring (pale top
+    edge rolling through a neutral mid to near-black at the
+    bottom edge), and a fine INNER HIGHLIGHT line just inside
+    the bevel, bright at the top. The caller casts the soft
+    drop shadow onto the card before pasting, exactly as with
+    the kicker pill, and draws the type on the main canvas
+    afterward so it stays crisp at final size."""
+    from PIL import ImageChops
+    S = 4
+    W4, H4 = w * S, h * S
+    R4 = radius * S
+    cols = [mt._hex(s) for s in stops]
+    bar = Image.new("RGBA", (W4, H4), (0, 0, 0, 0))
+    bd = ImageDraw.Draw(bar)
+    for yy in range(H4):
+        f = yy / max(1, H4 - 1)
+        if f < 0.5:
+            a, c, g = cols[0], cols[1], f / 0.5
+        else:
+            a, c, g = cols[1], cols[2], (f - 0.5) / 0.5
+        bd.line([(0, yy), (W4, yy)],
+                fill=tuple(int(p + (q - p) * g)
+                           for p, q in zip(a, c)) + (255,))
+    _mask = Image.new("L", (W4, H4), 0)
+    ImageDraw.Draw(_mask).rounded_rectangle(
+        [0, 0, W4 - 1, H4 - 1], R4, fill=255)
+    bar.putalpha(_mask)
+    bw = 2 * S              # bevel width, ~2px at final size
+
+    def _ring(inset, thick):
+        _m = Image.new("L", (W4, H4), 0)
+        _md = ImageDraw.Draw(_m)
+        _md.rounded_rectangle([inset, inset, W4 - 1 - inset,
+                               H4 - 1 - inset],
+                              max(4, R4 - inset), fill=255)
+        _inner = Image.new("L", (W4, H4), 0)
+        ImageDraw.Draw(_inner).rounded_rectangle(
+            [inset + thick, inset + thick,
+             W4 - 1 - inset - thick, H4 - 1 - inset - thick],
+            max(4, R4 - inset - thick), fill=255)
+        return ImageChops.subtract(_m, _inner)
+
+    def _vgrad_rgba(gstops, alpha_mask, peak=255):
+        _g = Image.new("RGBA", (W4, H4), (0, 0, 0, 0))
+        _gd = ImageDraw.Draw(_g)
+        for _yy in range(H4):
+            _f = _yy / max(1, H4 - 1)
+            for _i in range(len(gstops) - 1):
+                _f0, _c0 = gstops[_i]
+                _f1, _c1 = gstops[_i + 1]
+                if _f0 <= _f <= _f1:
+                    _g2 = (_f - _f0) / max(1e-6, _f1 - _f0)
+                    _col = tuple(int(p + (q - p) * _g2)
+                                 for p, q in zip(_c0, _c1))
+                    break
+            else:
+                _col = gstops[-1][1]
+            _gd.line([(0, _yy), (W4, _yy)], fill=_col + (255,))
+        _g.putalpha(alpha_mask.point(lambda v: v * peak // 255))
+        return _g
+
+    # sheen: soft white light across the top of the ground,
+    # clipped inside the bevel
+    _sa = Image.new("L", (W4, H4), 0)
+    _sd = ImageDraw.Draw(_sa)
+    for _yy in range(H4):
+        _f = _yy / max(1, H4 - 1)
+        _sd.line([(0, _yy), (W4, _yy)],
+                 fill=int(46 * max(0.0, 1 - _f / 0.55)))
+    _sa = _sa.filter(ImageFilter.GaussianBlur(3 * S))
+    _interior = Image.new("L", (W4, H4), 0)
+    ImageDraw.Draw(_interior).rounded_rectangle(
+        [bw, bw, W4 - 1 - bw, H4 - 1 - bw], R4 - bw, fill=255)
+    _sheen = Image.new("RGBA", (W4, H4), (255, 255, 255, 0))
+    _sheen.putalpha(ImageChops.darker(_sa, _interior))
+    bar.alpha_composite(_sheen)
+    # the 3D bevel: light top edge -> dark bottom edge
+    _bevel = _vgrad_rgba(
+        ((0.0, (242, 250, 253)), (0.35, (158, 168, 178)),
+         (0.65, (58, 64, 72)), (1.0, (6, 8, 12))),
+        _ring(0, bw), peak=205)
+    bar.alpha_composite(_bevel)
+    # the fine inner highlight line, bright at the top
+    _ha = Image.new("L", (W4, H4), 0)
+    _hd = ImageDraw.Draw(_ha)
+    for _yy in range(H4):
+        _f = _yy / max(1, H4 - 1)
+        _hd.line([(0, _yy), (W4, _yy)],
+                 fill=int(115 * max(0.0, 1 - _f / 0.6)))
+    _hl = Image.new("RGBA", (W4, H4), (255, 255, 255, 0))
+    _hl.putalpha(ImageChops.darker(_ha, _ring(bw, 1 * S + 2)))
+    bar.alpha_composite(_hl)
+    return bar.resize((w, h), Image.LANCZOS)
 
 
 def main():
@@ -784,14 +948,19 @@ def main():
         size -= 1
     img.paste(hl, (int(CX - lw / 2), 92), hl)
     d = ImageDraw.Draw(img)
-    cy = 92 + lh + 12
+    # the gap under the headline is measured from the GLYPHS
+    # (the layer's opaque bottom), not the layer's transparent
+    # padding — part of the 22:40 CST counter reflow: the
+    # strip's room comes from spacing, the headline itself is
+    # pasted pixel-identical at the same position.
+    cy = 92 + hl.getbbox()[3] + 12
 
     # ---- THE CENTRAL CARD: framed like the crossover graph card
     # (gradient ring + header band + garnet footer band joined
     # inside), dark-filled; inside it, the six coin cards and the
     # skeptics strip ----
     x0, x1 = RAIL_W + 34, W - 30
-    card_h = 548
+    card_h = 480
     _frame = mt.holo_pill((x1 - x0 + 6, card_h + 6), colors=HL,
                           radius=27, base_alpha=255)
     img.paste(_frame, (x0 - 3, cy - 3), _frame)
@@ -809,13 +978,16 @@ def main():
     d = ImageDraw.Draw(img)
 
     # the six coin cards — the crypto desk's vertical terminal cards,
-    # 3 x 2 inside the frame
+    # 3 x 2 inside the frame. (Interior rhythm compressed 188 ->
+    # 162 in the 22:40 CST counter reflow — same content, colors
+    # and words; the savings free the foot of the column for the
+    # counter strip.)
     cards = content["cards"]
-    cw, chh, cgap = 233, 188, 12
+    cw, chh, cgap = 233, 162, 10
     for i, c in enumerate(cards):
         col, row = i % 3, i // 3
         x = x0 + 20 + col * (cw + cgap)
-        y = cy + 30 + row * (chh + cgap)
+        y = cy + 24 + row * (chh + cgap)
         ccx = x + cw / 2
         d.rounded_rectangle([x + 5, y + 8, x + cw + 5, y + chh + 8], 22,
                             fill=(0, 0, 0, 160))
@@ -825,29 +997,30 @@ def main():
         _strip = mt.grad_rounded((cw - 16, 7), [c["bar_color"], c["bar_color"]], 3)
         img.paste(_strip, (x + 8, y + 7), _strip)
         d = ImageDraw.Draw(img)
-        cx_text(d, ccx, y + 24, c["tag"], font(FB, 12), DIM_D, tracking=2)
+        cx_text(d, ccx, y + 20, c["tag"], font(FB, 12), DIM_D, tracking=2)
         _tf = ct._fit_font(d, c["title"], FB, 26, cw - 16)
-        cx_text(d, ccx, y + 46, c["title"], _tf, INK_D)
-        _pf = ct._fit_font(d, c["price"], FB, 42, cw - 16)
-        cx_text(d, ccx, y + 82, c["price"], _pf, c["bar_color"])
+        cx_text(d, ccx, y + 39, c["title"], _tf, INK_D)
+        _pf = ct._fit_font(d, c["price"], FB, 40, cw - 16)
+        cx_text(d, ccx, y + 69, c["price"], _pf, c["bar_color"])
         _sf = ct._fit_font(d, c["sub"], FR, 15, cw - 16)
         _stw = d.textlength(c["sub"], font=_sf)
-        d.text((ccx - _stw / 2, y + 140), c["sub"], font=_sf, fill=DIM_D)
-        bx, bw2, by2, bh2 = x + 30, cw - 60, y + 162, 15
+        d.text((ccx - _stw / 2, y + 116), c["sub"], font=_sf, fill=DIM_D)
+        bx, bw2, by2, bh2 = x + 30, cw - 60, y + 136, 15
         d.rounded_rectangle([bx, by2, bx + bw2, by2 + bh2], 7,
                             fill=(42, 42, 54, 255))
         mt._gbar(img, [bx, by2, bx + bw2 * c["bar_frac"], by2 + bh2],
                  c["bar_color"])
         d = ImageDraw.Draw(img)
 
-    # skeptics strip (the crypto counterpoint, in its own dark idiom)
+    # skeptics strip (the crypto counterpoint, in its own dark idiom;
+    # slimmed 54 -> 50 in the 22:40 CST counter reflow)
     cp = content["counterpoint"]
-    sy = cy + 430
-    d.rounded_rectangle([x0 + 20, sy, x1 - 20, sy + 54], 14,
+    sy = cy + 368
+    d.rounded_rectangle([x0 + 20, sy, x1 - 20, sy + 50], 14,
                         fill=(32, 32, 42, 255),
                         outline=mt._hex(ct.KASPA) + (255,), width=2)
-    cx_text(d, CX, sy + 7, cp["label"], font(FB, 12), DIM_D, tracking=1)
-    cx_text(d, CX, sy + 27, cp["quote"], font(FB, 18), INK_D)
+    cx_text(d, CX, sy + 6, cp["label"], font(FB, 12), DIM_D, tracking=1)
+    cx_text(d, CX, sy + 25, cp["quote"], font(FB, 17), INK_D)
 
     # garnet punchline band — the card's footer, flush inside the
     # bottom border exactly as in the crossover
@@ -867,11 +1040,13 @@ def main():
     cy = cy + card_h + 12
 
     # ---- THE CONNECT CARD (the crossover's unified card, dark
-    # edition): ask -> chips -> destination bars + WhatsApp pill ->
-    # signature plaque -> hashtag line. NO scorecard strip — that is AI-meme
-    # content. ----
+    # edition): ask -> chips -> Substack bar + blog buttons +
+    # WhatsApp pill -> signature plaque -> hashtag line. The
+    # counter strip follows the card at the foot of the column
+    # (Brian, 2026-11-18 22:40 CST). Card height reflows inside
+    # the format (284 -> 272) in the counter reflow. ----
     T = cy + 2
-    _card_h = 284
+    _card_h = 272
     _csh2 = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     ImageDraw.Draw(_csh2).rounded_rectangle(
         [RAIL_W + 34, T + 7, W - 30, T + _card_h + 7], 24, fill=(0, 0, 0, 110))
@@ -888,9 +1063,9 @@ def main():
     # the ask — Brian's curiosity line, split across the format's
     # ask + subline exactly as written
     _af, _asz = _fit("Which coin are you stacking right now?", 26, 724, floor=16)
-    cx_text(d, CX, T + 16, "Which coin are you stacking right now?",
+    cx_text(d, CX, T + 14, "Which coin are you stacking right now?",
             _af, INK_D)
-    cx_text(d, CX, T + 50, "Drop it below.", font(FB, 17), DIM_D)
+    cx_text(d, CX, T + 45, "Drop it below.", font(FB, 17), DIM_D)
 
     def _mchip(cx_center, label, kind, top):
         chw, chh = 232, 44
@@ -928,9 +1103,9 @@ def main():
                 _cd.ellipse([bx0 + _dx - 2, by0 + 8, bx0 + _dx + 2, by0 + 12], fill=INK_D)
             ix = cx0 + 22 + 30 + 12
         _cd.text((ix, top + 11), label, font=font(FB, 17), fill=INK_D)
-    _mchip(CX - 244, "LIKE", "like", T + 72)
-    _mchip(CX, "COMMENT", "comment", T + 72)
-    _mchip(CX + 244, "SHARE", "share", T + 72)
+    _mchip(CX - 244, "LIKE", "like", T + 66)
+    _mchip(CX, "COMMENT", "comment", T + 66)
+    _mchip(CX + 244, "SHARE", "share", T + 66)
 
     def _cta(cx0, top, w, h, c_top, c_bot, line1, line2):
         _b = _vgrad(w, h, c_top, c_bot, 16)
@@ -944,62 +1119,117 @@ def main():
         _w2 = _bd.textlength(line2, font=_f2)
         _bd.text((cx0 + (w - _w2) / 2, top + 35), line2, font=_f2,
                  fill=(255, 255, 255, 235))
-    # THE THREE DESTINATIONS (Brian, 2026-11-18 22:36 CST: "we
-    # need to keep the green whatsapp. but the orange substack,
-    # needs to be substack, ddd, hh."). The orange slot becomes
-    # three labeled bars in Brian's order -- Substack (its known
-    # address riding beside the name), Driving Dollars Digest,
-    # Hashrate Harbor -- the two blogs BY NAME only (neither has
-    # a domain on record; none is invented). The card's height
-    # is fixed by the format, so the three bars share the old
-    # pill's column plus the space freed by the folded blogs
-    # line (below). The green WhatsApp pill beside them is
-    # untouched, exactly as it was.
-    def _dest(top, label, sub=None):
-        _b = _vgrad(368, 26, "#ff7a29", "#e04e00", 13)
-        img.paste(_b, (292, top), _b)
-        _bd = ImageDraw.Draw(img)
-        if sub:
-            _f1 = font(FB, 15)
-            _f2 = font(FR, 10)
-            _w1 = _bd.textlength(label, font=_f1)
-            _w2 = _bd.textlength(sub, font=_f2)
-            _x = 292 + (368 - (_w1 + 7 + _w2)) / 2
-            _bd.text((_x, top + 6), label, font=_f1,
-                     fill=(255, 255, 255, 255))
-            _bd.text((_x + _w1 + 7, top + 9), sub, font=_f2,
-                     fill=(255, 255, 255, 235))
-        else:
-            _f1, _sz1 = _fit(label, 15, 344)
-            _w1 = _bd.textlength(label, font=_f1)
-            _bd.text((292 + (368 - _w1) / 2, top + 6), label,
-                     font=_f1, fill=(255, 255, 255, 255))
-    _dest(T + 120, "Substack", mt.BRAND["blog_url"])
-    _dest(T + 148, "Driving Dollars Digest")
-    _dest(T + 176, "Hashrate Harbor")
+    # THE DESTINATIONS (Brian, 2026-11-18 22:36 CST: Substack +
+    # DDD + HH, WhatsApp kept; refined 22:43 CST: "orange -
+    # substack, that can stay as long as it looks nicer ---- the
+    # other two need to be one row, and colored to match their
+    # blog branding."). The Substack bar STAYS in its column —
+    # name + its known address — polished to the manufactured
+    # standard (_polished_bar + soft shadow, the kicker pill's
+    # finish). Under it, ONE ROW of two buttons, each in its
+    # blog's branding: Hashrate Harbor in the Kaspa-teal family
+    # (this template's identity for the blog), Driving Dollars
+    # Digest in navy-and-gold — AGENT-CHOSEN, no DDD brand color
+    # exists on record (charter + registry checked 2026-11-18);
+    # flagged pending Brian's ruling, not his branding. The
+    # two blogs are pitched BY NAME only (neither has a domain
+    # on record; none is invented). The green WhatsApp pill
+    # beside them is untouched, exactly as it was.
+    def _bar_shadow(x, top, w, h, radius):
+        _pad = 18
+        _sh = Image.new("RGBA", (w + 2 * _pad, h + 2 * _pad),
+                        (0, 0, 0, 0))
+        ImageDraw.Draw(_sh).rounded_rectangle(
+            [_pad, _pad, _pad + w - 1, _pad + h - 1], radius,
+            fill=(0, 0, 0, 120))
+        _sh = _sh.filter(ImageFilter.GaussianBlur(7))
+        img.paste(_sh, (x - _pad, top + 4 - _pad), _sh)
+
+    # Substack — the orange bar, polished
+    _bar_shadow(292, T + 114, 368, 38, 14)
+    _sb2 = _polished_bar(368, 38, ("#ff9a4d", "#ff7a29", "#cf4300"), 14)
+    img.paste(_sb2, (292, T + 114), _sb2)
+    d = ImageDraw.Draw(img)
+    _f1 = font(FB, 16)
+    _f2 = font(FR, 11)
+    _w1 = d.textlength("Substack", font=_f1)
+    _w2 = d.textlength(mt.BRAND["blog_url"], font=_f2)
+    _x = 292 + (368 - (_w1 + 7 + _w2)) / 2
+    d.text((_x, T + 114 + 10), "Substack", font=_f1,
+           fill=(255, 255, 255, 255))
+    d.text((_x + _w1 + 7, T + 114 + 13), mt.BRAND["blog_url"],
+           font=_f2, fill=(255, 255, 255, 235))
+    # the two blog buttons — one row, each in its blog branding
+    _bar_shadow(292, T + 158, 179, 32, 12)
+    _ddd = _polished_bar(179, 32, ("#33477a", "#1d2c49", "#131f36"), 12)
+    img.paste(_ddd, (292, T + 158), _ddd)
+    _bar_shadow(481, T + 158, 179, 32, 12)
+    _hh = _polished_bar(179, 32, ("#8fd8cc", "#70c7ba", "#2fa08e"), 12)
+    img.paste(_hh, (481, T + 158), _hh)
+    d = ImageDraw.Draw(img)
+    _df, _dsz = _fit("Driving Dollars Digest", 14, 163, floor=10)
+    cx_text(d, 292 + 179 // 2, T + 158 + (32 - _dsz) // 2 - 1,
+            "Driving Dollars Digest", _df, "#f2cf7a")
+    _hf, _hsz = _fit("Hashrate Harbor", 14, 163, floor=10)
+    cx_text(d, 481 + 179 // 2, T + 158 + (32 - _hsz) // 2 - 1,
+            "Hashrate Harbor", _hf, (10, 34, 29))
     _cta(676, T + 120, 368, 56, "#2fce6e", "#0f9d4c",
          "Message Me on WhatsApp",
          dict(mt.BRAND["handles"])["whatsapp"])
 
     # (The teal "MY BLOGS" line that sat here under the
     # 21:57 ruling is folded away by the 22:36 ruling above:
-    # the three destination bars ARE the blog pitch now.)
+    # the destination bars ARE the blog pitch now.)
 
     # THE SIGNATURE — the crossover's navy plaque (slimmed vs the
     # AI card so the blogs line and the desk's hashtag line also
     # fit inside this card). Second line: the crypto desk's own
     # line (see the module docstring — flagged for Brian's ruling).
     _pq = _vgrad(W - 30 - (RAIL_W + 34) - 24, 58, "#1d2c49", "#131f36", 14)
-    img.paste(_pq, (RAIL_W + 46, T + 206), _pq)
+    img.paste(_pq, (RAIL_W + 46, T + 194), _pq)
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle([RAIL_W + 46, T + 206, W - 42, T + 264], 14,
+    d.rounded_rectangle([RAIL_W + 46, T + 194, W - 42, T + 252], 14,
                         outline="#0aa5e0", width=2)
-    cx_text(d, CX, T + 212, "BRIAN LATHE", font(FB, 29), "white", tracking=1)
-    cx_text(d, CX, T + 243, "BUY SUPPORT \u2022 SELL RESISTANCE \u2022 HOLD LONG",
+    cx_text(d, CX, T + 200, "BRIAN LATHE", font(FB, 29), "white", tracking=1)
+    cx_text(d, CX, T + 231, "BUY SUPPORT \u2022 SELL RESISTANCE \u2022 HOLD LONG",
             font(FB, 12), "#f2cf7a", tracking=1)
     # the desk's hashtag line, closing the card
-    cx_text(d, CX, T + 268, ct.CRYPTO_BRAND["hashtag"],
+    cx_text(d, CX, T + 256, ct.CRYPTO_BRAND["hashtag"],
             font(FB, 13), ct.KASPA)
+
+    # ===== THE COUNTER STRIP — the format's counter slot at the
+    # foot of the column (Brian, 2026-11-18 22:40 CST: "jensen
+    # huang counter needs to go on this --- counters go on all
+    # meme templates"). Mirrors the AI crossover's scorecard
+    # strip in form and wording — navy gradient block, blue
+    # outline, holo top edge (HL colors, the crypto idiom),
+    # DAY n at the left, title + start line right-aligned —
+    # slimmed to title + day + start date only, per Brian's
+    # standing 2026-11-15 ruling on the AI piece. The DAY
+    # number is DERIVED from the anchor (DAY 1 = Thu Nov 12,
+    # 2026) and the render date, never hard-coded. =====
+    _day = (date.today() - HUANG_COUNT_START).days + 1
+    cs0, cs1 = T + _card_h + 12, T + _card_h + 12 + 86
+    _sb3 = _vgrad(W - 30 - (RAIL_W + 34), cs1 - cs0,
+                  "#1d2c49", "#131f36", 18)
+    img.paste(_sb3, (RAIL_W + 34, cs0), _sb3)
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([RAIL_W + 34, cs0, W - 30, cs1], 18,
+                        outline="#0aa5e0", width=2)
+    edge = mt.holo_pill((W - 30 - (RAIL_W + 34) - 8, 5), colors=HL,
+                        radius=2, base_alpha=200)
+    img.paste(edge, (RAIL_W + 38, cs0 + 3), edge)
+    d = ImageDraw.Draw(img)
+    d.text((RAIL_W + 62, cs0 + 24), f"DAY {_day}", font=font(FB, 34),
+           fill="white")
+    _st = "JENSEN HUANG \u2022 DAYS SINCE HE RESIGNED"
+    _sf = font(FB, 16)
+    _sw = d.textlength(_st, font=_sf)
+    d.text((W - 58 - _sw, cs0 + 18), _st, font=_sf, fill="#ffd23f")
+    _ss = "COUNT STARTED THU NOV 12"
+    _ssf = font(FB, 12)
+    _ssw = d.textlength(_ss, font=_ssf)
+    d.text((W - 58 - _ssw, cs0 + 44), _ss, font=_ssf, fill="#9fb4cc")
 
     img.convert("RGB").save(OUT)
     print(OUT)

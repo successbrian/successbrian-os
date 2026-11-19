@@ -20,7 +20,7 @@ queue) lands it in the library. NO new layout was created.
 Rail ruling (Brian, 2026-11-18 21:55 CST): "the home rack comes
 out, it's not related to crypto." In the crypto theme the rail
 carries NO rack — the rack is AI/infrastructure branding, not
-crypto. The rail is photo + name + icons + the HODL panels + a
+crypto. The rail is photo + name + icons + the HODL section + a
 CTA foot block, reflowed to fill the full height without the
 rack. Scope: crypto theme only; the AI crossover keeps its rack.
 
@@ -128,6 +128,35 @@ This offer card is built to exactly that footprint; the
 stand-out treatment (gold card, gold pill, medallion) lives
 INSIDE the slot and takes no extra rail room.
 
+One-section / matched-width ruling (Brian, 2026-11-18 22:26
+CST): "the coins and stocks can be in one section together --
+not two borders. the widths of the hodl and the cta should
+match." The two HODL panels merge into ONE bordered section —
+header "HODL", all eight medallions inside: the six coins
+under a small "COINS" group label, the two stocks under
+"STOCKS", the groups split by a hairline in the panel's
+grammar. This supersedes the two-panel arrangement of the
+22:03 ruling above; its shared grammar and all content carry
+over. And the HODL section and the CTA card now share ONE
+width — the rail panel width (x14-238) — a single clean
+column down the rail. The CTA-slot standard is amended
+accordingly: the slot HEIGHT stays the Spencer block's 161,
+but the slot WIDTH is the rail panel width, identical for
+the HODL section and every CTA module. (The 180 measure in
+the 22:23 ruling above was the AI rail's Spencer extent;
+the format rule as Brian states it is: one width for panels
++ CTA, one slot height.)
+
+Kicker-candle ruling (Brian, 2026-11-18 22:27 CST): "on the
+right side, the top pill, with the candlesticks, these should
+be bordered in black to stand out more." The two candle
+glyphs flanking the kicker pill now carry a BLACK outline —
+the candle drawn black and slightly larger behind its
+green/red fill, in the desk's drawn idiom — so the marks
+stand out against the pill's gradient ground, at full size
+and at thumbnail scale. The pill itself and the candle fills
+are unchanged.
+
 Content (the crypto desk as rebranded, commit 25e4179): headline
 "BUY FEAR. SELL GREED.", the six coins as comparative cards, the
 skeptics strip, punchline "SUPPORT IS WHERE YOU BUY. RESISTANCE IS
@@ -217,6 +246,38 @@ def _vgrad(w, h, top, bot, radius):
     return _g
 
 
+def _candle_outlined(size=30, up=True):
+    """The kicker candle with a BLACK outline (Brian, 2026-11-18
+    22:27 CST: the pill's candlesticks "should be bordered in
+    black to stand out more"). Same geometry as
+    crypto_template.icon_candle — wick line + body — drawn at 4x
+    in the desk's supersampled idiom: the candle silhouette in
+    black, slightly larger, behind the green/red fill, so a
+    clean black border rings body and wick against the pill's
+    gradient ground. Fills unchanged: green up, red down."""
+    S = 4
+    s = size * S
+    im = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    col = (22, 199, 132, 255) if up else (234, 57, 67, 255)
+    blk = (0, 0, 0, 255)
+    cx, cy = s / 2, s / 2
+    bw, bh, wk = s * 0.42, s * 0.52, s * 0.18
+    ww = 3 * S            # wick weight, matching icon_candle at 4x
+    b = 2 * S             # the black border, ~2px at final size
+    # black silhouette first: fatter wick + grown body
+    d.line([(cx, cy - bh / 2 - wk), (cx, cy + bh / 2 + wk)],
+           fill=blk, width=ww + 2 * b)
+    d.rectangle([cx - bw / 2 - b, cy - bh / 2 - b,
+                 cx + bw / 2 + b, cy + bh / 2 + b], fill=blk)
+    # the candle itself, fills as the template draws them
+    d.line([(cx, cy - bh / 2 - wk), (cx, cy + bh / 2 + wk)],
+           fill=col, width=ww)
+    d.rectangle([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2],
+                fill=col)
+    return im.resize((size, size), Image.LANCZOS)
+
+
 def main():
     content = ct.DEFAULT_CONTENT
     img = ct.crypto_backdrop(ct.dark_background()).convert("RGBA")
@@ -285,19 +346,22 @@ def main():
     # gone. The freed space is part of the 22:12 crunch that lifts
     # the HODL panels and frees the CTA foot block below.
 
-    # ---- HODL panels — the rack's slot (Brian, 2026-11-18 21:58
-    # CST: "where the home rack was, that's where the six crypto
-    # icons go labeled as 'HODL Coins'"; extended 22:03 CST:
-    # "hodl stocks and hodl coins need to both fit on the left").
-    # BOTH panels live in the rail's lower half in ONE shared
-    # grammar — same border, gold header, gold rule, medallion
-    # treatment — so the rail reads as one designed column:
-    # "HODL Coins" (the six branded coins, 3-wide x 2-tall) above
-    # "HODL Stocks" (Brian's pair — O and MAIN, 2 across; ruled
-    # 22:01 CST). All glyphs are drawn in the desk's idiom —
-    # letter / symbol marks ringed in their own colors; no scraped
-    # brand art. Spencer is OUT of the crypto piece (21:58 ruling);
-    # he stays in the AI crossover and everywhere else. ----
+    # ---- HODL section — the rack's slot (Brian, 2026-11-18
+    # 21:58 CST: "where the home rack was, that's where the six
+    # crypto icons go labeled as 'HODL Coins'"; stocks joined
+    # 22:01 CST, both fit on the left 22:03 CST). ONE bordered
+    # section since Brian's 22:26 CST ruling: "the coins and
+    # stocks can be in one section together -- not two borders."
+    # A single panel — header "HODL", gold rule — holds all
+    # eight medallions in the shared grammar: the six branded
+    # coins under a small "COINS" group label (3-wide x 2-tall),
+    # a hairline divider, then Brian's two HODL stocks under
+    # "STOCKS" (O and MAIN, 2 across on the coins grid's outer
+    # columns). All glyphs are drawn in the desk's idiom —
+    # letter / symbol marks ringed in their own colors; no
+    # scraped brand art. Spencer is OUT of the crypto piece
+    # (21:58 ruling); he stays in the AI crossover and
+    # everywhere else. ----
     def _medallion(kind, color, size=58):
         S = 4
         m = Image.new("RGBA", (size * S, size * S), (0, 0, 0, 0))
@@ -380,42 +444,59 @@ def main():
                        fill=col)
         return m.resize((size, size), Image.LANCZOS)
 
-    def _hodl_panel(y0, title, items, col_cxs):
-        """One HODL panel in the shared grammar: bordered box, gold
-        header + gold rule, medallions across col_cxs with labels
-        beneath. items = [(kind, label, color), ...]. Returns the
+    def _hodl_section(y0, coins, stocks):
+        """The rail's ONE HODL section (Brian, 2026-11-18 22:26
+        CST: coins and stocks in one section, not two borders):
+        a single bordered panel — header "HODL" + gold rule —
+        holding all eight medallions in the shared grammar: the
+        six coins under a "COINS" group label (3-wide x 2-tall),
+        a hairline divider, the two stocks under "STOCKS" (2
+        across on the coins grid's outer columns, so one set of
+        vertical lines runs down the section). Returns the
         panel's bottom y."""
         _pd = ImageDraw.Draw(img)
-        _rows = (len(items) + len(col_cxs) - 1) // len(col_cxs)
-        _y1 = y0 + 72 + (_rows - 1) * 84 + 92
+        _y1 = y0 + 411
         _pd.rounded_rectangle([14, y0, RAIL_W - 14, _y1], 18,
                               fill=(22, 23, 31, 255),
                               outline=mt._hex(ct.KASPA_DK) + (255,),
                               width=2)
-        cx_text(_pd, RAIL_W // 2, y0 + 20, title, font(FB, 18), GOLD,
-                tracking=1)
+        cx_text(_pd, RAIL_W // 2, y0 + 20, "HODL", font(FB, 18),
+                GOLD, tracking=2)
         _pd.line([(40, y0 + 54), (RAIL_W - 40, y0 + 54)],
                  fill=(217, 165, 33, 255), width=2)
-        for _i, (_kind, _label, _color) in enumerate(items):
-            _mcx = col_cxs[_i % len(col_cxs)]
-            _mtop = y0 + 72 + (_i // len(col_cxs)) * 84
-            _med = _medallion(_kind, _color)
-            img.paste(_med, (_mcx - 29, _mtop), _med)
-            cx_text(_pd, _mcx, _mtop + 64, _label, font(FB, 11), INK_D,
-                    tracking=1)
+
+        def _group(label, top):
+            cx_text(_pd, RAIL_W // 2, top, label, font(FB, 11),
+                    DIM_D, tracking=3)
+
+        def _row(items, col_cxs, top):
+            for _i, (_kind, _label, _color) in enumerate(items):
+                _mcx = col_cxs[_i]
+                _med = _medallion(_kind, _color)
+                img.paste(_med, (_mcx - 29, top), _med)
+                cx_text(_pd, _mcx, top + 64, _label, font(FB, 11),
+                        INK_D, tracking=1)
+
+        _cols3 = (56, 126, 196)
+        _group("COINS", y0 + 70)
+        _row(coins[:3], _cols3, y0 + 94)
+        _row(coins[3:], _cols3, y0 + 186)
+        # hairline divider between the two groups — a line in
+        # the panel's grammar, not a second border
+        _pd.line([(56, y0 + 278), (196, y0 + 278)],
+                 fill=(70, 74, 90, 255), width=2)
+        _group("STOCKS", y0 + 294)
+        _row(stocks, (56, 196), y0 + 318)
         return _y1
 
     _coins = [(_c["title"], _c["title"], _c["bar_color"])
               for _c in content["cards"]]
-    _ybot = _hodl_panel(446, "HODL Coins", _coins, (56, 126, 196))
     # Brian's two HODL stocks (ruled 2026-11-18 22:01 CST): O =
     # Realty Income (realty) in silver-blue, MAIN = Main Street
     # Capital (BDC lender, not realty) in money green — colors
     # chosen clear of the six coin colors.
     _stocks = [("O", "O", "#d7dee8"), ("MAIN", "MAIN", "#57b06a")]
-    # the pair rides the coins grid's OUTER columns (56 / 196), so
-    # both panels share the same vertical lines down the rail
-    _sbot = _hodl_panel(_ybot + 12, "HODL Stocks", _stocks, (56, 196))
+    _hbot = _hodl_section(450, _coins, _stocks)
 
     # ---- Rail CTA foot block (Brian, 2026-11-18 22:12 CST:
     # "crunch everything up to leave room for a call to action like
@@ -435,23 +516,26 @@ def main():
     # it, etc."), sized by the CTA-slot ruling (22:23 CST: "it
     # needs to be the same SIZE as the spencer call to action --
     # i'm going to now multiple call to actions all the same size
-    # and we can swap them out per post"). The block is a filled
-    # AD CARD — warm gold gradient, gold border — built to the
-    # STANDARD CTA SLOT, the Spencer block's exact footprint
-    # measured in render_crossover_graph.py: x36-216 (180 wide,
-    # the rule's extent) x y881-1042 (161 tall: rule 881, lines
-    # 895/914, badge 935-1019, name 1027), same rail-foot position.
-    # CTAs are interchangeable modules at this size, swapped per
-    # post; the stand-out treatment lives INSIDE the footprint —
-    # the card's gold outline takes the rule's place at the slot's
-    # top edge, "7 DAY FREE TRIAL" rides a filled gold pill (dark
-    # text, the holo_pill idiom), and the cloud medallion sits at
-    # the badge position. Internal order mirrors Spencer's:
-    # invitation line -> hook -> badge -> closing line. Words
-    # unchanged (22:16 ruling). The HODL panels crunch up to clear
-    # the slot (stocks bottom 870, slot top 881); their substance
-    # is unchanged.
-    _sx0, _sx1, _sy0, _sy1 = 36, RAIL_W - 36, 881, 1042
+    # and we can swap them out per post") as amended by the
+    # matched-width ruling (22:26 CST: "the widths of the hodl
+    # and the cta should match"). The block is a filled AD CARD —
+    # warm gold gradient, gold border — built to the STANDARD
+    # CTA SLOT at the rail foot: HEIGHT the Spencer block's 161
+    # (y881-1042: rule 881, lines 895/914, badge 935-1019, name
+    # 1027, measured in render_crossover_graph.py), WIDTH the
+    # rail panel width (x14-238) — the same x-extent as the HODL
+    # section above it, so section + CTA form one clean column
+    # and every CTA module shares the footprint. CTAs are
+    # interchangeable modules at this size, swapped per post; the
+    # stand-out treatment lives INSIDE the slot — the card's gold
+    # outline takes the rule's place at the slot's top edge,
+    # "7 DAY FREE TRIAL" rides a filled gold pill (dark text, the
+    # holo_pill idiom), and the cloud medallion sits at the badge
+    # position. Internal order mirrors Spencer's: invitation
+    # line -> hook -> badge -> closing line. Words unchanged
+    # (22:16 ruling). The HODL section clears the slot (section
+    # bottom 861, slot top 881); its substance is unchanged.
+    _sx0, _sx1, _sy0, _sy1 = 14, RAIL_W - 14, 881, 1042
     _card = _vgrad(_sx1 - _sx0, _sy1 - _sy0, "#6d5718", "#382b0b", 16)
     img.paste(_card, (_sx0, _sy0), _card)
     d = ImageDraw.Draw(img)
@@ -459,7 +543,7 @@ def main():
                         outline=(217, 165, 33, 255), width=3)
     cx_text(d, RAIL_W // 2, 895, "ASK BRIAN FOR",
             font(FB, 12), (250, 240, 214), tracking=2)
-    _pf, _ = _fit("7 DAY FREE TRIAL", 17, 146)
+    _pf, _ = _fit("7 DAY FREE TRIAL", 17, 190)
     _ptw = d.textlength("7 DAY FREE TRIAL", font=_pf)
     _pw2 = int(_ptw) + 30
     _px0 = RAIL_W // 2 - _pw2 // 2
@@ -471,13 +555,15 @@ def main():
     _cmed = _medallion("CLOUD", _coins[0][2], 46)
     img.paste(_cmed, (RAIL_W // 2 - 23, 959), _cmed)
     d = ImageDraw.Draw(img)
-    _sf, _ = _fit("24/7 6TB CLOUD BACKUP", 11, 168, floor=9)
+    _sf, _ = _fit("24/7 6TB CLOUD BACKUP", 11, 200, floor=9)
     cx_text(d, RAIL_W // 2, 1013, "24/7 6TB CLOUD BACKUP",
             _sf, ct.KASPA, tracking=1)
     d = ImageDraw.Draw(img)
 
     # ---- kicker pill (crossover pill, crypto palette, candle
-    # glyphs instead of sparkles — the crypto kicker signature) ----
+    # glyphs instead of sparkles — the crypto kicker signature;
+    # the candles are BLACK-OUTLINED per Brian, 2026-11-18 22:27
+    # CST, so they stand out against the pill's gradient) ----
     _kt = content["kicker"]  # "THE CRYPTO DESK IS OPEN"
     _kf = font(FB, 17)
     _ktw = d.textlength(_kt, font=_kf) + 3 * (len(_kt) - 1)
@@ -487,7 +573,7 @@ def main():
     d = ImageDraw.Draw(img)
     cx_text(d, CX, 24 + (56 - 17) // 2 - 1, _kt, _kf, (234, 252, 247), tracking=3)
     for _up, _gx in ((True, int(CX - _pw / 2 + 18)), (False, int(CX + _pw / 2 - 48))):
-        _g = ct.icon_candle(30, up=_up)
+        _g = _candle_outlined(30, up=_up)
         img.paste(_g, (_gx, 24 + 13), _g)
     d = ImageDraw.Draw(img)
 

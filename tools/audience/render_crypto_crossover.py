@@ -275,6 +275,28 @@ height and reflows inside it. (This refines the dest-bar
 arrangement of the 22:36 CST ruling above; its WhatsApp
 half stands exactly as ruled.)
 
+Signature-band ruling (Brian, 2026-11-18 23:00 CST): "for the
+branding pill... on the right-- move Brian Lathe // crypto *
+stocks * options * forex - move that to the left and bring up
+the follow hashtag and put that in the right side -- make
+that all look super nice." The connect card's bottom band is
+now ONE split row on the plaque's navy identity, finished to
+the piece's manufactured standard (_polished_bar: three-stop
+gradient, 3D bevel, inner highlight, sheen, soft shadow):
+LEFT, the branding — BRIAN LATHE over CRYPTO • STOCKS •
+OPTIONS • FOREX (the 22:57 CST branding ruling's content,
+unchanged), left-aligned; RIGHT, the desk's FOLLOW
+#SuccessBrianCrypto hashtag, brought UP from the standalone
+line beneath the plaque (that line is removed) into the band
+as a lit-teal chip in the Hashrate Harbor button's Kaspa-teal
+family with dark ink, vertically centered against the
+branding block, a hairline divider in the middle ground
+between the sides. The band grows 58 -> 66 into the space
+the hashtag line freed; the card's fixed format height is
+unchanged and nothing else in the piece moves. (This
+supersedes the centered full-width arrangement of the
+22:57 CST branding ruling; its words stand.)
+
 Content (the crypto desk as rebranded, commit 25e4179): headline
 "BUY FEAR. SELL GREED.", the six coins as comparative cards, the
 skeptics strip, punchline "SUPPORT IS WHERE YOU BUY. RESISTANCE IS
@@ -1051,7 +1073,8 @@ def main():
 
     # ---- THE CONNECT CARD (the crossover's unified card, dark
     # edition): ask -> chips -> Substack bar + blog buttons +
-    # WhatsApp pill -> signature plaque -> hashtag line. The
+    # WhatsApp pill -> signature band (branding left, follow
+    # chip right — Brian, 2026-11-18 23:00 CST). The
     # counter strip follows the card at the foot of the column
     # (Brian, 2026-11-18 22:40 CST). Card height reflows inside
     # the format (284 -> 272) in the counter reflow. ----
@@ -1191,21 +1214,69 @@ def main():
     # 21:57 ruling is folded away by the 22:36 ruling above:
     # the destination bars ARE the blog pitch now.)
 
-    # THE SIGNATURE — the crossover's navy plaque (slimmed vs the
-    # AI card so the blogs line and the desk's hashtag line also
-    # fit inside this card). Second line: Brian's markets, per
-    # his branding ruling (2026-11-18 22:57 CST; see docstring).
-    _pq = _vgrad(W - 30 - (RAIL_W + 34) - 24, 58, "#1d2c49", "#131f36", 14)
-    img.paste(_pq, (RAIL_W + 46, T + 194), _pq)
+    # THE SIGNATURE BAND — ONE split row (Brian, 2026-11-18
+    # 23:00 CST: "move Brian Lathe // crypto * stocks * options
+    # * forex — move that to the left and bring up the follow
+    # hashtag and put that in the right side — make that all
+    # look super nice"). The centered full-width plaque and the
+    # standalone hashtag line beneath it are gone. The band
+    # keeps the plaque's navy identity, finished to the piece's
+    # manufactured standard (_polished_bar + the caller's soft
+    # shadow, the destination bars' treatment): LEFT, the
+    # branding left-aligned — BRIAN LATHE over Brian's markets
+    # (the 22:57 CST branding ruling's content, unchanged);
+    # RIGHT, the desk's FOLLOW hashtag raised into the band as
+    # a lit-teal chip (the Hashrate Harbor button's Kaspa-teal
+    # family, dark ink), vertically centered against the
+    # branding block; a hairline divider stands in the middle
+    # ground between the sides. The band grows 58 -> 66 into
+    # the space the hashtag line freed and centers between the
+    # blog buttons and the card's bottom edge; the card's fixed
+    # format height is unchanged.
+    def _lx_text(d, x, y, text, fnt, fill, tracking=0):
+        if tracking:
+            for ch in text:
+                d.text((x, y), ch, font=fnt, fill=fill)
+                x += d.textlength(ch, font=fnt) + tracking
+            return x
+        d.text((x, y), text, font=fnt, fill=fill)
+        return x + d.textlength(text, font=fnt)
+
+    _bx0, _bx1 = RAIL_W + 46, W - 42
+    _bw = _bx1 - _bx0
+    _by, _bh = T + 198, 66
+    _bar_shadow(_bx0, _by, _bw, _bh, 14)
+    _pq = _polished_bar(_bw, _bh, ("#33477a", "#1d2c49", "#131f36"), 14)
+    img.paste(_pq, (_bx0, _by), _pq)
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle([RAIL_W + 46, T + 194, W - 42, T + 252], 14,
+    d.rounded_rectangle([_bx0, _by, _bx1, _by + _bh], 14,
                         outline="#0aa5e0", width=2)
-    cx_text(d, CX, T + 200, "BRIAN LATHE", font(FB, 29), "white", tracking=1)
-    cx_text(d, CX, T + 231, "CRYPTO \u2022 STOCKS \u2022 OPTIONS \u2022 FOREX",
-            font(FB, 12), "#f2cf7a", tracking=1)
-    # the desk's hashtag line, closing the card
-    cx_text(d, CX, T + 256, ct.CRYPTO_BRAND["hashtag"],
-            font(FB, 13), ct.KASPA)
+    # LEFT — the branding, left-aligned in the band
+    _nend = _lx_text(d, _bx0 + 24, _by + 8, "BRIAN LATHE",
+                     font(FB, 29), "white", tracking=1)
+    _mend = _lx_text(d, _bx0 + 24, _by + 41,
+                     "CRYPTO \u2022 STOCKS \u2022 OPTIONS \u2022 FOREX",
+                     font(FB, 12), "#f2cf7a", tracking=1)
+    # RIGHT — the follow hashtag, up in the band as a chip
+    _tag = ct.CRYPTO_BRAND["hashtag"]
+    _tf, _tsz = _fit(_tag, 15, 300, floor=11)
+    _cw = int(d.textlength(_tag, font=_tf) + 42)
+    _ch = 36
+    _cx1 = _bx1 - 20
+    _cx0 = _cx1 - _cw
+    _cy0 = _by + (_bh - _ch) // 2
+    # the divider in the middle ground, if the gap allows
+    _lend = max(_nend, _mend)
+    if _cx0 - _lend > 70:
+        _dvx = (_lend + _cx0) // 2
+        d.line([_dvx, _by + 14, _dvx, _by + _bh - 14],
+               fill=(70, 96, 138, 255), width=2)
+    _bar_shadow(_cx0, _cy0, _cw, _ch, 18)
+    _chip = _polished_bar(_cw, _ch, ("#8fd8cc", "#70c7ba", "#2fa08e"), 18)
+    img.paste(_chip, (_cx0, _cy0), _chip)
+    d = ImageDraw.Draw(img)
+    cx_text(d, (_cx0 + _cx1) // 2, _cy0 + (_ch - _tsz) // 2 - 1,
+            _tag, _tf, (10, 34, 29))
 
     # ===== THE COUNTER STRIP — the format's counter slot at the
     # foot of the column (Brian, 2026-11-18 22:40 CST: "jensen

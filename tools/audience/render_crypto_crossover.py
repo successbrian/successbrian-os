@@ -9,13 +9,42 @@ wearing the crypto desk's identity: near-black charcoal, candlestick
 texture, Kaspa teal / Cardano blue / BNB gold.
 
 Machinery: everything renders through the existing desk machinery —
-meme_template.py primitives (photo_card, spencer_badge, holo_pill,
+meme_template.py primitives (photo_card, holo_pill,
 grad_rounded, icons, _gbar) and crypto_template.py (dark backdrop,
 headline_3d_dark, candle glyphs, the branded-six DEFAULT_CONTENT).
-The rail/rack block is carried verbatim from render_crossover_graph.py
-(the crossover format master) — the desk pattern until the Format
-Library extraction (FORMAT_LIBRARY_SPEC.md Module 2, staged in the
-PM queue) lands it in the library. NO new layout was created.
+The rail geometry follows render_crossover_graph.py (the crossover
+format master) — the desk pattern until the Format Library
+extraction (FORMAT_LIBRARY_SPEC.md Module 2, staged in the PM
+queue) lands it in the library. NO new layout was created.
+
+Rail ruling (Brian, 2026-11-18 21:55 CST): "the home rack comes
+out, it's not related to crypto." In the crypto theme the rail
+carries NO rack — the rack is AI/infrastructure branding, not
+crypto. The rail is photo + name + icons + tagline + the HODL
+Coins panel, reflowed to fill the full height without the rack.
+Scope: crypto theme only; the AI crossover keeps its rack.
+
+Spencer / HODL Coins ruling (Brian, 2026-11-18 21:58 CST):
+"spencer comes out — and where the home rack was, that's where
+the six crypto icons go labeled as 'HODL Coins'." The rail's
+Spencer foot block ("ASK BRIAN FOR YOUR FREE MUSE AI AGENT" +
+badge + name) is removed — crypto piece only; Spencer stays in
+the AI crossover and everywhere else. The rack's slot becomes
+the HODL Coins panel: the six branded coins (Kaspa, Bitcoin,
+Cardano, Solana, BNB, Aster) as drawn medallion glyphs in the
+desk's own idiom — letter/symbol marks in each coin's card
+color, no scraped brand art — under Brian's exact label
+"HODL Coins".
+
+Connect-card ruling (Brian, 2026-11-18 21:57 CST): "this meme can
+pitch substack AND 'drivingdollarsdigest' and 'hashrateharbor'."
+The connect card pitches THREE destinations: Substack (the orange
+CTA pill), Hashrate Harbor (Brian's crypto blog) and Driving
+Dollars Digest (his everything-but-crypto personal finance blog).
+The two blogs are pitched BY NAME on a blogs line inside the card —
+neither blog has a domain on record, so no URL is shown. This is
+the two blogs' mutual cross-promotion (Brian's ruling the same
+evening) in action; the blogs remain independent.
 
 Content (the crypto desk as rebranded, commit 25e4179): headline
 "BUY FEAR. SELL GREED.", the six coins as comparative cards, the
@@ -100,202 +129,6 @@ def _vgrad(w, h, top, bot, radius):
     return _g
 
 
-# ---------------- 3D rack (verbatim from render_crossover_graph.py,
-# the crossover format master; Format Library Module 2 will extract
-# it into the library — see the spec's staging table) ----------------
-def draw_rack(base, x, y, w, units):
-    """Brian's home-lab rack as an OPEN-FRAME rack, drawn on a 4x
-    canvas and downscaled for real resolution. Front posts with
-    cage-nut holes, bolted faceplates, uniform left-aligned work
-    labels, one green light per unit. Alpha and Bravo are two
-    GMKtec K11 mini PCs inside a custom 3D-printed enclosure labeled
-    AI INFERENCE; a printed nameplate rides the top bar. The rack
-    carries Brian's fleet only — Gamma is rented and is never on it."""
-    S = 4  # supersample factor for the rack render
-    gap = 3
-    heights = [25 if k == "slim" else 46 if k == "pcs" else 32
-               for _, _, k in units]
-    top_bar, bot_bar = 16, 12
-    h = top_bar + sum(heights) + gap * (len(units) - 1) + bot_bar
-    dx, dy = 22, -18
-    pad_l, pad_t = 34, 44
-    cv = Image.new("RGBA", ((w + pad_l + 64) * S, (h + pad_t + 72) * S),
-                   (0, 0, 0, 0))
-    d = ImageDraw.Draw(cv)
-    X = (pad_l) * S          # rack front-left, hi-res px
-    Y = (pad_t) * S          # rack front-top
-    Wd = w * S
-    Hd = h * S
-
-    def R(a, b, c, e, r=0, **kw):
-        d.rounded_rectangle([a, b, c, e], r, **kw)
-
-    def screw(cx, cy, r=5):
-        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(168, 186, 210, 255))
-        d.ellipse([cx - r + 2, cy - r + 2, cx + r - 3, cy + r - 3],
-                  fill=(210, 224, 244, 255))
-        d.line([(cx - r + 2, cy), (cx + r - 2, cy)], fill=(90, 105, 130, 255), width=2)
-        d.line([(cx, cy - r + 2), (cx, cy + r - 2)], fill=(90, 105, 130, 255), width=2)
-
-    def led(cx, cy, col=(64, 255, 150), r=4):
-        d.ellipse([cx - r * 3, cy - r * 3, cx + r * 3, cy + r * 3], fill=col + (46,))
-        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=col + (255,))
-        d.ellipse([cx - 1, cy - 2, cx + 1, cy], fill=(235, 255, 244, 255))
-
-    def vgrad(a, b, c, e, top, bot):
-        steps = int(e - b)
-        for i in range(steps):
-            t = i / max(1, steps - 1)
-            col = tuple(int(top[k] + (bot[k] - top[k]) * t) for k in range(3))
-            d.line([(a, b + i), (c, b + i)], fill=col + (255,))
-
-    def label(tx, ty, text, size=13, fill=(255, 255, 255, 255)):
-        f = font(FB, size * S)
-        d.text((tx + 1, ty + 2), text, font=f, fill=(0, 0, 0, 110))
-        d.text((tx, ty), text, font=f, fill=fill)
-
-    d = ImageDraw.Draw(cv)
-
-    DX, DY = dx * S, dy * S
-    # top face + right side face (the frame's depth)
-    d.polygon([(X, Y), (X + DX, Y + DY), (X + Wd + DX, Y + DY), (X + Wd, Y)],
-              fill=(66, 80, 108, 255))
-    d.line([(X, Y), (X + DX, Y + DY), (X + Wd + DX, Y + DY), (X + Wd, Y)],
-           fill=(140, 165, 200, 255), width=2)
-    d.polygon([(X + Wd, Y), (X + Wd + DX, Y + DY), (X + Wd + DX, Y + DY + Hd),
-               (X + Wd, Y + Hd)], fill=(26, 34, 54, 255))
-    for i in range(10):
-        yy = Y + DY + 26 * S + i * (Hd - 40 * S) // 10
-        d.line([(X + Wd + 6 * S, yy + 8 * S), (X + Wd + DX - 4 * S, yy)],
-               fill=(80, 102, 138, 255), width=3)
-    # dark cavity behind the units
-    R(X + 11 * S, Y + 4 * S, X + Wd - 11 * S, Y + Hd - 4 * S, 6, fill=(8, 11, 18, 255))
-
-    post_w = 13 * S
-    uy = Y + top_bar * S
-    for (name, spec, kind), uh1 in zip(units, heights):
-        uh = uh1 * S
-        ux0, ux1 = X + post_w, X + Wd - post_w
-        # faceplate with a brushed vertical gradient
-        vgrad(ux0, uy, ux1, uy + uh, (58, 74, 102), (33, 43, 64))
-        d.line([(ux0, uy), (ux1, uy)], fill=(190, 210, 235, 90), width=2)
-        d.line([(ux0, uy + uh - 2), (ux1, uy + uh - 2)], fill=(0, 0, 0, 130), width=2)
-        mid_y = uy + uh // 2
-        if kind == "slim":
-            # network switch: dark face, 8 ports, link lights, LAN label
-            vgrad(ux0, uy, ux1, uy + uh, (40, 52, 76), (22, 30, 46))
-            for px in range(8):
-                pxx = ux0 + 12 * S + px * 15 * S
-                R(pxx, mid_y - 6 * S, pxx + 10 * S, mid_y + 4 * S, 2 * S,
-                  fill=(14, 20, 32, 255), outline=(96, 116, 148, 255), width=2)
-                d.ellipse([pxx + 3 * S, mid_y + 6 * S, pxx + 5 * S, mid_y + 8 * S],
-                          fill=(64, 255, 150, 255))
-                d.ellipse([pxx + 6 * S, mid_y + 6 * S, pxx + 8 * S, mid_y + 8 * S],
-                          fill=(255, 190, 64, 255))
-            tw = d.textlength(name, font=font(FB, 13 * S))
-            label(ux1 - 14 * S - tw, mid_y - 9 * S, name)
-        elif kind == "pcs":
-            # 3D-printed enclosure (matte charcoal, visible print
-            # layer lines) holding the two K11 mini PCs
-            R(ux0 + 2 * S, uy + 2 * S, ux1 - 2 * S, uy + uh - 2 * S, 6 * S,
-              fill=(36, 38, 44, 255))
-            for ly2 in range(uy + 5 * S, uy + uh - 4 * S, 3 * S):
-                d.line([(ux0 + 4 * S, ly2), (ux1 - 4 * S, ly2)], fill=(255, 255, 255, 14), width=1)
-            # printed corner brackets in accent filament
-            for bx2 in (ux0 + 2 * S, ux1 - 8 * S):
-                R(bx2, uy + 2 * S, bx2 + 6 * S, uy + 9 * S, 2 * S, fill=(16, 132, 196, 255))
-                R(bx2, uy + uh - 9 * S, bx2 + 6 * S, uy + uh - 2 * S, 2 * S, fill=(16, 132, 196, 255))
-            bw2 = (ux1 - ux0 - 26 * S) // 2
-            for i, nm in enumerate(("ALPHA", "BRAVO")):
-                bx2 = ux0 + 8 * S + i * (bw2 + 10 * S)
-                by2, bh2 = uy + 4 * S, uh - 16 * S
-                # K11 front face: metal edge frame, glossy dark panel
-                R(bx2, by2, bx2 + bw2, by2 + bh2, 5 * S, fill=(22, 24, 30, 255),
-                  outline=(158, 168, 186, 255), width=3)
-                R(bx2 + 3 * S, by2 + 3 * S, bx2 + bw2 - 3 * S, by2 + bh2 - 3 * S, 4 * S,
-                  outline=(255, 255, 255, 30), width=1)
-                # the K11's LED illumination strip across the upper face
-                d.line([(bx2 + 6 * S, by2 + 6 * S), (bx2 + bw2 - 6 * S, by2 + 6 * S)],
-                       fill=(96, 220, 255, 255), width=2)
-                d.line([(bx2 + 6 * S, by2 + 8 * S), (bx2 + bw2 - 6 * S, by2 + 8 * S)],
-                       fill=(96, 220, 255, 60), width=2)
-                # micro badge with the machine's name, lower-left
-                f6 = font(FB, 6 * S)
-                d.text((bx2 + 6 * S, by2 + bh2 - 15 * S), nm, font=f6,
-                       fill=(150, 162, 182, 255))
-                # front ports row: power, audio, USB-A x2, USB4-C, OCuLink
-                py = by2 + bh2 - 8 * S
-                pcx = bx2 + 9 * S
-                d.ellipse([pcx - 3 * S, py - 3 * S, pcx + 3 * S, py + 3 * S],
-                          outline=(190, 200, 216, 255), width=2)
-                d.ellipse([pcx - 1 * S, py - 1 * S, pcx + 1 * S, py + 1 * S],
-                          fill=(64, 255, 150, 255))
-                ax = pcx + 8 * S
-                d.ellipse([ax - 2 * S, py - 2 * S, ax + 2 * S, py + 2 * S],
-                          fill=(10, 12, 16, 255), outline=(140, 150, 168, 255), width=1)
-                ux2 = ax + 7 * S
-                for k in range(2):
-                    R(ux2, py - 2 * S, ux2 + 7 * S, py + 2 * S, 1 * S,
-                      fill=(28, 32, 42, 255), outline=(130, 140, 158, 255), width=1)
-                    d.line([(ux2 + 1 * S, py), (ux2 + 6 * S, py)], fill=(90, 100, 118, 255), width=1)
-                    ux2 += 10 * S
-                R(ux2, py - 1 * S, ux2 + 6 * S, py + 2 * S, 1 * S,
-                  fill=(28, 32, 42, 255), outline=(130, 140, 158, 255), width=1)
-                ux2 += 9 * S
-                R(ux2, py - 2 * S, ux2 + 8 * S, py + 2 * S, 1 * S,
-                  fill=(28, 32, 42, 255), outline=(130, 140, 158, 255), width=1)
-            # the enclosure's printed front lip carries the work label
-            label(ux0 + 10 * S, uy + uh - 12 * S, name, size=10)
-            led(ux1 - 12 * S, uy + uh - 7 * S, r=3)
-        else:
-            # a work unit: uniform left-aligned label, vent field, LED
-            label(ux0 + 11 * S, mid_y - 9 * S, name)
-            vx0 = ux0 + 23 * S + d.textlength(name, font=font(FB, 13 * S))
-            for vx in range(6):
-                for vy in range(2):
-                    cxp = vx0 + vx * 8 * S
-                    cyp = uy + 9 * S + vy * 9 * S
-                    if cxp < ux1 - 34 * S:
-                        d.ellipse([cxp, cyp, cxp + 3 * S, cyp + 3 * S], fill=(16, 22, 36, 160))
-            led(ux1 - 12 * S, mid_y, r=4)
-        # faceplate bolts, both ends
-        screw(ux0 + 6 * S, mid_y, r=4)
-        screw(ux1 - 6 * S, mid_y, r=4)
-        uy += uh + gap * S
-
-    # front posts with cage-nut holes, over the unit edges
-    for px0 in (X, X + Wd - post_w):
-        vgrad(px0, Y, px0 + post_w, Y + Hd, (74, 92, 124), (40, 52, 78))
-        d.line([(px0, Y), (px0, Y + Hd)], fill=(170, 195, 225, 120), width=2)
-        hy = Y + 10 * S
-        while hy < Y + Hd - 8 * S:
-            R(px0 + 4 * S, hy, px0 + 9 * S, hy + 5 * S, 1 * S, fill=(10, 14, 22, 255),
-              outline=(150, 170, 200, 160), width=1)
-            hy += 11 * S
-    # top + bottom crossbars
-    vgrad(X, Y, X + Wd, Y + top_bar * S, (84, 104, 138), (52, 66, 94))
-    vgrad(X, Y + Hd - bot_bar * S, X + Wd, Y + Hd, (52, 66, 94), (34, 44, 66))
-    d.rounded_rectangle([X, Y, X + Wd, Y + Hd], 8 * S, outline=(140, 165, 200, 255), width=3)
-    # 3D-printed nameplate on the top bar, screwed on
-    plate_w = 152 * S
-    px0 = X + (Wd - plate_w) // 2
-    R(px0, Y + 2 * S, px0 + plate_w, Y + top_bar * S - 2 * S, 3 * S,
-      fill=(22, 96, 148, 255), outline=(120, 200, 245, 255), width=2)
-    _psz = 10 * S
-    while _psz > 6 * S and d.textlength("SUCCESSBRIAN ECOSYSTEM", font=font(FB, _psz)) > plate_w - 16 * S:
-        _psz -= S
-    f9 = font(FB, _psz)
-    tw = d.textlength("SUCCESSBRIAN ECOSYSTEM", font=f9)
-    d.text((px0 + (plate_w - tw) / 2, Y + (top_bar * S - _psz) // 2), "SUCCESSBRIAN ECOSYSTEM", font=f9,
-           fill=(240, 250, 255, 255))
-    screw(px0 + 6 * S, Y + top_bar * S // 2, r=3)
-    screw(px0 + plate_w - 6 * S, Y + top_bar * S // 2, r=3)
-
-    rack = cv.resize((cv.width // S, cv.height // S), Image.LANCZOS)
-    base.alpha_composite(rack, (x - pad_l, y - pad_t))
-    return h
-
-
 def main():
     content = ct.DEFAULT_CONTENT
     img = ct.crypto_backdrop(ct.dark_background()).convert("RGBA")
@@ -315,24 +148,25 @@ def main():
     img.paste(strip, (RAIL_W, 0), strip)
     d = ImageDraw.Draw(img)
 
-    # ---- Brian branding, rail top (identical placement to the
-    # crossover; colors adapted to the dark rail) ----
+    # ---- Brian branding, rail top (crossover placement, reflowed
+    # taller for the rack-less rail; colors adapted to the dark
+    # rail) ----
     glow = mt._radial_glow(300, 300, (112, 199, 186), 70)
-    img.paste(glow, (RAIL_W // 2 - 150, -30), glow)
-    pc = mt.photo_card(PHOTO, size=168)
-    img.paste(pc, (RAIL_W // 2 - 84, 24), pc)
+    img.paste(glow, (RAIL_W // 2 - 150, -20), glow)
+    pc = mt.photo_card(PHOTO, size=192)
+    img.paste(pc, (RAIL_W // 2 - 96, 40), pc)
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle([RAIL_W // 2 - 90, 18, RAIL_W // 2 + 90, 198], 30,
+    d.rounded_rectangle([RAIL_W // 2 - 102, 34, RAIL_W // 2 + 102, 238], 32,
                         outline=(217, 165, 33, 255), width=4)
-    d.rounded_rectangle([RAIL_W // 2 - 97, 11, RAIL_W // 2 + 97, 205], 34,
+    d.rounded_rectangle([RAIL_W // 2 - 109, 27, RAIL_W // 2 + 109, 245], 36,
                         outline=(217, 165, 33, 140), width=2)
-    bx, by, br = RAIL_W // 2 + 66, 162, 19
+    bx, by, br = RAIL_W // 2 + 74, 200, 20
     d.ellipse([bx - br, by - br, bx + br, by + br], fill=(10, 165, 224, 255),
               outline=(255, 255, 255, 255), width=3)
-    d.line([(bx - 9, by), (bx - 3, by + 7), (bx + 10, by - 7)],
+    d.line([(bx - 10, by), (bx - 3, by + 8), (bx + 11, by - 8)],
            fill=(255, 255, 255, 255), width=4)
-    cx_text(d, RAIL_W // 2, 218, "BRIAN LATHE", font(FB, 30), INK_D, tracking=1)
-    cx_text(d, RAIL_W // 2, 256, "SUCCESS BRIAN", font(FB, 16), ct.KASPA, tracking=3)
+    cx_text(d, RAIL_W // 2, 272, "BRIAN LATHE", font(FB, 32), INK_D, tracking=1)
+    cx_text(d, RAIL_W // 2, 314, "SUCCESS BRIAN", font(FB, 17), ct.KASPA, tracking=3)
 
     def _yt_icon(size=26):
         _im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -347,46 +181,101 @@ def main():
         big = size * 4
         _b = _yt_icon(big) if kind == "youtube" else mt.icon(kind, big)
         return _b.resize((size, size), Image.LANCZOS)
-    _isz, _hgap, _vgap, _iy0 = 36, 14, 8, 282
+    _isz, _hgap, _vgap, _iy0 = 42, 16, 12, 372
     for _i, _kind in enumerate(("facebook", "instagram", "youtube", "blog")):
         _ix = RAIL_W // 2 - _isz - _hgap // 2 if _i % 2 == 0 else RAIL_W // 2 + _hgap // 2
         _iy = _iy0 if _i < 2 else _iy0 + _isz + _vgap
         _ic = _sharp_icon(_kind, _isz)
         img.paste(_ic, (_ix, _iy), _ic)
     d = ImageDraw.Draw(img)
-    d.line([(36, 376), (RAIL_W - 36, 376)], fill=(217, 165, 33, 255), width=3)
+    d.line([(36, 524), (RAIL_W - 36, 524)], fill=(217, 165, 33, 255), width=3)
 
     # Rail brand lines — D1 UNRULED (per-theme vs global). Until Brian
     # rules, the slot carries the crypto desk's own tagline, split at
     # its bullet (see the module docstring).
-    cx_text(d, RAIL_W // 2, 390, "BUY SUPPORT \u2022 SELL RESISTANCE",
-            font(FB, 11), DIM_D, tracking=1)
-    cx_text(d, RAIL_W // 2, 411, "HOLD LONG", font(FB, 11), DIM_D, tracking=2)
+    cx_text(d, RAIL_W // 2, 548, "BUY SUPPORT \u2022 SELL RESISTANCE",
+            font(FB, 12), DIM_D, tracking=1)
+    cx_text(d, RAIL_W // 2, 572, "HOLD LONG", font(FB, 12), DIM_D, tracking=2)
 
-    # ---- the rack (Brian's fleet by JOB; identical to crossover) ----
-    units = [
-        ("LAN", "", "slim"),
-        ("AI INFERENCE", "", "pcs"),
-        ("SUCCESSBRIAN OS", "", "cmp"),
-        ("BLOG WRITER", "", "cmp"),
-        ("VIDEO AND IMAGE", "", "cmp"),
-        ("WEB HOSTING", "", "cmp"),
-        ("SAAS HOSTING", "", "cmp"),
-        ("BLOG SERVING", "", "cmp"),
-        ("SOCIAL MEDIA", "", "cmp"),
-        ("DATABASE", "", "cmp"),
-        ("AI TRAINING", "", "cmp"),
-    ]
-    draw_rack(img, 22, 448, RAIL_W - 52, units)
+    # ---- HODL COINS panel — the rack's slot (Brian, 2026-11-18
+    # 21:58 CST: "where the home rack was, that's where the six
+    # crypto icons go labeled as 'HODL Coins'"). The six branded
+    # coins as drawn medallion glyphs in the desk's idiom — letter /
+    # symbol marks ringed in each coin's own card color; no scraped
+    # brand art. Spencer is OUT of the crypto piece (same ruling);
+    # he stays in the AI crossover and everywhere else. ----
+    _hp_x0, _hp_x1, _hp_y0, _hp_y1 = 14, RAIL_W - 14, 616, 1028
+    d.rounded_rectangle([_hp_x0, _hp_y0, _hp_x1, _hp_y1], 18,
+                        fill=(22, 23, 31, 255),
+                        outline=mt._hex(ct.KASPA_DK) + (255,), width=2)
+    cx_text(d, RAIL_W // 2, 638, "HODL Coins", font(FB, 18), GOLD,
+            tracking=1)
+    d.line([(40, 674), (RAIL_W - 40, 674)], fill=(217, 165, 33, 255),
+           width=2)
+
+    def _medallion(kind, color, size=64):
+        S = 4
+        m = Image.new("RGBA", (size * S, size * S), (0, 0, 0, 0))
+        md = ImageDraw.Draw(m)
+        c = size * S // 2
+        r = c - 4 * S
+        md.ellipse([c - r, c - r, c + r, c + r], fill=(35, 35, 46, 255),
+                   outline=mt._hex(color) + (255,), width=3 * S)
+        col = mt._hex(color) + (255,)
+
+        def _letter(t):
+            f = font(FB, 30 * S)
+            tw = md.textlength(t, font=f)
+            md.text((c - tw / 2, c - 17 * S), t, font=f, fill=col)
+
+        if kind == "KASPA":
+            _letter("K")
+        elif kind == "BITCOIN":
+            # the desk's B with the two strokes through it
+            for dx in (-4 * S, 3 * S):
+                md.line([(c + dx, c - 16 * S), (c + dx, c + 16 * S)],
+                        fill=col, width=3 * S)
+            _letter("B")
+        elif kind == "CARDANO":
+            _letter("A")
+        elif kind == "SOLANA":
+            bw, bh, gap, sk = 30 * S, 7 * S, 5 * S, 8 * S
+            y = c - (3 * bh + 2 * gap) // 2
+            for i in range(3):
+                xo = -sk // 2 if i % 2 == 0 else sk // 2
+                md.polygon([(c - bw // 2 + xo + sk // 2, y),
+                            (c + bw // 2 + xo + sk // 2, y),
+                            (c + bw // 2 + xo - sk // 2, y + bh),
+                            (c - bw // 2 + xo - sk // 2, y + bh)],
+                           fill=col)
+                y += bh + gap
+        elif kind == "BNB":
+            R = 16 * S
+            md.polygon([(c, c - R), (c + R, c), (c, c + R), (c - R, c)],
+                       outline=col, width=4 * S)
+            r2 = 5 * S
+            md.polygon([(c, c - r2), (c + r2, c), (c, c + r2),
+                        (c - r2, c)], fill=col)
+        else:  # ASTER — an asterisk of three strokes
+            L, dx, dy = 15 * S, 13 * S, 8 * S
+            md.line([(c, c - L), (c, c + L)], fill=col, width=4 * S)
+            md.line([(c - dx, c - dy), (c + dx, c + dy)], fill=col,
+                    width=4 * S)
+            md.line([(c - dx, c + dy), (c + dx, c - dy)], fill=col,
+                    width=4 * S)
+            md.ellipse([c - 3 * S, c - 3 * S, c + 3 * S, c + 3 * S],
+                       fill=col)
+        return m.resize((size, size), Image.LANCZOS)
+
+    for _i, _c in enumerate(content["cards"]):
+        _mcx = 70 if _i % 2 == 0 else 182
+        _mtop = 692 + (_i // 2) * 108
+        _med = _medallion(_c["title"], _c["bar_color"])
+        img.paste(_med, (_mcx - 32, _mtop), _med)
+        d = ImageDraw.Draw(img)
+        cx_text(d, _mcx, _mtop + 72, _c["title"], font(FB, 11), INK_D,
+                tracking=1)
     d = ImageDraw.Draw(img)
-    d.line([(36, 881), (RAIL_W - 36, 881)], fill=(217, 165, 33, 255), width=3)
-    for _i, _line in enumerate(mt.SPENCER_CTA):
-        cx_text(d, RAIL_W // 2, 895 + _i * 19, _line, font(FB, 13),
-                "#0a7fd4" if _i else INK_D)
-    _badge = mt.spencer_badge(84)
-    img.paste(_badge, (RAIL_W // 2 - 42, 935), _badge)
-    d = ImageDraw.Draw(img)
-    cx_text(d, RAIL_W // 2, 1027, "SPENCER", font(FB, 15), INK_D)
 
     # ---- kicker pill (crossover pill, crypto palette, candle
     # glyphs instead of sparkles — the crypto kicker signature) ----
@@ -499,8 +388,9 @@ def main():
     cy = cy + card_h + 12
 
     # ---- THE CONNECT CARD (the crossover's unified card, dark
-    # edition): ask -> chips -> CTA pills -> signature plaque ->
-    # hashtag line. NO scorecard strip — that is AI-meme content. ----
+    # edition): ask -> chips -> CTA pills -> blogs line -> signature
+    # plaque -> hashtag line. NO scorecard strip — that is AI-meme
+    # content. ----
     T = cy + 2
     _card_h = 284
     _csh2 = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -521,7 +411,7 @@ def main():
     _af, _asz = _fit("Which coin are you stacking right now?", 26, 724, floor=16)
     cx_text(d, CX, T + 16, "Which coin are you stacking right now?",
             _af, INK_D)
-    cx_text(d, CX, T + 52, "Drop it below.", font(FB, 17), DIM_D)
+    cx_text(d, CX, T + 50, "Drop it below.", font(FB, 17), DIM_D)
 
     def _mchip(cx_center, label, kind, top):
         chw, chh = 232, 44
@@ -559,9 +449,9 @@ def main():
                 _cd.ellipse([bx0 + _dx - 2, by0 + 8, bx0 + _dx + 2, by0 + 12], fill=INK_D)
             ix = cx0 + 22 + 30 + 12
         _cd.text((ix, top + 11), label, font=font(FB, 17), fill=INK_D)
-    _mchip(CX - 244, "LIKE", "like", T + 76)
-    _mchip(CX, "COMMENT", "comment", T + 76)
-    _mchip(CX + 244, "SHARE", "share", T + 76)
+    _mchip(CX - 244, "LIKE", "like", T + 72)
+    _mchip(CX, "COMMENT", "comment", T + 72)
+    _mchip(CX + 244, "SHARE", "share", T + 72)
 
     def _cta(cx0, top, w, h, c_top, c_bot, line1, line2):
         _b = _vgrad(w, h, c_top, c_bot, 16)
@@ -575,26 +465,36 @@ def main():
         _w2 = _bd.textlength(line2, font=_f2)
         _bd.text((cx0 + (w - _w2) / 2, top + 35), line2, font=_f2,
                  fill=(255, 255, 255, 235))
-    _cta(292, T + 126, 368, 58, "#ff7a29", "#e04e00",
+    _cta(292, T + 120, 368, 56, "#ff7a29", "#e04e00",
          "Read My Blog", mt.BRAND["blog_url"])
-    _cta(676, T + 126, 368, 58, "#2fce6e", "#0f9d4c",
+    _cta(676, T + 120, 368, 56, "#2fce6e", "#0f9d4c",
          "Message Me on WhatsApp",
          dict(mt.BRAND["handles"])["whatsapp"])
 
-    # THE SIGNATURE — the crossover's navy plaque (compressed 4px
-    # vs the AI card so the desk's hashtag line also fits inside
-    # this card). Second line: the crypto desk's own line (see the
-    # module docstring — flagged for Brian's ruling).
-    _pq = _vgrad(W - 30 - (RAIL_W + 34) - 24, 72, "#1d2c49", "#131f36", 14)
-    img.paste(_pq, (RAIL_W + 46, T + 188), _pq)
+    # THE BLOGS LINE — Brian's ruling 2026-11-18 21:57 CST: this
+    # meme pitches Substack AND Driving Dollars Digest AND Hashrate
+    # Harbor. The two blogs are pitched BY NAME (neither has a
+    # domain on record — no URL is shown); the crypto blog leads on
+    # the crypto meme. This is the two blogs' mutual cross-promotion
+    # in action; the blogs remain independent.
+    cx_text(d, CX, T + 182,
+            "MY BLOGS: HASHRATE HARBOR \u2022 DRIVING DOLLARS DIGEST",
+            font(FB, 15), ct.KASPA, tracking=1)
+
+    # THE SIGNATURE — the crossover's navy plaque (slimmed vs the
+    # AI card so the blogs line and the desk's hashtag line also
+    # fit inside this card). Second line: the crypto desk's own
+    # line (see the module docstring — flagged for Brian's ruling).
+    _pq = _vgrad(W - 30 - (RAIL_W + 34) - 24, 58, "#1d2c49", "#131f36", 14)
+    img.paste(_pq, (RAIL_W + 46, T + 206), _pq)
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle([RAIL_W + 46, T + 188, W - 42, T + 260], 14,
+    d.rounded_rectangle([RAIL_W + 46, T + 206, W - 42, T + 264], 14,
                         outline="#0aa5e0", width=2)
-    cx_text(d, CX, T + 198, "BRIAN LATHE", font(FB, 29), "white", tracking=1)
-    cx_text(d, CX, T + 234, "BUY SUPPORT \u2022 SELL RESISTANCE \u2022 HOLD LONG",
+    cx_text(d, CX, T + 212, "BRIAN LATHE", font(FB, 29), "white", tracking=1)
+    cx_text(d, CX, T + 243, "BUY SUPPORT \u2022 SELL RESISTANCE \u2022 HOLD LONG",
             font(FB, 12), "#f2cf7a", tracking=1)
     # the desk's hashtag line, closing the card
-    cx_text(d, CX, T + 265, ct.CRYPTO_BRAND["hashtag"],
+    cx_text(d, CX, T + 268, ct.CRYPTO_BRAND["hashtag"],
             font(FB, 13), ct.KASPA)
 
     img.convert("RGB").save(OUT)

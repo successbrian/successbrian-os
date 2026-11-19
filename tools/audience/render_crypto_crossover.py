@@ -355,6 +355,58 @@ ROLES, not family):
   strip: 764x86, same form/wording/type); it now sits at
   the foot of the converged column (top 984, bottom 1070).
 
+Case-balance ruling (Brian, 2026-11-18 23:21 CST): "match
+the upper/lower case balances too, from the ai template
+to the crypto template." Every text role in this piece
+now carries the case the AI crossover
+(render_crossover_graph.py) uses for the same role.
+THE CASE MAP (AI role -> case):
+- kicker pill text: SENTENCE case (the AI kicker is a
+  sentence: "A small AI of your own will match today's
+  biggest models by 2028 — years before everyone else
+  gets there.")
+- headline: ALL CAPS
+- in-card small labels (coin-card tags, the skeptics
+  label): ALL CAPS — the AI's graph legend case
+- in-card display words + names (STACK / HOLD, the coin
+  titles): ALL CAPS
+- in-card annotations (the coin-card subs): sentence /
+  lowercase — the AI's annotation case ("renting is
+  affordable", the head-start lines)
+- a quoted sentence (the skeptics quote): sentence case
+- garnet punchline band: ALL CAPS
+- connect-card ask: ALL CAPS
+- connect-card subline: sentence case
+- chips (LIKE / COMMENT / SHARE): ALL CAPS
+- CTA / destination buttons: Title Case; their sub-lines
+  lowercase (the blog URL, the phone number)
+- signature name + signature line: ALL CAPS
+- counter lines (DAY n, the title, the start line):
+  ALL CAPS
+- rail name + brand mark: ALL CAPS; rail CTA card lines:
+  ALL CAPS (the Spencer block's case on the AI piece)
+Elements with no AI counterpart keep their case under
+the nearest role's logic: the HODL section header and
+the COINS / STOCKS group labels (ALL CAPS — the in-panel
+label role), the medallion name labels (ALL CAPS — the
+card-title role), and the FOLLOW chip (FOLLOW in caps
+as a label; the hashtag #SuccessBrianCrypto is a proper
+tag — its internal casing never changes).
+CHANGES MADE — case only; no word, wording, order or
+punctuation changed anywhere in the piece:
+(1) The kicker: "THE CRYPTO DESK IS OPEN" -> "The crypto
+desk is open". The case is set in this driver at the
+kicker site; crypto_template.py's DEFAULT_CONTENT keeps
+the desk's caps kicker for its own standalone render,
+which is not part of this ruling (the same scoping as
+the 22:11 CST tagline ruling, which also left
+crypto_template.py untouched).
+(2) The connect ask: "Which coin are you stacking right
+now?" -> "WHICH COIN ARE YOU STACKING RIGHT NOW?" (the
+driver's _fit picks the largest size that fits, as
+before). Every other element already matched the map
+and is untouched.
+
 Content (the crypto desk as rebranded, commit 25e4179): headline
 "BUY FEAR. SELL GREED.", the six coins as comparative cards, the
 skeptics strip, punchline "SUPPORT IS WHERE YOU BUY. RESISTANCE IS
@@ -1001,7 +1053,14 @@ def main():
     # manufactured — soft drop shadow cast on the backdrop,
     # 3D bevel + inner highlight + top sheen (_kicker_pill),
     # gradient candle fills (_candle_outlined)) ----
-    _kt = content["kicker"]  # "THE CRYPTO DESK IS OPEN"
+    # The kicker's WORDS are the desk's (crypto_template
+    # DEFAULT_CONTENT); its CASE is set here — sentence
+    # case, the AI kicker pill's role case (Brian,
+    # 2026-11-18 23:21 CST case-balance ruling; the case
+    # map is in the module docstring). crypto_template's
+    # own standalone render keeps its caps kicker — not
+    # part of this ruling.
+    _kt = "The crypto desk is open"
     # Geometry converged to the AI pill (Brian, 2026-11-18
     # 23:14 CST): height 66 (was 56), radius 26, text FB18 —
     # the AI pill's proportions, tonight's manufactured form.
@@ -1169,9 +1228,12 @@ def main():
     d = ImageDraw.Draw(img)
     # the ask — Brian's curiosity line, split across the format's
     # ask + subline exactly as written, in the AI card's type
-    # (FB28 at T+16, subline FB18 at T+54 — 23:14 CST)
-    _af, _asz = _fit("Which coin are you stacking right now?", 28, 724, floor=16)
-    cx_text(d, CX, T + 16, "Which coin are you stacking right now?",
+    # (FB28 at T+16, subline FB18 at T+54 — 23:14 CST) and in
+    # the AI ask's CASE: ALL CAPS (Brian, 2026-11-18 23:21 CST
+    # case-balance ruling; the subline stays sentence case,
+    # the AI subline's case)
+    _af, _asz = _fit("WHICH COIN ARE YOU STACKING RIGHT NOW?", 28, 724, floor=16)
+    cx_text(d, CX, T + 16, "WHICH COIN ARE YOU STACKING RIGHT NOW?",
             _af, INK_D)
     cx_text(d, CX, T + 54, "Drop it below.", font(FB, 18), DIM_D)
 

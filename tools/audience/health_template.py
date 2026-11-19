@@ -17,6 +17,17 @@ footer) with a health visual identity:
   is lived experience, never prescription.
 - hashtag: #SuccessBrianHealth (HEALTH_BRAND["hashtag"])
 
+FORMAT RULE — Brian 2026-11-18 23:27 CST: kicker pills carry the
+manufactured finish — gradient marks, soft shadow, 3D bevel, inner
+highlight, sheen — on every template (the crypto kicker pill's
+finish, propagated). This template's kicker is an open assembly —
+white type flanked by pulse glyphs on the teal canvas, no pill
+ground — so the finish lands where it has a surface: the pulse
+glyphs are gradient-filled with a top sheen (icon_pulse), and the
+soft shadow rides via the template's own _icon_shadow idiom at
+the kicker. The bevel / inner highlight / ground gradient have
+no pill surface here and are not faked.
+
 CONTENT contract mirrors meme_template.render_meme, plus the political
 template's optional headline_size (starting point size, auto-shrinks).
 
@@ -122,12 +133,46 @@ def pulse_backdrop(img):
 
 
 def icon_pulse(size=36):
-    """Teal EKG glyph for flanking the kicker."""
-    im = Image.new("RGBA", (size * 2, size), (0, 0, 0, 0))
-    d = ImageDraw.Draw(im)
-    d.line(_pulse_points(4, 4, size * 2 - 8, size - 8),
-           fill=(0, 158, 110, 255), width=max(3, size // 10))
-    return im
+    """Teal EKG glyph for flanking the kicker — manufactured
+    finish (format rule, Brian 2026-11-18 23:27 CST): drawn at
+    4x, the line filled with a vertical GRADIENT (lit mint at
+    the top -> the glyph's own teal (0, 158, 110) at mid ->
+    deep teal at the base) with a soft white SHEEN across its
+    top, so the mark reads glossy and dimensional, not flat.
+    The soft shadow rides at the kicker call site via the
+    template's own _icon_shadow idiom."""
+    from PIL import ImageChops
+    S = 4
+    w4, h4 = size * 2 * S, size * S
+    sil = Image.new("L", (w4, h4), 0)
+    ImageDraw.Draw(sil).line(
+        _pulse_points(4 * S, 4 * S, (size * 2 - 8) * S,
+                      (size - 8) * S),
+        fill=255, width=max(3, size // 10) * S)
+    stops = ((150, 255, 222), (0, 158, 110), (0, 92, 64))
+    grad = Image.new("RGBA", (w4, h4), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(grad)
+    for yy in range(h4):
+        f = yy / max(1, h4 - 1)
+        if f < 0.45:
+            a, c, g = stops[0], stops[1], f / 0.45
+        else:
+            a, c, g = stops[1], stops[2], (f - 0.45) / 0.55
+        gd.line([(0, yy), (w4, yy)],
+                fill=tuple(int(p + (q - p) * g)
+                           for p, q in zip(a, c)) + (255,))
+    grad.putalpha(sil)
+    # sheen: soft white light across the top of the line
+    sa = Image.new("L", (w4, h4), 0)
+    sd = ImageDraw.Draw(sa)
+    for yy in range(h4):
+        f = yy / max(1, h4 - 1)
+        sd.line([(0, yy), (w4, yy)],
+                fill=int(80 * max(0.0, 1 - f / 0.5)))
+    sheen = Image.new("RGBA", (w4, h4), (255, 255, 255, 0))
+    sheen.putalpha(ImageChops.darker(sa, sil))
+    grad.alpha_composite(sheen)
+    return grad.resize((size * 2, size), Image.LANCZOS)
 
 
 def _icon_shadow(im):
@@ -304,7 +349,9 @@ def kicker_health(img, y, text):
     cx = img.size[0] / 2
     _centered(d, y, text, kf, "#ffffff", tracking=3)
     for sx in (int(cx - tw / 2 - 62), int(cx + tw / 2 + 16)):
-        sp = icon_pulse(36)
+        # the finish's soft shadow, in the template's own
+        # _icon_shadow idiom (dark teal, offset, blurred)
+        sp = _icon_shadow(icon_pulse(36))
         img.paste(sp, (sx, y - 2), sp)
     return ImageDraw.Draw(img)
 

@@ -45,6 +45,17 @@ CALLED BY:
     tools/audience/war_on_oil.py (reference one-off render proving the
     chrome end to end). Future political meme scripts import
     render_political_meme with their own draw_content callback.
+
+FORMAT RULE — Brian 2026-11-18 23:27 CST: kicker pills carry the
+manufactured finish — gradient marks, soft shadow, 3D bevel, inner
+highlight, sheen — on every template (the crypto kicker pill's
+finish, propagated). This template's kicker is an open assembly —
+tracked type flanked by navy anchors on the light backdrop, no
+pill ground — so the finish lands where it has a surface: the
+anchors are gradient-filled with a gloss streak (anchor()), and
+the soft drop shadow is cast under each anchor at the kicker.
+The bevel / inner highlight / ground gradient have no pill
+surface here and are not faked.
 """
 
 import math
@@ -181,35 +192,75 @@ def icon_robot_futuristic(size=140, primary=NAVY, glow="#4dd8ff"):
 
 
 def anchor(size=44, color=NAVY):
-    """Navy anchor — flanks the kicker on both sides."""
+    """Navy anchor — flanks the kicker on both sides.
+
+    Manufactured finish (format rule, Brian 2026-11-18 23:27
+    CST): drawn at 4x in the desk's supersampled idiom, the
+    silhouette filled with a vertical GRADIENT (lit steel at
+    the top -> the anchor's own navy at mid -> deep near-black
+    navy at the base) with a soft gloss streak down the
+    shank's upper left, so the mark reads glossy and
+    dimensional, not flat. Same geometry as the flat anchor
+    it replaces. The soft drop shadow is cast at the kicker
+    call site."""
     import math
-    s = size
-    im = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    d = ImageDraw.Draw(im)
+    S = 4
+    s = size * S
     cx = s / 2
-    w = max(3, s // 12)
-    # ring
-    rr = s * 0.10
-    d.ellipse([cx - rr, s * 0.10 - rr, cx + rr, s * 0.10 + rr],
-              outline=color, width=w)
-    # shank
-    d.rounded_rectangle([cx - w * 0.55, s * 0.18, cx + w * 0.55, s * 0.74],
-                        w // 2 + 1, fill=color)
-    # stock (crossbar)
-    d.rounded_rectangle([cx - s * 0.26, s * 0.24, cx + s * 0.26,
-                         s * 0.24 + w * 1.1], w // 2 + 1, fill=color)
-    # arms (bottom arc)
-    ax0, ay0, ax1, ay1 = cx - s * 0.30, s * 0.30, cx + s * 0.30, s * 0.94
-    d.arc([ax0, ay0, ax1, ay1], 25, 155, fill=color, width=w)
-    # flukes: small barbs at the arc ends, angled outward
-    for deg in (25, 155):
-        a = math.radians(deg)
-        ex = cx + s * 0.30 * math.cos(a)
-        ey = (ay0 + ay1) / 2 + s * 0.32 * math.sin(a)
-        L = s * 0.11
-        d.polygon([(ex, ey - L), (ex - L * 0.7, ey + L * 0.5),
-                   (ex + L * 0.7, ey + L * 0.5)], fill=color)
-    return im
+    w = max(3 * S, s // 12)
+
+    def _shapes(d, fill):
+        # ring
+        rr = s * 0.10
+        d.ellipse([cx - rr, s * 0.10 - rr, cx + rr, s * 0.10 + rr],
+                  outline=fill, width=w)
+        # shank
+        d.rounded_rectangle([cx - w * 0.55, s * 0.18, cx + w * 0.55,
+                             s * 0.74], w // 2 + 1, fill=fill)
+        # stock (crossbar)
+        d.rounded_rectangle([cx - s * 0.26, s * 0.24, cx + s * 0.26,
+                             s * 0.24 + w * 1.1], w // 2 + 1, fill=fill)
+        # arms (bottom arc)
+        ax0, ay0, ax1, ay1 = cx - s * 0.30, s * 0.30, cx + s * 0.30, s * 0.94
+        d.arc([ax0, ay0, ax1, ay1], 25, 155, fill=fill, width=w)
+        # flukes: small barbs at the arc ends, angled outward
+        for deg in (25, 155):
+            a = math.radians(deg)
+            ex = cx + s * 0.30 * math.cos(a)
+            ey = (ay0 + ay1) / 2 + s * 0.32 * math.sin(a)
+            L = s * 0.11
+            d.polygon([(ex, ey - L), (ex - L * 0.7, ey + L * 0.5),
+                       (ex + L * 0.7, ey + L * 0.5)], fill=fill)
+
+    sil = Image.new("L", (s, s), 0)
+    _shapes(ImageDraw.Draw(sil), 255)
+    base = tuple(int(color[i:i + 2], 16) for i in (1, 3, 5))
+    lit = tuple(int(c + (235 - c) * 0.55) for c in base)
+    deep = tuple(int(c * 0.35) for c in base)
+    stops = (lit, base, deep)
+    grad = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(grad)
+    for yy in range(s):
+        f = yy / max(1, s - 1)
+        if f < 0.45:
+            a, c, g = stops[0], stops[1], f / 0.45
+        else:
+            a, c, g = stops[1], stops[2], (f - 0.45) / 0.55
+        gd.line([(0, yy), (s, yy)],
+                fill=tuple(int(p + (q - p) * g)
+                           for p, q in zip(a, c)) + (255,))
+    grad.putalpha(sil)
+    # gloss: a soft white streak down the shank's upper left,
+    # clipped to the silhouette
+    ga = Image.new("L", (s, s), 0)
+    ImageDraw.Draw(ga).rounded_rectangle(
+        [cx - w * 0.42, s * 0.20, cx - w * 0.05, s * 0.52],
+        w // 2, fill=85)
+    ga = ga.filter(ImageFilter.GaussianBlur(1.5 * S))
+    gloss = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    gloss.putalpha(ImageChops.darker(ga, sil))
+    grad.alpha_composite(gloss)
+    return grad.resize((size, size), Image.LANCZOS)
 
 
 def carrier_silhouette(width=300, color=NAVY):
@@ -503,6 +554,15 @@ def render_political_meme(content, draw_content, photo_path=None,
     _centered(d, 200, kt, kf, "#0a7fd4", tracking=3)
     for sx in (int(cx - tw / 2 - 58), int(cx + tw / 2 + 18)):
         anc = anchor(44)
+        # soft drop shadow under the mark — the finish's
+        # shadow element, cast by the caller as on the
+        # crypto pill (blurred silhouette, offset a breath
+        # down)
+        _smask = anc.split()[3].point(
+            lambda v: v * 95 // 255).filter(ImageFilter.GaussianBlur(3))
+        _shim = Image.new("RGBA", anc.size, (0, 0, 0, 255))
+        _shim.putalpha(_smask)
+        img.paste(_shim, (sx, 194 + 3), _shim)
         img.paste(anc, (sx, 194), anc)
     d = ImageDraw.Draw(img)
 

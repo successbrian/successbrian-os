@@ -426,7 +426,27 @@ Open items flagged for Brian (not decided here):
 - The rail CTA foot block's wording is Brian's own (22:16 CST
   ruling above) — the earlier agent-drafted placeholder was
   superseded before approval and no longer appears.
+
+Seasonal capsule ruling (Brian, 2026-11-18 23:41 CST):
+"starting soon we need to have some thanksgiving themed
+content capsules -- then later christmas themed ones, then
+2027 themed ones, then valentines day for early feb." The
+capsule is a variable container and a THEME dresses its
+interior only -- this driver gains a switch:
+--capsule-theme thanksgiving (or CAPSULE_THEME=thanksgiving)
+with --capsule-layout original|quote and --out PATH; the
+default render is unchanged. The theme itself lives in
+seasonal_capsules.py (the audience desk's shared module),
+which records the full library plan: the seasonal sequence
+(Thanksgiving -> Christmas -> 2027 -> Valentine's), the four
+standing season sets (fall/spring/winter/summer too -- Brian,
+23:42 CST), OTHER HOLIDAYS and CURRENT EVENTS as commissioned
+families ("these are not maybe -- they are go go go" --
+Brian, 23:43 CST, correcting his 23:42 "maybe"), and family
+#5, BLOG ARTICLE PROMOTION (Brian, 23:44 CST). This pass
+builds Thanksgiving only.
 """
+import argparse
 import os
 import sys
 from datetime import date
@@ -434,6 +454,7 @@ from datetime import date
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import meme_template as mt
 import crypto_template as ct
+import seasonal_capsules as sc
 from PIL import Image, ImageDraw, ImageFilter
 
 mt.SPENCER_PHOTO = ("/home/successbrian/successbrian-os/tools/audience/"
@@ -763,7 +784,20 @@ def _polished_bar(w, h, stops, radius=14):
     return bar.resize((w, h), Image.LANCZOS)
 
 
-def main():
+def main(argv=None):
+    _ap = argparse.ArgumentParser(
+        description="Crypto crossover render; --capsule-theme "
+                    "thanksgiving dresses the capsule interior "
+                    "in the seasonal module (seasonal_capsules.py).")
+    _ap.add_argument("--capsule-theme",
+                     choices=("none", "thanksgiving"),
+                     default=os.environ.get("CAPSULE_THEME", "none"))
+    _ap.add_argument("--capsule-layout",
+                     choices=("original", "quote"),
+                     default="original")
+    _ap.add_argument("--out", default=OUT)
+    _args = _ap.parse_args(argv)
+    _seasonal = _args.capsule_theme == "thanksgiving"
     content = ct.DEFAULT_CONTENT
     img = ct.crypto_backdrop(ct.dark_background()).convert("RGBA")
     d = ImageDraw.Draw(img)
@@ -1140,46 +1174,61 @@ def main():
     # 162 in the 22:40 CST counter reflow, then 162 -> 146 in the
     # 23:14 CST convergence so the grid fits the AI frame's 444 —
     # same content, colors and words throughout.)
-    cards = content["cards"]
-    cw, chh, cgap = 233, 146, 8
-    for i, c in enumerate(cards):
-        col, row = i % 3, i // 3
-        x = x0 + 20 + col * (cw + cgap)
-        y = cy + 26 + row * (chh + cgap)
-        ccx = x + cw / 2
-        d.rounded_rectangle([x + 5, y + 8, x + cw + 5, y + chh + 8], 22,
-                            fill=(0, 0, 0, 160))
-        d.rounded_rectangle([x, y, x + cw, y + chh], 22,
-                            fill=(35, 35, 46, 255),
-                            outline=(120, 84, 30, 255), width=2)
-        _strip = mt.grad_rounded((cw - 16, 7), [c["bar_color"], c["bar_color"]], 3)
-        img.paste(_strip, (x + 8, y + 7), _strip)
+    if _seasonal:
+        # SEASONAL CAPSULE (Brian, 2026-11-18 23:41 CST): the
+        # Thanksgiving theme from seasonal_capsules.py dresses
+        # the capsule interior only -- the original-card grid
+        # or the quote card -- inside this same frame. The
+        # garnet footer below is the frame's own band and the
+        # rail, pill, connect card and counter never wear the
+        # season. Sample gratitude content ships in the module.
+        _cbox = (x0 + 4, cy + 18, x1 - 4, cy + card_h - 52)
+        if _args.capsule_layout == "quote":
+            sc.draw_quote_capsule(img, _cbox, skin="dark")
+        else:
+            sc.draw_original_capsule(img, _cbox, skin="dark")
         d = ImageDraw.Draw(img)
-        cx_text(d, ccx, y + 18, c["tag"], font(FB, 12), DIM_D, tracking=2)
-        _tf = ct._fit_font(d, c["title"], FB, 26, cw - 16)
-        cx_text(d, ccx, y + 35, c["title"], _tf, INK_D)
-        _pf = ct._fit_font(d, c["price"], FB, 36, cw - 16)
-        cx_text(d, ccx, y + 61, c["price"], _pf, c["bar_color"])
-        _sf = ct._fit_font(d, c["sub"], FR, 15, cw - 16)
-        _stw = d.textlength(c["sub"], font=_sf)
-        d.text((ccx - _stw / 2, y + 99), c["sub"], font=_sf, fill=DIM_D)
-        bx, bw2, by2, bh2 = x + 30, cw - 60, y + 122, 14
-        d.rounded_rectangle([bx, by2, bx + bw2, by2 + bh2], 7,
-                            fill=(42, 42, 54, 255))
-        mt._gbar(img, [bx, by2, bx + bw2 * c["bar_frac"], by2 + bh2],
-                 c["bar_color"])
-        d = ImageDraw.Draw(img)
+    else:
+        cards = content["cards"]
+        cw, chh, cgap = 233, 146, 8
+        for i, c in enumerate(cards):
+            col, row = i % 3, i // 3
+            x = x0 + 20 + col * (cw + cgap)
+            y = cy + 26 + row * (chh + cgap)
+            ccx = x + cw / 2
+            d.rounded_rectangle([x + 5, y + 8, x + cw + 5, y + chh + 8], 22,
+                                fill=(0, 0, 0, 160))
+            d.rounded_rectangle([x, y, x + cw, y + chh], 22,
+                                fill=(35, 35, 46, 255),
+                                outline=(120, 84, 30, 255), width=2)
+            _strip = mt.grad_rounded((cw - 16, 7), [c["bar_color"], c["bar_color"]], 3)
+            img.paste(_strip, (x + 8, y + 7), _strip)
+            d = ImageDraw.Draw(img)
+            cx_text(d, ccx, y + 18, c["tag"], font(FB, 12), DIM_D, tracking=2)
+            _tf = ct._fit_font(d, c["title"], FB, 26, cw - 16)
+            cx_text(d, ccx, y + 35, c["title"], _tf, INK_D)
+            _pf = ct._fit_font(d, c["price"], FB, 36, cw - 16)
+            cx_text(d, ccx, y + 61, c["price"], _pf, c["bar_color"])
+            _sf = ct._fit_font(d, c["sub"], FR, 15, cw - 16)
+            _stw = d.textlength(c["sub"], font=_sf)
+            d.text((ccx - _stw / 2, y + 99), c["sub"], font=_sf, fill=DIM_D)
+            bx, bw2, by2, bh2 = x + 30, cw - 60, y + 122, 14
+            d.rounded_rectangle([bx, by2, bx + bw2, by2 + bh2], 7,
+                                fill=(42, 42, 54, 255))
+            mt._gbar(img, [bx, by2, bx + bw2 * c["bar_frac"], by2 + bh2],
+                     c["bar_color"])
+            d = ImageDraw.Draw(img)
 
-    # skeptics strip (the crypto counterpoint, in its own dark idiom;
-    # slimmed 54 -> 50 in the 22:40 CST counter reflow, then 50 ->
-    # 44 in the 23:14 CST convergence to fit the AI frame)
-    cp = content["counterpoint"]
-    sy = cy + 334
-    d.rounded_rectangle([x0 + 20, sy, x1 - 20, sy + 44], 14,
-                        fill=(32, 32, 42, 255),
-                        outline=mt._hex(ct.KASPA) + (255,), width=2)
-    cx_text(d, CX, sy + 5, cp["label"], font(FB, 12), DIM_D, tracking=1)
-    cx_text(d, CX, sy + 23, cp["quote"], font(FB, 17), INK_D)
+        # skeptics strip (the crypto counterpoint, in its own dark idiom;
+        # slimmed 54 -> 50 in the 22:40 CST counter reflow, then 50 ->
+        # 44 in the 23:14 CST convergence to fit the AI frame)
+        cp = content["counterpoint"]
+        sy = cy + 334
+        d.rounded_rectangle([x0 + 20, sy, x1 - 20, sy + 44], 14,
+                            fill=(32, 32, 42, 255),
+                            outline=mt._hex(ct.KASPA) + (255,), width=2)
+        cx_text(d, CX, sy + 5, cp["label"], font(FB, 12), DIM_D, tracking=1)
+        cx_text(d, CX, sy + 23, cp["quote"], font(FB, 17), INK_D)
 
     # garnet punchline band — the card's footer, flush inside the
     # bottom border exactly as in the crossover
@@ -1456,8 +1505,8 @@ def main():
     _ssw = d.textlength(_ss, font=_ssf)
     d.text((W - 58 - _ssw, cs0 + 44), _ss, font=_ssf, fill="#9fb4cc")
 
-    img.convert("RGB").save(OUT)
-    print(OUT)
+    img.convert("RGB").save(_args.out)
+    print(_args.out)
 
 
 if __name__ == "__main__":

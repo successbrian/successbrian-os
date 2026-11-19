@@ -80,13 +80,25 @@ to leave room for a call to action like spencer is on the other."
 The rail's content is compressed upward (icons tightened, the
 tagline slot closed, both HODL panels riding higher) to free a
 foot block in the same position and form as the AI crossover's
-Spencer CTA: a gold rule, a two-line imperative, a medallion.
+Spencer CTA: a gold rule, the offer lines, an image badge.
 Spencer himself stays OUT (21:58 ruling) — this is the CTA slot
 and form, not Spencer, and it does not pitch the Muse AI agent.
-The wording — "STACK THE HODL LIST / WITH BRIAN" over the Kaspa
-K medallion (the desk's own emblem) — is AGENT-DRAFTED from the
-desk's copy (the STACK card verb, Brian's "HODL Coins" label)
-and is flagged below for Brian's ruling.
+
+CTA offer ruling (Brian, 2026-11-18 22:16 CST): "Ask Brian For
+-- 7 Day FREE Trial -- 24/7 6TB Cloud Backup -- and an image."
+The block carries Brian's own offer, replacing the agent-drafted
+placeholder that stood here briefly ("STACK THE HODL LIST /
+WITH BRIAN" over the Kaspa K medallion — drafted from the desk's
+copy the same evening, superseded by this ruling before ever
+being approved): "ASK BRIAN FOR" / "7 DAY FREE TRIAL" (the
+emphasis line) / "24/7 6TB CLOUD BACKUP", over a drawn
+cloud-backup medallion — a cloud with an up-arrow, in the desk's
+idiom (no scraped art, no brand marks). The offer is UNNAMED:
+the product behind it is never named anywhere in the piece,
+per Brian's generic-surface discipline — the meme carries the
+offer and the name reveals in follow-up. The offer facts are
+Brian's, used exactly: 7 day free trial · 24/7 · 6TB cloud
+backup.
 
 Content (the crypto desk as rebranded, commit 25e4179): headline
 "BUY FEAR. SELL GREED.", the six coins as comparative cards, the
@@ -107,9 +119,9 @@ Open items flagged for Brian (not decided here):
   own line in full — "BUY SUPPORT • SELL RESISTANCE • HOLD LONG" —
   agent-placed, awaiting Brian's ruling on the wording. Brian's
   22:12 CST scope correction left the plaque line untouched.
-- The rail CTA foot block's wording ("STACK THE HODL LIST / WITH
-  BRIAN", over the Kaspa K medallion) is AGENT-DRAFTED — flagged
-  for Brian's ruling (see the CTA ruling above).
+- The rail CTA foot block's wording is Brian's own (22:16 CST
+  ruling above) — the earlier agent-drafted placeholder was
+  superseded before approval and no longer appears.
 """
 import os
 import sys
@@ -305,6 +317,30 @@ def main():
             r2 = 5 * S
             md.polygon([(c, c - r2), (c + r2, c), (c, c + r2),
                         (c - r2, c)], fill=col)
+        elif kind == "CLOUD":
+            # cloud backup (the rail CTA badge) — a cloud with an
+            # up-arrow rising through it, drawn in the desk's
+            # idiom; no brand marks. Bump bottoms align on _cyb so
+            # the cloud sits on a flat base; proportions come from
+            # the medallion radius r so the glyph scales.
+            _cyb = c + int(0.32 * r)
+            for _fx, _fr in ((-0.34, 0.30), (0.0, 0.34),
+                             (0.34, 0.30)):
+                _br = int(_fr * r)
+                _bcx = c + int(_fx * r)
+                md.ellipse([_bcx - _br, _cyb - 2 * _br, _bcx + _br,
+                            _cyb], fill=col)
+            md.rectangle([c - int(0.58 * r), _cyb - int(0.24 * r),
+                          c + int(0.60 * r), _cyb], fill=col)
+            # the up-arrow, knocked out in the medallion's dark
+            _dk = (35, 35, 46, 255)
+            _tip = c - int(0.28 * r)
+            _aw = max(3 * S, int(0.16 * r))
+            md.polygon([(c - int(0.24 * r), _tip + int(0.22 * r)),
+                        (c + int(0.24 * r), _tip + int(0.22 * r)),
+                        (c, _tip)], fill=_dk)
+            md.rectangle([c - _aw // 2, _tip + int(0.18 * r),
+                          c + _aw // 2, _cyb], fill=_dk)
         else:  # ASTER — an asterisk of three strokes
             L, dx, dy = 15 * S, 13 * S, 8 * S
             md.line([(c, c - L), (c, c + L)], fill=col, width=4 * S)
@@ -356,21 +392,29 @@ def main():
     # ---- Rail CTA foot block (Brian, 2026-11-18 22:12 CST:
     # "crunch everything up to leave room for a call to action like
     # spencer is on the other"). Same position and form as the AI
-    # crossover's Spencer block — gold rule, two-line imperative,
-    # medallion — but Spencer himself stays OUT (21:58 ruling) and
-    # the offer is the crypto desk's own, not the Muse AI agent.
-    # WORDING IS AGENT-DRAFTED, flagged for Brian's ruling (see the
-    # module docstring): "STACK THE HODL LIST / WITH BRIAN" over
-    # the Kaspa K medallion, the desk's emblem. ----
+    # crossover's Spencer block — gold rule, the offer lines, an
+    # image badge — but Spencer himself stays OUT (21:58 ruling)
+    # and the offer is not the Muse AI agent. The offer is Brian's
+    # own (2026-11-18 22:16 CST: "Ask Brian For -- 7 Day FREE Trial
+    # -- 24/7 6TB Cloud Backup -- and an image"), replacing the
+    # agent-drafted placeholder that stood here briefly ("STACK
+    # THE HODL LIST / WITH BRIAN" — superseded before approval).
+    # The product is NEVER NAMED in the piece (generic-surface
+    # discipline); the badge is a drawn cloud-backup medallion in
+    # the desk's idiom — no scraped art, no brand marks. ----
     d = ImageDraw.Draw(img)
-    d.line([(36, _sbot + 22), (RAIL_W - 36, _sbot + 22)],
+    d.line([(36, _sbot + 18), (RAIL_W - 36, _sbot + 18)],
            fill=(217, 165, 33, 255), width=3)
-    cx_text(d, RAIL_W // 2, _sbot + 38, "STACK THE HODL LIST",
-            font(FB, 13), INK_D, tracking=2)
-    cx_text(d, RAIL_W // 2, _sbot + 59, "WITH BRIAN",
-            font(FB, 13), ct.KASPA, tracking=2)
-    _kmed = _medallion("KASPA", _coins[0][2], 56)
-    img.paste(_kmed, (RAIL_W // 2 - 28, _sbot + 74), _kmed)
+    cx_text(d, RAIL_W // 2, _sbot + 31, "ASK BRIAN FOR",
+            font(FB, 12), INK_D, tracking=2)
+    _ef, _ = _fit("7 DAY FREE TRIAL", 18, 200)
+    cx_text(d, RAIL_W // 2, _sbot + 50, "7 DAY FREE TRIAL",
+            _ef, GOLD, tracking=1)
+    _sf, _ = _fit("24/7 6TB CLOUD BACKUP", 12, 204, floor=9)
+    cx_text(d, RAIL_W // 2, _sbot + 76, "24/7 6TB CLOUD BACKUP",
+            _sf, ct.KASPA, tracking=1)
+    _cmed = _medallion("CLOUD", _coins[0][2], 48)
+    img.paste(_cmed, (RAIL_W // 2 - 24, _sbot + 93), _cmed)
     d = ImageDraw.Draw(img)
 
     # ---- kicker pill (crossover pill, crypto palette, candle

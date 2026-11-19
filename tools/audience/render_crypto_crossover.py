@@ -297,6 +297,64 @@ unchanged and nothing else in the piece moves. (This
 supersedes the centered full-width arrangement of the
 22:57 CST branding ruling; its words stand.)
 
+Right-side convergence ruling (Brian, 2026-11-18 23:14 CST):
+"I want the layouts of the right side of the crypto template
+to be the same or very similar to the ai one. then match the
+text fonts and font styles as closely as possible too." The
+right side is re-expressed in the AI crossover's geometry and
+type system (render_crossover_graph.py is the spec; both
+drivers already share the same font files — NotoSans-Bold /
+NotoSans-Regular — so the convergence is geometry + type
+ROLES, not family):
+- Kicker pill: AI proportions — y24, height 66, radius 26,
+  text FB18 — wearing tonight's manufactured form (gradient
+  candles with black outlines, bevel, sheen, soft shadow;
+  the 22:27/22:31 CST rulings stand — the AI pill's two-line
+  translucent sentence form is NOT adopted).
+- Headline: the AI function itself — mt.headline_3d, depth
+  4, fitted from 96 to layer width <= 814, pasted at y94,
+  gap measured as the AI driver measures it (94 + lh + 14)
+  — with HL crypto colors and headline_3d's documented
+  dark-canvas extrusion override ((16,38,34)/(6,16,14), the
+  old headline_3d_dark tones; the two functions' layer math
+  is identical, so this IS the AI treatment in the crypto
+  skin). Fitted size 66, layer 812x120.
+- Framed card: AI-exact — x286-1050, height 444, radius 24,
+  holo ring (r27) outside, outline width 5 (KASPA_DK, the
+  skin tone), 14px holo header band flush inside the top,
+  garnet footer band 48 flush inside the bottom (tonight's
+  brighter garnet + black text, FB23 — the AI punchline
+  tier). Interior is crypto content reflowed to the AI
+  frame: coin cards 146 tall (compressed from 162 — same
+  content, colors, words), skeptics strip 44.
+- Connect card: AI shell (radius 24, outline w3, soft
+  shadow, holo strip alpha 220) and AI positions/type for
+  the shared elements — ask FB28 at T+16, subline FB18 at
+  T+54, chips 232x44 at T+78 on the AI centers 424/668/912
+  (FB17), destinations opening at T+126, WhatsApp in the
+  AI CTA slot (676, T+126, 368x58, the _cta grammar it
+  already used), signature band on the AI plaque's
+  x-extents (298-1038) with AI plaque type (name FB30
+  tracking 1, markets line FB13 gold tracking 1).
+  Tonight's content is re-expressed, not erased: Substack
+  polished bar + the DDD/HH one-row buttons ride the left
+  destination column, the signature band keeps tonight's
+  split (branding left, FOLLOW chip right, manufactured
+  navy). Two measured compromises, flagged: (1) the card
+  height stays 272, not the AI card's 284 — the extra
+  destination row is absorbed by compressing the card's
+  lower rhythm (Substack bar 34, DDD/HH row 29, band 62
+  with its bottom on the same 12px card padding as the AI
+  plaque's); with the headline's fitted layer (120) the
+  full AI stack (284 card) overflows the 1080 canvas.
+  (2) WhatsApp moves +6y / +2h into the AI CTA slot — its
+  words, number, colors and grammar are byte-identical;
+  the 22:36 CST "exactly as it is" stands for everything
+  but this slot alignment, which the 23:14 ruling orders.
+- Counter strip: unchanged (already identical to the AI
+  strip: 764x86, same form/wording/type); it now sits at
+  the foot of the converged column (top 984, bottom 1070).
+
 Content (the crypto desk as rebranded, commit 25e4179): headline
 "BUY FEAR. SELL GREED.", the six coins as comparative cards, the
 skeptics strip, punchline "SUPPORT IS WHERE YOU BUY. RESISTANCE IS
@@ -944,9 +1002,12 @@ def main():
     # 3D bevel + inner highlight + top sheen (_kicker_pill),
     # gradient candle fills (_candle_outlined)) ----
     _kt = content["kicker"]  # "THE CRYPTO DESK IS OPEN"
-    _kf = font(FB, 17)
+    # Geometry converged to the AI pill (Brian, 2026-11-18
+    # 23:14 CST): height 66 (was 56), radius 26, text FB18 —
+    # the AI pill's proportions, tonight's manufactured form.
+    _kf = font(FB, 18)
     _ktw = d.textlength(_kt, font=_kf) + 3 * (len(_kt) - 1)
-    _pw, _ph = int(_ktw) + 150, 56
+    _pw, _ph = int(_ktw) + 120, 66
     _px = int(CX - _pw / 2)
     # soft drop shadow: the pill's silhouette in blurred black,
     # offset a breath down — premium, not heavy
@@ -961,45 +1022,51 @@ def main():
     _pill = _kicker_pill(_pw, _ph)
     img.paste(_pill, (_px, 24), _pill)
     d = ImageDraw.Draw(img)
-    cx_text(d, CX, 24 + (56 - 17) // 2 - 1, _kt, _kf, (234, 252, 247), tracking=3)
-    for _up, _gx in ((True, int(CX - _pw / 2 + 18)), (False, int(CX + _pw / 2 - 48))):
-        _g = _candle_outlined(30, up=_up)
-        img.paste(_g, (_gx, 24 + 13), _g)
+    cx_text(d, CX, 24 + (_ph - 18) // 2 - 1, _kt, _kf, (234, 252, 247), tracking=3)
+    for _up, _gx in ((True, int(CX - _pw / 2 + 16)), (False, int(CX + _pw / 2 - 50))):
+        _g = _candle_outlined(34, up=_up)
+        img.paste(_g, (_gx, 24 + 16), _g)
     d = ImageDraw.Draw(img)
 
-    # ---- headline (dark 3D variant, crypto gradient, fitted on the
-    # TRUE rendered layer width like the crossover) ----
+    # ---- headline — the AI crossover's own function and fitting
+    # procedure (Brian, 2026-11-18 23:14 CST convergence):
+    # mt.headline_3d, depth 4, fitted from 96 on the TRUE rendered
+    # layer width, pasted at y94, and the gap under it measured
+    # exactly as the AI driver measures it (94 + lh + 14). The
+    # extrusion override is headline_3d's documented dark-canvas
+    # parameter, carrying headline_3d_dark's tones — same
+    # treatment, crypto skin. (Supersedes the 22:40 CST
+    # glyph-measured gap; the fitted size is 66, layer 812x120.)
     size = 96
     _dummy = Image.new("RGBA", (10, 10))
     while size > 28:
         f_big = font(FB, size)
-        hl, (lw, lh) = ct.headline_3d_dark(_dummy, content["headline"],
-                                           f_big, list(HL), depth=4)
+        hl, (lw, lh) = mt.headline_3d(
+            _dummy, content["headline"], f_big, list(HL), depth=4,
+            extrusion=((16, 38, 34, 255), (6, 16, 14, 255)))
         if lw <= W - RAIL_W - 14:
             break
         size -= 1
-    img.paste(hl, (int(CX - lw / 2), 92), hl)
+    img.paste(hl, (int(CX - lw / 2), 94), hl)
     d = ImageDraw.Draw(img)
-    # the gap under the headline is measured from the GLYPHS
-    # (the layer's opaque bottom), not the layer's transparent
-    # padding — part of the 22:40 CST counter reflow: the
-    # strip's room comes from spacing, the headline itself is
-    # pasted pixel-identical at the same position.
-    cy = 92 + hl.getbbox()[3] + 12
+    cy = 94 + lh + 14
 
-    # ---- THE CENTRAL CARD: framed like the crossover graph card
-    # (gradient ring + header band + garnet footer band joined
-    # inside), dark-filled; inside it, the six coin cards and the
-    # skeptics strip ----
+    # ---- THE CENTRAL CARD: the AI crossover's graph-card frame
+    # at its exact geometry (Brian, 2026-11-18 23:14 CST):
+    # height 444, radius 24, holo ring outside, outline width 5,
+    # 14px holo header band flush inside the top, garnet footer
+    # band joined inside the bottom — dark-filled in the crypto
+    # skin; inside it, the six coin cards and the skeptics strip
+    # reflowed to the AI frame ----
     x0, x1 = RAIL_W + 34, W - 30
-    card_h = 480
+    card_h = 444
     _frame = mt.holo_pill((x1 - x0 + 6, card_h + 6), colors=HL,
                           radius=27, base_alpha=255)
     img.paste(_frame, (x0 - 3, cy - 3), _frame)
     d = ImageDraw.Draw(img)
     d.rounded_rectangle([x0, cy, x1, cy + card_h], 24,
                         fill=mt._hex(ct.CARD_BG) + (255,),
-                        outline=mt._hex(ct.KASPA_DK) + (255,), width=4)
+                        outline=mt._hex(ct.KASPA_DK) + (255,), width=5)
     _bw = (x1 - 4) - (x0 + 4)
     _band = mt.holo_pill((_bw, 14), colors=HL, radius=1, base_alpha=255)
     _bm = Image.new("L", (_bw * 3, 14 * 3), 0)
@@ -1011,15 +1078,15 @@ def main():
 
     # the six coin cards — the crypto desk's vertical terminal cards,
     # 3 x 2 inside the frame. (Interior rhythm compressed 188 ->
-    # 162 in the 22:40 CST counter reflow — same content, colors
-    # and words; the savings free the foot of the column for the
-    # counter strip.)
+    # 162 in the 22:40 CST counter reflow, then 162 -> 146 in the
+    # 23:14 CST convergence so the grid fits the AI frame's 444 —
+    # same content, colors and words throughout.)
     cards = content["cards"]
-    cw, chh, cgap = 233, 162, 10
+    cw, chh, cgap = 233, 146, 8
     for i, c in enumerate(cards):
         col, row = i % 3, i // 3
         x = x0 + 20 + col * (cw + cgap)
-        y = cy + 24 + row * (chh + cgap)
+        y = cy + 26 + row * (chh + cgap)
         ccx = x + cw / 2
         d.rounded_rectangle([x + 5, y + 8, x + cw + 5, y + chh + 8], 22,
                             fill=(0, 0, 0, 160))
@@ -1029,15 +1096,15 @@ def main():
         _strip = mt.grad_rounded((cw - 16, 7), [c["bar_color"], c["bar_color"]], 3)
         img.paste(_strip, (x + 8, y + 7), _strip)
         d = ImageDraw.Draw(img)
-        cx_text(d, ccx, y + 20, c["tag"], font(FB, 12), DIM_D, tracking=2)
+        cx_text(d, ccx, y + 18, c["tag"], font(FB, 12), DIM_D, tracking=2)
         _tf = ct._fit_font(d, c["title"], FB, 26, cw - 16)
-        cx_text(d, ccx, y + 39, c["title"], _tf, INK_D)
-        _pf = ct._fit_font(d, c["price"], FB, 40, cw - 16)
-        cx_text(d, ccx, y + 69, c["price"], _pf, c["bar_color"])
+        cx_text(d, ccx, y + 35, c["title"], _tf, INK_D)
+        _pf = ct._fit_font(d, c["price"], FB, 36, cw - 16)
+        cx_text(d, ccx, y + 61, c["price"], _pf, c["bar_color"])
         _sf = ct._fit_font(d, c["sub"], FR, 15, cw - 16)
         _stw = d.textlength(c["sub"], font=_sf)
-        d.text((ccx - _stw / 2, y + 116), c["sub"], font=_sf, fill=DIM_D)
-        bx, bw2, by2, bh2 = x + 30, cw - 60, y + 136, 15
+        d.text((ccx - _stw / 2, y + 99), c["sub"], font=_sf, fill=DIM_D)
+        bx, bw2, by2, bh2 = x + 30, cw - 60, y + 122, 14
         d.rounded_rectangle([bx, by2, bx + bw2, by2 + bh2], 7,
                             fill=(42, 42, 54, 255))
         mt._gbar(img, [bx, by2, bx + bw2 * c["bar_frac"], by2 + bh2],
@@ -1045,14 +1112,15 @@ def main():
         d = ImageDraw.Draw(img)
 
     # skeptics strip (the crypto counterpoint, in its own dark idiom;
-    # slimmed 54 -> 50 in the 22:40 CST counter reflow)
+    # slimmed 54 -> 50 in the 22:40 CST counter reflow, then 50 ->
+    # 44 in the 23:14 CST convergence to fit the AI frame)
     cp = content["counterpoint"]
-    sy = cy + 368
-    d.rounded_rectangle([x0 + 20, sy, x1 - 20, sy + 50], 14,
+    sy = cy + 334
+    d.rounded_rectangle([x0 + 20, sy, x1 - 20, sy + 44], 14,
                         fill=(32, 32, 42, 255),
                         outline=mt._hex(ct.KASPA) + (255,), width=2)
-    cx_text(d, CX, sy + 6, cp["label"], font(FB, 12), DIM_D, tracking=1)
-    cx_text(d, CX, sy + 25, cp["quote"], font(FB, 17), INK_D)
+    cx_text(d, CX, sy + 5, cp["label"], font(FB, 12), DIM_D, tracking=1)
+    cx_text(d, CX, sy + 23, cp["quote"], font(FB, 17), INK_D)
 
     # garnet punchline band — the card's footer, flush inside the
     # bottom border exactly as in the crossover
@@ -1077,8 +1145,14 @@ def main():
     # chip right — Brian, 2026-11-18 23:00 CST). The
     # counter strip follows the card at the foot of the column
     # (Brian, 2026-11-18 22:40 CST). Card height reflows inside
-    # the format (284 -> 272) in the counter reflow. ----
-    T = cy + 2
+    # the format (284 -> 272) in the counter reflow; positions
+    # and type converged to the AI card (Brian, 2026-11-18
+    # 23:14 CST): T = framed bottom + 12 + 14 as in the AI
+    # driver, ask/subline/chips at the AI offsets and sizes,
+    # destinations opening at T+126 — the card stays 272 (not
+    # the AI card's 284) because the extra destination row is
+    # absorbed in the lower rhythm; see the docstring. ----
+    T = cy + 14
     _card_h = 272
     _csh2 = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     ImageDraw.Draw(_csh2).rounded_rectangle(
@@ -1090,15 +1164,16 @@ def main():
                         fill=mt._hex(ct.CARD_BG) + (255,),
                         outline=mt._hex(ct.KASPA_DK) + (255,), width=3)
     _astrip = mt.holo_pill((W - 30 - (RAIL_W + 34) - 8, 7), colors=HL,
-                           radius=3, base_alpha=255)
+                           radius=3, base_alpha=220)
     img.paste(_astrip, (RAIL_W + 38, T + 6), _astrip)
     d = ImageDraw.Draw(img)
     # the ask — Brian's curiosity line, split across the format's
-    # ask + subline exactly as written
-    _af, _asz = _fit("Which coin are you stacking right now?", 26, 724, floor=16)
-    cx_text(d, CX, T + 14, "Which coin are you stacking right now?",
+    # ask + subline exactly as written, in the AI card's type
+    # (FB28 at T+16, subline FB18 at T+54 — 23:14 CST)
+    _af, _asz = _fit("Which coin are you stacking right now?", 28, 724, floor=16)
+    cx_text(d, CX, T + 16, "Which coin are you stacking right now?",
             _af, INK_D)
-    cx_text(d, CX, T + 45, "Drop it below.", font(FB, 17), DIM_D)
+    cx_text(d, CX, T + 54, "Drop it below.", font(FB, 18), DIM_D)
 
     def _mchip(cx_center, label, kind, top):
         chw, chh = 232, 44
@@ -1136,9 +1211,9 @@ def main():
                 _cd.ellipse([bx0 + _dx - 2, by0 + 8, bx0 + _dx + 2, by0 + 12], fill=INK_D)
             ix = cx0 + 22 + 30 + 12
         _cd.text((ix, top + 11), label, font=font(FB, 17), fill=INK_D)
-    _mchip(CX - 244, "LIKE", "like", T + 66)
-    _mchip(CX, "COMMENT", "comment", T + 66)
-    _mchip(CX + 244, "SHARE", "share", T + 66)
+    _mchip(424, "LIKE", "like", T + 78)
+    _mchip(668, "COMMENT", "comment", T + 78)
+    _mchip(912, "SHARE", "share", T + 78)
 
     def _cta(cx0, top, w, h, c_top, c_bot, line1, line2):
         _b = _vgrad(w, h, c_top, c_bot, 16)
@@ -1178,35 +1253,40 @@ def main():
         _sh = _sh.filter(ImageFilter.GaussianBlur(7))
         img.paste(_sh, (x - _pad, top + 4 - _pad), _sh)
 
-    # Substack — the orange bar, polished
-    _bar_shadow(292, T + 114, 368, 38, 14)
-    _sb2 = _polished_bar(368, 38, ("#ff9a4d", "#ff7a29", "#cf4300"), 14)
-    img.paste(_sb2, (292, T + 114), _sb2)
+    # Substack — the orange bar, polished; the destinations now
+    # open at the AI card's CTA offset (T+126, 23:14 CST) and the
+    # left column's two rows compress to 34 + 29 so the signature
+    # band keeps its 12px card padding inside the 272 card
+    _bar_shadow(292, T + 126, 368, 34, 14)
+    _sb2 = _polished_bar(368, 34, ("#ff9a4d", "#ff7a29", "#cf4300"), 14)
+    img.paste(_sb2, (292, T + 126), _sb2)
     d = ImageDraw.Draw(img)
     _f1 = font(FB, 16)
     _f2 = font(FR, 11)
     _w1 = d.textlength("Substack", font=_f1)
     _w2 = d.textlength(mt.BRAND["blog_url"], font=_f2)
     _x = 292 + (368 - (_w1 + 7 + _w2)) / 2
-    d.text((_x, T + 114 + 10), "Substack", font=_f1,
+    d.text((_x, T + 126 + 8), "Substack", font=_f1,
            fill=(255, 255, 255, 255))
-    d.text((_x + _w1 + 7, T + 114 + 13), mt.BRAND["blog_url"],
+    d.text((_x + _w1 + 7, T + 126 + 11), mt.BRAND["blog_url"],
            font=_f2, fill=(255, 255, 255, 235))
     # the two blog buttons — one row, each in its blog branding
-    _bar_shadow(292, T + 158, 179, 32, 12)
-    _ddd = _polished_bar(179, 32, ("#33477a", "#1d2c49", "#131f36"), 12)
-    img.paste(_ddd, (292, T + 158), _ddd)
-    _bar_shadow(481, T + 158, 179, 32, 12)
-    _hh = _polished_bar(179, 32, ("#8fd8cc", "#70c7ba", "#2fa08e"), 12)
-    img.paste(_hh, (481, T + 158), _hh)
+    _bar_shadow(292, T + 165, 179, 29, 12)
+    _ddd = _polished_bar(179, 29, ("#33477a", "#1d2c49", "#131f36"), 12)
+    img.paste(_ddd, (292, T + 165), _ddd)
+    _bar_shadow(481, T + 165, 179, 29, 12)
+    _hh = _polished_bar(179, 29, ("#8fd8cc", "#70c7ba", "#2fa08e"), 12)
+    img.paste(_hh, (481, T + 165), _hh)
     d = ImageDraw.Draw(img)
-    _df, _dsz = _fit("Driving Dollars Digest", 14, 163, floor=10)
-    cx_text(d, 292 + 179 // 2, T + 158 + (32 - _dsz) // 2 - 1,
+    _df, _dsz = _fit("Driving Dollars Digest", 13, 163, floor=10)
+    cx_text(d, 292 + 179 // 2, T + 165 + (29 - _dsz) // 2 - 1,
             "Driving Dollars Digest", _df, "#f2cf7a")
-    _hf, _hsz = _fit("Hashrate Harbor", 14, 163, floor=10)
-    cx_text(d, 481 + 179 // 2, T + 158 + (32 - _hsz) // 2 - 1,
+    _hf, _hsz = _fit("Hashrate Harbor", 13, 163, floor=10)
+    cx_text(d, 481 + 179 // 2, T + 165 + (29 - _hsz) // 2 - 1,
             "Hashrate Harbor", _hf, (10, 34, 29))
-    _cta(676, T + 120, 368, 56, "#2fce6e", "#0f9d4c",
+    # WhatsApp in the AI CTA slot (676, T+126, 368x58) — same
+    # words, number, colors and _cta grammar as before (23:14 CST)
+    _cta(676, T + 126, 368, 58, "#2fce6e", "#0f9d4c",
          "Message Me on WhatsApp",
          dict(mt.BRAND["handles"])["whatsapp"])
 
@@ -1229,10 +1309,12 @@ def main():
     # a lit-teal chip (the Hashrate Harbor button's Kaspa-teal
     # family, dark ink), vertically centered against the
     # branding block; a hairline divider stands in the middle
-    # ground between the sides. The band grows 58 -> 66 into
-    # the space the hashtag line freed and centers between the
-    # blog buttons and the card's bottom edge; the card's fixed
-    # format height is unchanged.
+    # ground between the sides. The band grew 58 -> 66 into
+    # the space the hashtag line freed; in the 23:14 CST
+    # convergence it is 62 tall on the AI plaque's x-extents,
+    # its bottom on the same 12px card padding as the AI
+    # plaque's, carrying the AI plaque's type (name FB30,
+    # markets FB13 gold, both tracking 1).
     def _lx_text(d, x, y, text, fnt, fill, tracking=0):
         if tracking:
             for ch in text:
@@ -1244,7 +1326,7 @@ def main():
 
     _bx0, _bx1 = RAIL_W + 46, W - 42
     _bw = _bx1 - _bx0
-    _by, _bh = T + 198, 66
+    _by, _bh = T + 198, 62
     _bar_shadow(_bx0, _by, _bw, _bh, 14)
     _pq = _polished_bar(_bw, _bh, ("#33477a", "#1d2c49", "#131f36"), 14)
     img.paste(_pq, (_bx0, _by), _pq)
@@ -1252,16 +1334,16 @@ def main():
     d.rounded_rectangle([_bx0, _by, _bx1, _by + _bh], 14,
                         outline="#0aa5e0", width=2)
     # LEFT — the branding, left-aligned in the band
-    _nend = _lx_text(d, _bx0 + 24, _by + 8, "BRIAN LATHE",
-                     font(FB, 29), "white", tracking=1)
-    _mend = _lx_text(d, _bx0 + 24, _by + 41,
+    _nend = _lx_text(d, _bx0 + 24, _by + 7, "BRIAN LATHE",
+                     font(FB, 30), "white", tracking=1)
+    _mend = _lx_text(d, _bx0 + 24, _by + 42,
                      "CRYPTO \u2022 STOCKS \u2022 OPTIONS \u2022 FOREX",
-                     font(FB, 12), "#f2cf7a", tracking=1)
+                     font(FB, 13), "#f2cf7a", tracking=1)
     # RIGHT — the follow hashtag, up in the band as a chip
     _tag = ct.CRYPTO_BRAND["hashtag"]
     _tf, _tsz = _fit(_tag, 15, 300, floor=11)
     _cw = int(d.textlength(_tag, font=_tf) + 42)
-    _ch = 36
+    _ch = 34
     _cx1 = _bx1 - 20
     _cx0 = _cx1 - _cw
     _cy0 = _by + (_bh - _ch) // 2
@@ -1290,7 +1372,7 @@ def main():
     # number is DERIVED from the anchor (DAY 1 = Thu Nov 12,
     # 2026) and the render date, never hard-coded. =====
     _day = (date.today() - HUANG_COUNT_START).days + 1
-    cs0, cs1 = T + _card_h + 12, T + _card_h + 12 + 86
+    cs0, cs1 = T + _card_h + 14, T + _card_h + 14 + 86
     _sb3 = _vgrad(W - 30 - (RAIL_W + 34), cs1 - cs0,
                   "#1d2c49", "#131f36", 18)
     img.paste(_sb3, (RAIL_W + 34, cs0), _sb3)

@@ -20,9 +20,9 @@ queue) lands it in the library. NO new layout was created.
 Rail ruling (Brian, 2026-11-18 21:55 CST): "the home rack comes
 out, it's not related to crypto." In the crypto theme the rail
 carries NO rack — the rack is AI/infrastructure branding, not
-crypto. The rail is photo + name + icons + tagline + the HODL
-Coins panel, reflowed to fill the full height without the rack.
-Scope: crypto theme only; the AI crossover keeps its rack.
+crypto. The rail is photo + name + icons + the HODL panels + a
+CTA foot block, reflowed to fill the full height without the
+rack. Scope: crypto theme only; the AI crossover keeps its rack.
 
 Spencer / HODL Coins ruling (Brian, 2026-11-18 21:58 CST):
 "spencer comes out — and where the home rack was, that's where
@@ -67,6 +67,27 @@ neither blog has a domain on record, so no URL is shown. This is
 the two blogs' mutual cross-promotion (Brian's ruling the same
 evening) in action; the blogs remain independent.
 
+Tagline ruling (Brian, 2026-11-18 22:11 CST: "get rid of the buy
+support, sell resistance text" — scope corrected 22:12 CST:
+"just from the rail."): the tagline is REMOVED from the rail's
+brand slot; the slot is closed. The signature plaque in the
+connect card KEEPS its "BUY SUPPORT • SELL RESISTANCE • HOLD
+LONG" line exactly as it was — Brian scoped the removal to the
+rail only. crypto_template.py's own tagline usage is untouched.
+
+CTA ruling (Brian, 2026-11-18 22:12 CST): "crunch everything up
+to leave room for a call to action like spencer is on the other."
+The rail's content is compressed upward (icons tightened, the
+tagline slot closed, both HODL panels riding higher) to free a
+foot block in the same position and form as the AI crossover's
+Spencer CTA: a gold rule, a two-line imperative, a medallion.
+Spencer himself stays OUT (21:58 ruling) — this is the CTA slot
+and form, not Spencer, and it does not pitch the Muse AI agent.
+The wording — "STACK THE HODL LIST / WITH BRIAN" over the Kaspa
+K medallion (the desk's own emblem) — is AGENT-DRAFTED from the
+desk's copy (the STACK card verb, Brian's "HODL Coins" label)
+and is flagged below for Brian's ruling.
+
 Content (the crypto desk as rebranded, commit 25e4179): headline
 "BUY FEAR. SELL GREED.", the six coins as comparative cards, the
 skeptics strip, punchline "SUPPORT IS WHERE YOU BUY. RESISTANCE IS
@@ -76,13 +97,19 @@ is AI-meme content and is NOT carried over.
 
 Open items flagged for Brian (not decided here):
 - D1 (rail brand line per-theme vs global) is UNRULED. The rail's
-  two-line brand slot carries the crypto desk's own tagline, split
-  at its bullet: "BUY SUPPORT • SELL RESISTANCE" / "HOLD LONG".
+  two-line brand slot carried the crypto desk's own tagline until
+  Brian removed it (22:11/22:12 CST rulings above); the slot is
+  closed and the rail carries no brand line. D1 remains open for
+  the Format Library.
 - The signature plaque's second line: the AI version reads "AI
   INSIGHTS THAT SAVE YOU REAL MONEY". The crypto theme's materials
   supply no insights-parallel line, so the plaque carries the desk's
   own line in full — "BUY SUPPORT • SELL RESISTANCE • HOLD LONG" —
-  agent-placed, awaiting Brian's ruling on the wording.
+  agent-placed, awaiting Brian's ruling on the wording. Brian's
+  22:12 CST scope correction left the plaque line untouched.
+- The rail CTA foot block's wording ("STACK THE HODL LIST / WITH
+  BRIAN", over the Kaspa K medallion) is AGENT-DRAFTED — flagged
+  for Brian's ruling (see the CTA ruling above).
 """
 import os
 import sys
@@ -202,21 +229,21 @@ def main():
         big = size * 4
         _b = _yt_icon(big) if kind == "youtube" else mt.icon(kind, big)
         return _b.resize((size, size), Image.LANCZOS)
-    _isz, _hgap, _vgap, _iy0 = 42, 16, 12, 372
+    _isz, _hgap, _vgap, _iy0 = 42, 16, 12, 352
     for _i, _kind in enumerate(("facebook", "instagram", "youtube", "blog")):
         _ix = RAIL_W // 2 - _isz - _hgap // 2 if _i % 2 == 0 else RAIL_W // 2 + _hgap // 2
         _iy = _iy0 if _i < 2 else _iy0 + _isz + _vgap
         _ic = _sharp_icon(_kind, _isz)
         img.paste(_ic, (_ix, _iy), _ic)
     d = ImageDraw.Draw(img)
-    d.line([(36, 524), (RAIL_W - 36, 524)], fill=(217, 165, 33, 255), width=3)
 
-    # Rail brand lines — D1 UNRULED (per-theme vs global). Until Brian
-    # rules, the slot carries the crypto desk's own tagline, split at
-    # its bullet (see the module docstring).
-    cx_text(d, RAIL_W // 2, 548, "BUY SUPPORT \u2022 SELL RESISTANCE",
-            font(FB, 12), DIM_D, tracking=1)
-    cx_text(d, RAIL_W // 2, 572, "HOLD LONG", font(FB, 12), DIM_D, tracking=2)
+    # Rail brand slot — CLOSED. The slot carried the crypto desk's
+    # tagline until Brian removed it (2026-11-18 22:11 CST: "get rid
+    # of the buy support, sell resistance text" — scope corrected
+    # 22:12 CST: "just from the rail."). The signature plaque in the
+    # connect card KEEPS its tagline line; only the rail's copy is
+    # gone. The freed space is part of the 22:12 crunch that lifts
+    # the HODL panels and frees the CTA foot block below.
 
     # ---- HODL panels — the rack's slot (Brian, 2026-11-18 21:58
     # CST: "where the home rack was, that's where the six crypto
@@ -316,7 +343,7 @@ def main():
 
     _coins = [(_c["title"], _c["title"], _c["bar_color"])
               for _c in content["cards"]]
-    _ybot = _hodl_panel(600, "HODL Coins", _coins, (56, 126, 196))
+    _ybot = _hodl_panel(484, "HODL Coins", _coins, (56, 126, 196))
     # Brian's two HODL stocks (ruled 2026-11-18 22:01 CST): O =
     # Realty Income (realty) in silver-blue, MAIN = Main Street
     # Capital (BDC lender, not realty) in money green — colors
@@ -324,7 +351,26 @@ def main():
     _stocks = [("O", "O", "#d7dee8"), ("MAIN", "MAIN", "#57b06a")]
     # the pair rides the coins grid's OUTER columns (56 / 196), so
     # both panels share the same vertical lines down the rail
-    _hodl_panel(_ybot + 18, "HODL Stocks", _stocks, (56, 196))
+    _sbot = _hodl_panel(_ybot + 18, "HODL Stocks", _stocks, (56, 196))
+
+    # ---- Rail CTA foot block (Brian, 2026-11-18 22:12 CST:
+    # "crunch everything up to leave room for a call to action like
+    # spencer is on the other"). Same position and form as the AI
+    # crossover's Spencer block — gold rule, two-line imperative,
+    # medallion — but Spencer himself stays OUT (21:58 ruling) and
+    # the offer is the crypto desk's own, not the Muse AI agent.
+    # WORDING IS AGENT-DRAFTED, flagged for Brian's ruling (see the
+    # module docstring): "STACK THE HODL LIST / WITH BRIAN" over
+    # the Kaspa K medallion, the desk's emblem. ----
+    d = ImageDraw.Draw(img)
+    d.line([(36, _sbot + 22), (RAIL_W - 36, _sbot + 22)],
+           fill=(217, 165, 33, 255), width=3)
+    cx_text(d, RAIL_W // 2, _sbot + 38, "STACK THE HODL LIST",
+            font(FB, 13), INK_D, tracking=2)
+    cx_text(d, RAIL_W // 2, _sbot + 59, "WITH BRIAN",
+            font(FB, 13), ct.KASPA, tracking=2)
+    _kmed = _medallion("KASPA", _coins[0][2], 56)
+    img.paste(_kmed, (RAIL_W // 2 - 28, _sbot + 74), _kmed)
     d = ImageDraw.Draw(img)
 
     # ---- kicker pill (crossover pill, crypto palette, candle

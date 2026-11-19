@@ -36,6 +36,27 @@ desk's own idiom — letter/symbol marks in each coin's card
 color, no scraped brand art — under Brian's exact label
 "HODL Coins".
 
+HODL Stocks ruling (Brian, 2026-11-18 22:01 CST: "main" — settling
+the pair he opened with "we need two HODL stocks --- O (realty
+income) is one ---", #2 not realty related, monthly, very solid
+like O): Brian's two HODL stocks are O (Realty Income — realty,
+a REIT) and MAIN (Main Street Capital — a BDC lender to small and
+mid-sized businesses, NOT realty). Both are monthly dividend
+payers. The pair is recorded on Driving Dollars Digest's registry
+note (the everything-but-crypto finance blog — the stocks' home
+surface); it mirrors the six HODL coins on the crypto side.
+
+Both-panels ruling (Brian, 2026-11-18 22:03 CST): "hodl stocks
+and hodl coins need to both fit on the left; and it needs to look
+nicer." The rail now carries BOTH HODL panels, stacked in its
+lower half in one shared panel grammar (same border, gold header,
+gold rule, medallion treatment): "HODL Coins" (the six, reflowed
+3-wide x 2-tall) above "HODL Stocks" (O and MAIN, 2 across, drawn
+medallions — a letter O in silver-blue, a letter M in money
+green; no scraped brand art). The rest of the rail and the whole
+right side are unchanged in substance; the pass also evened the
+rail's spacing so the two panels read as one designed column.
+
 Connect-card ruling (Brian, 2026-11-18 21:57 CST): "this meme can
 pitch substack AND 'drivingdollarsdigest' and 'hashrateharbor'."
 The connect card pitches THREE destinations: Substack (the orange
@@ -197,23 +218,20 @@ def main():
             font(FB, 12), DIM_D, tracking=1)
     cx_text(d, RAIL_W // 2, 572, "HOLD LONG", font(FB, 12), DIM_D, tracking=2)
 
-    # ---- HODL COINS panel — the rack's slot (Brian, 2026-11-18
-    # 21:58 CST: "where the home rack was, that's where the six
-    # crypto icons go labeled as 'HODL Coins'"). The six branded
-    # coins as drawn medallion glyphs in the desk's idiom — letter /
-    # symbol marks ringed in each coin's own card color; no scraped
-    # brand art. Spencer is OUT of the crypto piece (same ruling);
+    # ---- HODL panels — the rack's slot (Brian, 2026-11-18 21:58
+    # CST: "where the home rack was, that's where the six crypto
+    # icons go labeled as 'HODL Coins'"; extended 22:03 CST:
+    # "hodl stocks and hodl coins need to both fit on the left").
+    # BOTH panels live in the rail's lower half in ONE shared
+    # grammar — same border, gold header, gold rule, medallion
+    # treatment — so the rail reads as one designed column:
+    # "HODL Coins" (the six branded coins, 3-wide x 2-tall) above
+    # "HODL Stocks" (Brian's pair — O and MAIN, 2 across; ruled
+    # 22:01 CST). All glyphs are drawn in the desk's idiom —
+    # letter / symbol marks ringed in their own colors; no scraped
+    # brand art. Spencer is OUT of the crypto piece (21:58 ruling);
     # he stays in the AI crossover and everywhere else. ----
-    _hp_x0, _hp_x1, _hp_y0, _hp_y1 = 14, RAIL_W - 14, 616, 1028
-    d.rounded_rectangle([_hp_x0, _hp_y0, _hp_x1, _hp_y1], 18,
-                        fill=(22, 23, 31, 255),
-                        outline=mt._hex(ct.KASPA_DK) + (255,), width=2)
-    cx_text(d, RAIL_W // 2, 638, "HODL Coins", font(FB, 18), GOLD,
-            tracking=1)
-    d.line([(40, 674), (RAIL_W - 40, 674)], fill=(217, 165, 33, 255),
-           width=2)
-
-    def _medallion(kind, color, size=64):
+    def _medallion(kind, color, size=58):
         S = 4
         m = Image.new("RGBA", (size * S, size * S), (0, 0, 0, 0))
         md = ImageDraw.Draw(m)
@@ -238,6 +256,10 @@ def main():
             _letter("B")
         elif kind == "CARDANO":
             _letter("A")
+        elif kind == "O":      # Realty Income — the letter O itself
+            _letter("O")
+        elif kind == "MAIN":   # Main Street Capital
+            _letter("M")
         elif kind == "SOLANA":
             bw, bh, gap, sk = 30 * S, 7 * S, 5 * S, 8 * S
             y = c - (3 * bh + 2 * gap) // 2
@@ -267,14 +289,42 @@ def main():
                        fill=col)
         return m.resize((size, size), Image.LANCZOS)
 
-    for _i, _c in enumerate(content["cards"]):
-        _mcx = 70 if _i % 2 == 0 else 182
-        _mtop = 692 + (_i // 2) * 108
-        _med = _medallion(_c["title"], _c["bar_color"])
-        img.paste(_med, (_mcx - 32, _mtop), _med)
-        d = ImageDraw.Draw(img)
-        cx_text(d, _mcx, _mtop + 72, _c["title"], font(FB, 11), INK_D,
+    def _hodl_panel(y0, title, items, col_cxs):
+        """One HODL panel in the shared grammar: bordered box, gold
+        header + gold rule, medallions across col_cxs with labels
+        beneath. items = [(kind, label, color), ...]. Returns the
+        panel's bottom y."""
+        _pd = ImageDraw.Draw(img)
+        _rows = (len(items) + len(col_cxs) - 1) // len(col_cxs)
+        _y1 = y0 + 72 + (_rows - 1) * 88 + 92
+        _pd.rounded_rectangle([14, y0, RAIL_W - 14, _y1], 18,
+                              fill=(22, 23, 31, 255),
+                              outline=mt._hex(ct.KASPA_DK) + (255,),
+                              width=2)
+        cx_text(_pd, RAIL_W // 2, y0 + 20, title, font(FB, 18), GOLD,
                 tracking=1)
+        _pd.line([(40, y0 + 54), (RAIL_W - 40, y0 + 54)],
+                 fill=(217, 165, 33, 255), width=2)
+        for _i, (_kind, _label, _color) in enumerate(items):
+            _mcx = col_cxs[_i % len(col_cxs)]
+            _mtop = y0 + 72 + (_i // len(col_cxs)) * 88
+            _med = _medallion(_kind, _color)
+            img.paste(_med, (_mcx - 29, _mtop), _med)
+            cx_text(_pd, _mcx, _mtop + 64, _label, font(FB, 11), INK_D,
+                    tracking=1)
+        return _y1
+
+    _coins = [(_c["title"], _c["title"], _c["bar_color"])
+              for _c in content["cards"]]
+    _ybot = _hodl_panel(600, "HODL Coins", _coins, (56, 126, 196))
+    # Brian's two HODL stocks (ruled 2026-11-18 22:01 CST): O =
+    # Realty Income (realty) in silver-blue, MAIN = Main Street
+    # Capital (BDC lender, not realty) in money green — colors
+    # chosen clear of the six coin colors.
+    _stocks = [("O", "O", "#d7dee8"), ("MAIN", "MAIN", "#57b06a")]
+    # the pair rides the coins grid's OUTER columns (56 / 196), so
+    # both panels share the same vertical lines down the rail
+    _hodl_panel(_ybot + 18, "HODL Stocks", _stocks, (56, 196))
     d = ImageDraw.Draw(img)
 
     # ---- kicker pill (crossover pill, crypto palette, candle

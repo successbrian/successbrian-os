@@ -157,9 +157,6 @@ def exceptions_from(folders, registry, candidates, proj_nodes,
         if key not in proj_nodes:
             out.append(f"DRIFT: registered project {key} has no "
                        f"Atlas proj node")
-    for key in sorted(folder_keys):
-        if key in registry and key not in proj_nodes:
-            continue  # already reported above
     folder_key_set = set()
     for folder in folders:
         folder_key_set.add(folder_key(folder))

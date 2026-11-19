@@ -75,6 +75,18 @@ connect card KEEPS its "BUY SUPPORT • SELL RESISTANCE • HOLD
 LONG" line exactly as it was — Brian scoped the removal to the
 rail only. crypto_template.py's own tagline usage is untouched.
 
+Branding ruling (Brian, 2026-11-18 22:57 CST): "branding (on
+right side): Brian Lathe -- Crypto, Stocks, Options, Forex".
+The signature plaque's line is now Brian's markets — CRYPTO,
+STOCKS, OPTIONS, FOREX, bullet-separated in the plaque's gold
+small-caps grammar — under the unchanged BRIAN LATHE name.
+This ruling speaks directly to the plaque's content, so it
+SUPERSEDES the tagline's survival there under the 22:12 CST
+"just from the rail" scope: the plaque no longer carries "BUY
+SUPPORT • SELL RESISTANCE • HOLD LONG". The rail removal stands
+as ruled; the FOLLOW #SuccessBrianCrypto line and everything
+else in the piece are untouched.
+
 CTA ruling (Brian, 2026-11-18 22:12 CST): "crunch everything up
 to leave room for a call to action like spencer is on the other."
 The rail's content is compressed upward (icons tightened, the
@@ -275,12 +287,10 @@ Open items flagged for Brian (not decided here):
   Brian removed it (22:11/22:12 CST rulings above); the slot is
   closed and the rail carries no brand line. D1 remains open for
   the Format Library.
-- The signature plaque's second line: the AI version reads "AI
-  INSIGHTS THAT SAVE YOU REAL MONEY". The crypto theme's materials
-  supply no insights-parallel line, so the plaque carries the desk's
-  own line in full — "BUY SUPPORT • SELL RESISTANCE • HOLD LONG" —
-  agent-placed, awaiting Brian's ruling on the wording. Brian's
-  22:12 CST scope correction left the plaque line untouched.
+- The signature plaque's second line is RULED (Brian, 2026-11-18
+  22:57 CST, branding ruling above): Brian's markets — CRYPTO,
+  STOCKS, OPTIONS, FOREX — under his name. The agent-placed
+  tagline that stood there awaiting a ruling is superseded.
 - The rail CTA foot block's wording is Brian's own (22:16 CST
   ruling above) — the earlier agent-drafted placeholder was
   superseded before approval and no longer appears.
@@ -1183,15 +1193,15 @@ def main():
 
     # THE SIGNATURE — the crossover's navy plaque (slimmed vs the
     # AI card so the blogs line and the desk's hashtag line also
-    # fit inside this card). Second line: the crypto desk's own
-    # line (see the module docstring — flagged for Brian's ruling).
+    # fit inside this card). Second line: Brian's markets, per
+    # his branding ruling (2026-11-18 22:57 CST; see docstring).
     _pq = _vgrad(W - 30 - (RAIL_W + 34) - 24, 58, "#1d2c49", "#131f36", 14)
     img.paste(_pq, (RAIL_W + 46, T + 194), _pq)
     d = ImageDraw.Draw(img)
     d.rounded_rectangle([RAIL_W + 46, T + 194, W - 42, T + 252], 14,
                         outline="#0aa5e0", width=2)
     cx_text(d, CX, T + 200, "BRIAN LATHE", font(FB, 29), "white", tracking=1)
-    cx_text(d, CX, T + 231, "BUY SUPPORT \u2022 SELL RESISTANCE \u2022 HOLD LONG",
+    cx_text(d, CX, T + 231, "CRYPTO \u2022 STOCKS \u2022 OPTIONS \u2022 FOREX",
             font(FB, 12), "#f2cf7a", tracking=1)
     # the desk's hashtag line, closing the card
     cx_text(d, CX, T + 256, ct.CRYPTO_BRAND["hashtag"],

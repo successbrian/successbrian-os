@@ -12,14 +12,17 @@ WHY:
     Crypto content lives in dark mode — trading terminals, CoinMarketCap,
     exchange apps. A dark card stops the scroll against a feed of light
     memes and reads as "money talk" instantly. Brian's crypto rules are
-    baked into the identity: buy-and-hold (Kaspa FIRST — his highest-
-    conviction hold, then Bitcoin, Cardano, BNB, Solana, HYPE),
-    trading-only (Ethereum — which he dislikes over gas fees, Doge +
-    high-liquidity movers), buy long-term support, sell resistance,
-    hold long. No meme coins except DOGE. The desk tagline IS his
-    strategy, so every meme teaches it: "BUY SUPPORT • SELL RESISTANCE
-    • HOLD LONG". The desk flies HIS flag — Kaspa teal leads, not
-    bitcoin-orange.
+    baked into the identity: the desk is branded with HIS SIX coins
+    (ruled 2026-11-18) — his favorite coins to talk about and his
+    recommended long-term HODL set: Kaspa FIRST (his highest-conviction
+    hold), then Bitcoin, Cardano, Solana, BNB, and Aster. Buy long-term
+    support, sell resistance, hold long. Other coins (Ethereum
+    included) may appear as one-off CONTENT topics when Brian writes
+    one — topic-only, never part of the branded six, never presented
+    as a recommended or long-term hold coin (Brian, 2026-11-18). The
+    desk tagline IS his strategy, so every meme teaches it: "BUY
+    SUPPORT • SELL RESISTANCE • HOLD LONG". The desk flies HIS flag —
+    Kaspa teal leads, not bitcoin-orange.
 
 CALLED BY:
     - Humans / agents: from crypto_template import render_crypto_meme
@@ -41,7 +44,7 @@ NOTES:
 USAGE:
     from crypto_template import render_crypto_meme
     render_crypto_meme(CONTENT,
-                       photo_path="/home/hatch/workspace/profile-images/brian-gina-together.jpg",
+                       photo_path="/home/successbrian/successbrian-os/tools/audience/assets/brian-gina.jpg",
                        out_path="meme.png")
 
     CONTENT = {
@@ -64,7 +67,7 @@ USAGE:
 import random
 import sys
 
-sys.path.insert(0, "/home/hatch/workspace/successbrian-os/tools/audience")
+sys.path.insert(0, "/home/successbrian/successbrian-os/tools/audience")
 from meme_template import (photo_card, icon, font, _centered, grad_rounded,
                            _gbar, _hex, BRAND,
                            GARNET_BG, YELLOW,
@@ -93,9 +96,47 @@ CARD_BG = "#1b1b23"
 INK_D = "#eceef4"          # body text on dark
 DIM_D = "#9aa0b4"          # dim text on dark
 HL_COLORS = ["#8ff2de", "#4d7dc9", "#ffb700"]  # Kaspa teal -> Cardano blue -> BNB gold:
-# Brian's top-5 conviction order (Kaspa, Cardano, Solana, Bitcoin, BNB)
-# rendered as his portfolio in color form. Kaspa leads; gold closes.
-PHOTO = "/home/hatch/workspace/profile-images/brian-gina-together.jpg"
+# the branded six rendered as a gradient in color form — Kaspa leads,
+# gold closes. (Colors unchanged; the set they stand for is the six.)
+PHOTO = "/home/successbrian/successbrian-os/tools/audience/assets/brian-gina.jpg"
+
+# Brian's branded six (ruled 2026-11-18): his favorite coins to talk
+# about and his recommended long-term HODL set. The theme's branding
+# and demo/default content feature ONLY these six. Any other coin —
+# Ethereum included — may still be written as a one-off CONTENT topic
+# via a caller's own CONTENT dict; it is topic-only, never branded,
+# and never tagged or implied as a long-term hold recommendation.
+BRANDED_COINS = ["KASPA", "BITCOIN", "CARDANO", "SOLANA", "BNB", "ASTER"]
+
+# Default/demo content: a plain render shows the branded six, one card
+# each, in the desk's own voice (words, never invented prices).
+DEFAULT_CONTENT = {
+    "kicker": "THE CRYPTO DESK IS OPEN",
+    "headline": "BUY FEAR. SELL GREED.",
+    "cards": [
+        {"tag": "BUY & HOLD", "title": "KASPA", "price": "STACK",
+         "sub": "highest conviction", "bar_frac": 0.95,
+         "bar_color": CANDLE_GREEN},
+        {"tag": "BUY & HOLD", "title": "BITCOIN", "price": "HOLD",
+         "sub": "the anchor", "bar_frac": 0.9, "bar_color": GOLD},
+        {"tag": "BUY & HOLD", "title": "CARDANO", "price": "STACK",
+         "sub": "research-first", "bar_frac": 0.8,
+         "bar_color": "#4d7dc9"},
+        {"tag": "BUY & HOLD", "title": "SOLANA", "price": "HOLD",
+         "sub": "the speed chain", "bar_frac": 0.85, "bar_color": KASPA},
+        {"tag": "BUY & HOLD", "title": "BNB", "price": "STACK",
+         "sub": "the DEX chain", "bar_frac": 0.85, "bar_color": EMBER},
+        {"tag": "BUY & HOLD", "title": "ASTER", "price": "HOLD",
+         "sub": "the perps DEX", "bar_frac": 0.75,
+         "bar_color": KASPA_HI},
+    ],
+    "counterpoint": {
+        "label": "THE SKEPTICS — EVERY SINGLE BEAR MARKET",
+        "quote": "\"Crypto is dead. Again.\""},
+    "punchline": "SUPPORT IS WHERE YOU BUY. RESISTANCE IS WHERE YOU SELL.",
+    "curiosity": "Which coin are you stacking right now? Drop it below.",
+    "series_day": 1,
+}
 
 
 # ---------------- dark background ----------------
@@ -291,6 +332,17 @@ def footer_dark(img, d, hashtag=None, dy=0, brand=None):
     return img, ImageDraw.Draw(img)
 
 
+def _fit_font(d, txt, fam, size, maxw, floor=11):
+    """Shrink a font until txt fits maxw — the headline auto-fit idea
+    applied to card text, so a full six-card row (the branded six)
+    stays inside its cards. Only ever shrinks: renders whose text
+    already fits are pixel-identical to before."""
+    s = size
+    while s > floor and d.textlength(txt, font=font(fam, s)) > maxw:
+        s -= 1
+    return font(fam, s)
+
+
 # ---------------- main render ----------------
 def render_crypto_meme(content, photo_path=None, out_path="meme.png",
                        brand=None, headline_size=None):
@@ -373,16 +425,19 @@ def render_crypto_meme(content, photo_path=None, out_path="meme.png",
         d.rounded_rectangle([x, cy0, x + cw, cy0 + ch], 26, fill=tint,
                             outline=(120, 84, 30, 255), width=2)
         cx = x + cw / 2
-        for txt, fnt, col, yy in [
-            (c["tag"], font(FB, 19), DIM_D, cy0 + 24),
-            (c["title"], font(FB, 30), INK_D, cy0 + 54),
-            (c["price"], font(FB, 66), c["bar_color"], cy0 + 96),
+        maxw = cw - 16
+        for txt, fam, size, col, yy in [
+            (c["tag"], FB, 19, DIM_D, cy0 + 24),
+            (c["title"], FB, 30, INK_D, cy0 + 54),
+            (c["price"], FB, 66, c["bar_color"], cy0 + 96),
         ]:
+            fnt = _fit_font(d, txt, fam, size, maxw)
             tw = d.textlength(txt, font=fnt)
             d.text((cx - tw / 2, yy), txt, font=fnt, fill=col)
         t = c["sub"]
-        tw = d.textlength(t, font=font(FR, 22))
-        d.text((cx - tw / 2, cy0 + 178), t, font=font(FR, 22), fill=DIM_D)
+        f_sub = _fit_font(d, t, FR, 22, maxw)
+        tw = d.textlength(t, font=f_sub)
+        d.text((cx - tw / 2, cy0 + 178), t, font=f_sub, fill=DIM_D)
         bx, bw, bh, by = x + 36, cw - 72, 24, cy0 + 214
         d.rounded_rectangle([bx, by, bx + bw, by + bh], 12,
                             fill=(42, 42, 54, 255))
@@ -418,25 +473,9 @@ def render_crypto_meme(content, photo_path=None, out_path="meme.png",
 
 
 if __name__ == "__main__":
-    render_crypto_meme(
-        {
-            "kicker": "THE CRYPTO DESK IS OPEN",
-            "headline": "BUY FEAR. SELL GREED.",
-            "cards": [
-                {"tag": "BUY & HOLD", "title": "KASPA",
-                 "price": "STACK", "sub": "fastest L1 • highest conviction",
-                 "bar_frac": 0.9, "bar_color": CANDLE_GREEN},
-                {"tag": "TRADING ONLY", "title": "ETHEREUM",
-                 "price": "TRADE", "sub": "liquidity • gas fees kill it",
-                 "bar_frac": 0.55, "bar_color": KASPA},
-            ],
-            "counterpoint": {
-                "label": "THE SKEPTICS — EVERY SINGLE BEAR MARKET",
-                "quote": "\"Crypto is dead. Again.\""},
-            "punchline": "SUPPORT IS WHERE YOU BUY. RESISTANCE IS WHERE YOU SELL.",
-            "curiosity": "Which coin are you stacking right now? Drop it below.",
-            "series_day": 1,
-        },
-        photo_path=PHOTO,
-        out_path="/home/hatch/workspace/your_files/memes/proofs/crypto-desk-proof-v2-2026-10-06.png")
-    print("wrote ~/workspace/your_files/memes/proofs/crypto-desk-proof-v2-2026-10-06.png")
+    # Plain render = the branded six (DEFAULT_CONTENT). One-off topics
+    # (any coin) come from a caller's own CONTENT dict, never from here.
+    _out = ("/home/successbrian/successbrian-os/tools/audience/out/"
+            "crypto-desk-proof-six-coins-2026-11-18.png")
+    render_crypto_meme(DEFAULT_CONTENT, photo_path=PHOTO, out_path=_out)
+    print("wrote", _out)

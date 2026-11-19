@@ -100,6 +100,19 @@ offer and the name reveals in follow-up. The offer facts are
 Brian's, used exactly: 7 day free trial · 24/7 · 6TB cloud
 backup.
 
+Offer-treatment ruling (Brian, 2026-11-18 22:20 CST): "my 7 day
+offer needs to stand out more -- i want people buy it, ask about
+it, etc." The words are unchanged; the block's TREATMENT is now
+an ad card: a filled gold-forward panel (warm gold gradient,
+gold border — the format's panel grammar) separates the offer
+from the rail's dark ground, "7 DAY FREE TRIAL" rides a filled
+gold pill with dark text (the holo_pill idiom) sized to stay
+readable at feed-thumbnail scale, and the cloud medallion sits
+inside the card with the offer instead of dangling below the
+lines. Hierarchy stands: ASK BRIAN FOR -> 7 DAY FREE TRIAL ->
+24/7 6TB CLOUD BACKUP. The room comes from the rail crunch —
+the HODL panels ride higher; their substance is unchanged.
+
 Content (the crypto desk as rebranded, commit 25e4179): headline
 "BUY FEAR. SELL GREED.", the six coins as comparative cards, the
 skeptics strip, punchline "SUPPORT IS WHERE YOU BUY. RESISTANCE IS
@@ -379,7 +392,7 @@ def main():
 
     _coins = [(_c["title"], _c["title"], _c["bar_color"])
               for _c in content["cards"]]
-    _ybot = _hodl_panel(484, "HODL Coins", _coins, (56, 126, 196))
+    _ybot = _hodl_panel(470, "HODL Coins", _coins, (56, 126, 196))
     # Brian's two HODL stocks (ruled 2026-11-18 22:01 CST): O =
     # Realty Income (realty) in silver-blue, MAIN = Main Street
     # Capital (BDC lender, not realty) in money green — colors
@@ -387,7 +400,7 @@ def main():
     _stocks = [("O", "O", "#d7dee8"), ("MAIN", "MAIN", "#57b06a")]
     # the pair rides the coins grid's OUTER columns (56 / 196), so
     # both panels share the same vertical lines down the rail
-    _sbot = _hodl_panel(_ybot + 18, "HODL Stocks", _stocks, (56, 196))
+    _sbot = _hodl_panel(_ybot + 12, "HODL Stocks", _stocks, (56, 196))
 
     # ---- Rail CTA foot block (Brian, 2026-11-18 22:12 CST:
     # "crunch everything up to leave room for a call to action like
@@ -402,19 +415,41 @@ def main():
     # The product is NEVER NAMED in the piece (generic-surface
     # discipline); the badge is a drawn cloud-backup medallion in
     # the desk's idiom — no scraped art, no brand marks. ----
+    # Offer treatment (Brian, 2026-11-18 22:20 CST: "my 7 day offer
+    # needs to stand out more -- i want people buy it, ask about
+    # it, etc."): the block is now a filled AD CARD in the format's
+    # panel grammar — a warm gold-gradient fill with a gold border
+    # lifts it off the rail's dark ground, the cloud medallion sits
+    # INSIDE the card with the offer, and "7 DAY FREE TRIAL" rides
+    # a filled gold pill (dark text, the holo_pill idiom) as the
+    # strongest element on the rail, readable at thumbnail scale.
+    # Words unchanged (22:16 ruling); hierarchy: ASK BRIAN FOR ->
+    # 7 DAY FREE TRIAL -> 24/7 6TB CLOUD BACKUP. Room comes from
+    # the rail crunch above (coins panel at 470, stocks gap 12).
+    _cy0, _cy1 = _sbot + 12, 1072
+    _card = _vgrad(RAIL_W - 28, _cy1 - _cy0, "#6d5718", "#382b0b", 18)
+    img.paste(_card, (14, _cy0), _card)
     d = ImageDraw.Draw(img)
-    d.line([(36, _sbot + 18), (RAIL_W - 36, _sbot + 18)],
-           fill=(217, 165, 33, 255), width=3)
-    cx_text(d, RAIL_W // 2, _sbot + 31, "ASK BRIAN FOR",
-            font(FB, 12), INK_D, tracking=2)
-    _ef, _ = _fit("7 DAY FREE TRIAL", 18, 200)
-    cx_text(d, RAIL_W // 2, _sbot + 50, "7 DAY FREE TRIAL",
-            _ef, GOLD, tracking=1)
-    _sf, _ = _fit("24/7 6TB CLOUD BACKUP", 12, 204, floor=9)
-    cx_text(d, RAIL_W // 2, _sbot + 76, "24/7 6TB CLOUD BACKUP",
+    d.rounded_rectangle([14, _cy0, RAIL_W - 14, _cy1], 18,
+                        outline=(217, 165, 33, 255), width=3)
+    _cmed = _medallion("CLOUD", _coins[0][2], 46)
+    img.paste(_cmed, (RAIL_W // 2 - 23, _cy0 + 10), _cmed)
+    d = ImageDraw.Draw(img)
+    cx_text(d, RAIL_W // 2, _cy0 + 62, "ASK BRIAN FOR",
+            font(FB, 13), (250, 240, 214), tracking=3)
+    _pf, _ = _fit("7 DAY FREE TRIAL", 21, 184)
+    _ptw = d.textlength("7 DAY FREE TRIAL", font=_pf)
+    _pw2 = int(_ptw) + 34
+    _px0 = RAIL_W // 2 - _pw2 // 2
+    _py0 = _cy0 + 84
+    _pill = _vgrad(_pw2, 44, "#f7c948", "#d9a521", 22)
+    img.paste(_pill, (_px0, _py0), _pill)
+    d = ImageDraw.Draw(img)
+    cx_text(d, RAIL_W // 2, _py0 + (44 - _pf.size) // 2 - 1,
+            "7 DAY FREE TRIAL", _pf, (26, 21, 4))
+    _sf, _ = _fit("24/7 6TB CLOUD BACKUP", 13, 200, floor=9)
+    cx_text(d, RAIL_W // 2, _py0 + 52, "24/7 6TB CLOUD BACKUP",
             _sf, ct.KASPA, tracking=1)
-    _cmed = _medallion("CLOUD", _coins[0][2], 48)
-    img.paste(_cmed, (RAIL_W // 2 - 24, _sbot + 93), _cmed)
     d = ImageDraw.Draw(img)
 
     # ---- kicker pill (crossover pill, crypto palette, candle

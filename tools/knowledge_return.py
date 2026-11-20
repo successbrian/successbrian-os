@@ -20,6 +20,16 @@ What lands (v1):
   - source_capture_id is NULL in v1: reap payloads carry no capture id;
     the probe_id in pointer_note names the feeder that sent the item.
 
+DELIVERY STAMP (2026-11-19, friction #54): every row this collector
+scans gets a terminal disposition here — landed, already-landed, or
+a counted skip — so a non-dry collect stamps delivered_at on every
+scanned row still unstamped. Until this fix the two consumers of
+inference_result rows (this collector and verdict_applier) read
+them but never marked them, so all 1,144 rows sat 'undelivered'
+forever and the bus read as write-only. verdict_applier selects
+its rows independently of the stamp (30-day window, by event), so
+stamping never starves it.
+
 What does NOT land: ROUTING: discard / kick-aside (counted, skipped),
 ROUTING: board (counted, skipped — a board verdict needs a person; a
 later item routes board verdicts to the decision queue), failed events
@@ -122,7 +132,8 @@ def collect_knowledge_returns(dry: bool = False, limit: int | None = None,
     out = {"scanned": 0, "landed": 0, "already_landed": 0,
            "would_land": 0, "skipped_discard": 0, "skipped_kick_aside": 0,
            "skipped_board": 0, "skipped_failed": 0,
-           "skipped_unparseable": 0, "skipped_no_routing": 0}
+           "skipped_unparseable": 0, "skipped_no_routing": 0,
+           "delivered_stamped": 0}
     # Event prompts in one query: the item title/text live there.
     eids = []
     parsed = []
@@ -203,6 +214,12 @@ def collect_knowledge_returns(dry: bool = False, limit: int | None = None,
                 print(f"event {eid}: landed {canonical}")
         else:
             out["already_landed"] += 1
+    if not dry and rows:
+        oids = [oid for (oid, _body) in rows]
+        n = pg_exec(
+            f"update {SCHEMA}.outbox set delivered_at = now() "
+            f"where id = any(%s) and delivered_at is null", (oids,))
+        out["delivered_stamped"] = int(n or 0)
     return out
 
 

@@ -753,12 +753,12 @@ def selftest():
               sbos_common.pg_one(
                   "SELECT count(*) FROM successbrian_os.goal_coverage "
                   "WHERE goal_slug = %s", [probe_slug]) == 0)
+        probe_keys = [f"goal-look-{l[0]}-dispatch"
+                      for l in probe_looks]
         check("probe pm_steps rolled back, no residue",
               sbos_common.pg_one(
                   "SELECT count(*) FROM successbrian_os.pm_steps "
-                  "WHERE step_key LIKE 'goal-look-%-dispatch' "
-                  "AND source LIKE 'goal_coverage:%' "
-                  "AND created_at > now() - interval '1 hour'") == 0)
+                  "WHERE step_key = ANY(%s)", [probe_keys]) == 0)
     finally:
         conn.close()
 

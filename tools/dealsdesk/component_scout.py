@@ -248,7 +248,27 @@ def scout_eco_needs():
             return set(re.findall(r"\b[a-z]{1,3}\d{2,4}[a-z]?\b",
                                   text.lower()))
         for term in terms:
-            rs = search_ebay(term, limit=5, used_only=used_only)
+            # Query-layer form factor (2026-11-19, friction #51):
+            # for a PCIe-card need, exclude SXM/adapter listings in
+            # the query itself. The cheapest-50 window for the V100
+            # term is wall-to-wall SXM2-to-PCIe adapter boards
+            # ($37-$250), so the genuine card never reaches the
+            # gates at any sane depth; with the exclusions the same
+            # window is all genuine PCIe cards. The form-factor
+            # gate below still judges whatever gets through.
+            q = term
+            if re.search(r"pci[\s\-]?e", need["subject"],
+                         re.IGNORECASE):
+                q = term + " -sxm -adapter"
+            # Window depth 20 (2026-11-19, frictions #44/#51):
+            # results come cheapest-first, and for GPU card terms
+            # the first five slots fill with adapter boards, SXM
+            # modules and wrong-capacity variants — the genuine
+            # card (a V100 PCIe at ~$889) never entered the old
+            # limit-5 window at all, so the gates below had nothing
+            # real to judge and the price watch starved. One API
+            # call either way; the gates do the sorting.
+            rs = search_ebay(q, limit=20, used_only=used_only)
             # MODEL-TOKEN GATE (2026-11-17): the capacity filter below
             # only checks the size token ("12gb"), which let an RTX
             # 2060 12GB pose as the best A2000 in need #48's first

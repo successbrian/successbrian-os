@@ -261,6 +261,22 @@ def collect(wd, rows, sweep_results):
     """
     if sbos_common is None:
         raise SystemExit("sbos_common not importable — run from the repo")
+
+    def beat(output):
+        # The heartbeat must never kill the collect.
+        try:
+            sbos_common.pg_exec(
+                "INSERT INTO successbrian_os.worker_heartbeats "
+                "(worker_name, last_heartbeat, last_status, last_error, "
+                "last_run_output) VALUES ('ruling-audit-collect', now(), "
+                "'ok', NULL, %s) ON CONFLICT (worker_name) DO UPDATE SET "
+                "last_heartbeat = EXCLUDED.last_heartbeat, "
+                "last_status = EXCLUDED.last_status, last_error = NULL, "
+                "last_run_output = EXCLUDED.last_run_output",
+                (output,))
+        except Exception as exc:
+            print(f"collect: heartbeat failed: {exc}", file=sys.stderr)
+
     disp_path = wd / "deep_results.jsonl.dispatched"
     dispatched = {}
     if disp_path.exists():
@@ -269,6 +285,8 @@ def collect(wd, rows, sweep_results):
                 r = json.loads(l)
                 dispatched[r["id"]] = r["bus_event"]
     if not dispatched:
+        beat("no dispatched deep packets on record — collect leg "
+             "alive, nothing to land")
         print("collect: no dispatched deep packets on record — nothing to do")
         return 0
     done = _load_done(wd / "deep_results.jsonl")
@@ -322,19 +340,8 @@ def collect(wd, rows, sweep_results):
                 new += 1
     landed = len(done)
     total = len(dispatched)
-    try:
-        sbos_common.pg_exec(
-            "INSERT INTO successbrian_os.worker_heartbeats "
-            "(worker_name, last_heartbeat, last_status, last_error, "
-            "last_run_output) VALUES ('ruling-audit-collect', now(), "
-            "'ok', NULL, %s) ON CONFLICT (worker_name) DO UPDATE SET "
-            "last_heartbeat = EXCLUDED.last_heartbeat, "
-            "last_status = EXCLUDED.last_status, last_error = NULL, "
-            "last_run_output = EXCLUDED.last_run_output",
-            (f"deep verdicts landed {landed}/{total}; {running} still "
-             f"running on gamma",))
-    except Exception as exc:  # the heartbeat must never kill the collect
-        print(f"collect: heartbeat failed: {exc}", file=sys.stderr)
+    beat(f"deep verdicts landed {landed}/{total}; {running} still "
+         f"running on gamma")
     print(f"collect: {new} new verdicts landed; {landed}/{total} in; "
           f"{running} still running")
     marker = wd / "collect_report_done.json"

@@ -304,7 +304,16 @@ def selftest():
     check("M40 brief computes vs target", "UNDER target" in b1)
     b2 = build_brief(["Intel Arc Pro B70 32GB GPU"], 639.0, target=1049.0,
                      subject="Intel Arc Pro B70 32GB GPU", need_id=43)
-    check("B70 brief is honest no-evidence", "NO PRICE EVIDENCE" in b2)
+    # B70 gained real price intel 2026-11-19 (price_intel id 100, $2200
+    # in-stock via the_fourth, capture 2644) — an evidence case now, not
+    # no-evidence. The no-evidence behaviour is tested on MI300X below.
+    check("B70 brief reports the intel evidence", "Price intel on record" in b2
+          and "NO PRICE EVIDENCE" not in b2)
+    # Honest no-evidence case: AMD Instinct MI300X 192GB has zero rows in
+    # all four evidence stores (verified 2026-11-20, cycle 659).
+    b3 = build_brief(["AMD Instinct MI300X 192GB"], 15000.0, target=20000.0,
+                     subject="AMD Instinct MI300X 192GB")
+    check("MI300X brief is honest no-evidence", "NO PRICE EVIDENCE" in b3)
     print("SELFTEST OK" if ok else "SELFTEST FAILED")
     return 0 if ok else 1
 

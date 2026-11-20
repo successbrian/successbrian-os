@@ -215,6 +215,59 @@ def is_do_not_track(text):
     return check_do_not_track(text) is not None
 
 
+# --- Form-factor gate (PCIe card needs vs SXM modules) ---------------------
+# Friction #51 (2026-11-19, capture 2569): a "Tesla V100 32GB" at
+# $61.73 was filed UNDER TARGET for the PCIe card need, but the
+# listing was an SXM2 module + water block + SXM2-to-PCIe adapter
+# combo. An SXM module is not a PCIe card: it mounts on an SXM
+# baseboard, and a carrier conversion is a different product than
+# the native card a PCIe need names. This is a FORM rule — not a
+# trap (the module is fine hardware in its own class) and not a
+# tracking ban (the desk may still record module sightings, labeled
+# as modules). It only says a module can never satisfy a PCIe-card
+# need: never crowned best, never filed under-target for one. Same
+# pattern as the A2000 model-token gate in component_scout: the
+# listing is judged against what the NEED actually is.
+# Pattern care: the SXM token may be written SXM2, SXM 2, SXM-2 or
+# SXM2+... — the pattern tolerates the separators. A genuine PCIe
+# listing never carries an SXM token. The gate fires only when the
+# NEED names PCIe; a need that wants modules (an SXM baseboard
+# build) is not judged by it.
+
+_SXM_RE = re.compile(r"\bsxm(?:\s?-?\s?[2-5])?\b", re.IGNORECASE)
+_PCIE_RE = re.compile(r"\bpci[\s\-]?e\b|\bpci[\s\-]?express\b",
+                      re.IGNORECASE)
+
+
+def is_sxm_module_title(title):
+    """True when a listing title marks the part as an SXM module
+    (SXM, SXM2..SXM5 — including 'SXM2 to PCIe' carrier/conversion
+    combos, whose titles carry the SXM token)."""
+    if not title:
+        return False
+    return bool(_SXM_RE.search(str(title)))
+
+
+def check_form_factor(title, need_text):
+    """Form-factor verdict for one listing against one need.
+    Returns a reject dict when the need names a PCIe card and the
+    listing is an SXM module; None when the gate does not judge
+    (the need is not a PCIe need, or the listing is not an SXM
+    module). A form rule — never reported as a trap."""
+    if not title or not need_text:
+        return None
+    if not _PCIE_RE.search(str(need_text)):
+        return None
+    if not is_sxm_module_title(title):
+        return None
+    return {"form": "sxm-module", "verdict": "reject",
+            "rule": "form_factor_pcie_vs_sxm",
+            "reason": ("SXM module (or SXM-to-PCIe carrier combo) — "
+                       "not the native PCIe card this need names; "
+                       "modules mount on an SXM baseboard "
+                       "(friction #51, 2026-11-19)")}
+
+
 def is_trapped(text, kind=None):
     """True if text names any banned part."""
     return check_item(text, kind=kind) is not None
@@ -256,6 +309,24 @@ _CLASS_SELFTEST = [
 ]
 
 
+_FORM_SELFTEST = [
+    # (listing title, need text, want verdict)
+    ("Tesla V100 32GB GPU SXM2+water cooler block+SXM2 To PCIE "
+     "Card option combo US",
+     "Tesla V100 32GB PCIe GPU (dual-unit builds)", "reject"),
+    ("NVIDIA Tesla V100 SXM2 32GB GPU 699-2G503-0203-200",
+     "Tesla V100 32GB PCIe GPU (dual-unit builds)", "reject"),
+    ("NVIDIA Tesla V100 32GB PCIe GPU Accelerator",
+     "Tesla V100 32GB PCIe GPU (dual-unit builds)", None),
+    ("NVIDIA Tesla V100 SXM2 32GB GPU",
+     "Tesla V100 SXM2 baseboard build", None),   # need wants modules
+    ("NVIDIA TESLA M40 24GB GDDR5 PCI-E 3.0 X16 GPU CARD CUDA PG600",
+     "Tesla M40 24GB PG600 GPU (second card)", None),
+    ("Intel Arc Pro B70 32GB PCIe 5.0 Graphics Card",
+     "Intel Arc Pro B70 32GB GPU (dual, Xeon/AMD servers)", None),
+]
+
+
 _DNT_SELFTEST = [
     ("NVIDIA RTX A1000 8GB Low Profile", "rtx_a1000"),
     ("PNY RTX A400 4GB", "rtx_a400"),
@@ -290,7 +361,14 @@ def selftest():
         ok = got == want
         failures += 0 if ok else 1
         print("%s %-38r -> do-not-track %s" % ("OK  " if ok else "FAIL", text, got))
-    total = len(_SELFTEST) + len(_CLASS_SELFTEST) + len(_DNT_SELFTEST)
+    for title, need, want in _FORM_SELFTEST:
+        hit = check_form_factor(title, need)
+        got = hit["verdict"] if hit else None
+        ok = got == want
+        failures += 0 if ok else 1
+        print("%s %-38r -> form-factor %s" % ("OK  " if ok else "FAIL", title[:38], got))
+    total = (len(_SELFTEST) + len(_CLASS_SELFTEST) + len(_DNT_SELFTEST)
+             + len(_FORM_SELFTEST))
     print("selftest: %d/%d passed" % (total - failures, total))
     return 1 if failures else 0
 

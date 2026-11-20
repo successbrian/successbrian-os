@@ -152,12 +152,16 @@ def get_eco_needs():
         ORDER BY urgency DESC, id
     """)
 
-def file_sighting(r, need_id):
+def file_sighting(r, need_id, note_extra=None):
     """One seller sighting per (seller, url) — deduped. Health stays NULL: the eBay API
     does not carry drive-health data, so a scout find is a lead, never a gated find."""
     if not r.get("seller") or not r.get("url"):
         return
     cap = 4096 if "4tb" in r["title"].lower() else None
+    notes = (f"component_scout eBay API find for ecosystem need "
+             f"#{need_id}; health UNVERIFIED (not in API data)")
+    if note_extra:
+        notes += "; " + note_extra
     pg("""
         INSERT INTO dealsdesk.spencer_sightings
             (seller, platform, listing_title, price, capacity_gb, health_pct,
@@ -168,9 +172,17 @@ def file_sighting(r, need_id):
         RETURNING id
     """, (r["seller"], r["title"][:200], r["price"], cap,
           (f"{r['seller_feedback']}% positive" if r.get("seller_feedback") else None),
-          r["url"],
-          f"component_scout eBay API find for ecosystem need #{need_id}; health UNVERIFIED (not in API data)",
+          r["url"], notes,
           r["url"]))
+    if note_extra:
+        # Label lands even when the sighting already exists (the
+        # INSERT above dedupes by url and skips).
+        pg("""
+            UPDATE dealsdesk.spencer_sightings SET notes = %s
+            WHERE platform = 'ebay' AND url = %s
+              AND notes NOT LIKE %s
+            RETURNING id
+        """, (notes, r["url"], "%" + note_extra[:24] + "%"))
 
 def raise_capture(need, best):
     price = best.get("total", best["price"])
@@ -313,6 +325,40 @@ def scout_eco_needs():
             all_results = kept
         except Exception as e:
             print(f"  do-not-track filter unavailable ({e}) - results unfiltered")
+        # FORM-FACTOR GATE (friction #51, 2026-11-19): for a need
+        # that names a PCIe card, SXM-module listings (incl.
+        # SXM-to-PCIe carrier combos) are not candidates — a module
+        # is not the card the need names. They are still recorded
+        # as sightings, labeled module, so the desk sees the module
+        # market; they just can never be crowned best or filed
+        # under-target for the PCIe need. Registry:
+        # hardware_traps.check_form_factor.
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from hardware_traps import check_form_factor
+            kept = []
+            for r in all_results:
+                _ff = check_form_factor(r["title"], need["subject"])
+                if _ff:
+                    print(f"  form-factor gate: not a candidate for "
+                          f"this PCIe need - {r['title'][:60]} "
+                          f"({_ff['reason']})")
+                    try:
+                        file_sighting(
+                            r, need["id"],
+                            note_extra="FORM: SXM module — not a PCIe "
+                                       "card (form-factor gate, "
+                                       "friction #51)")
+                    except Exception as e:
+                        print(f"  module sighting file failed: {e}")
+                else:
+                    kept.append(r)
+            if len(kept) < len(all_results):
+                print(f"  form-factor gate: {len(all_results)} -> "
+                      f"{len(kept)} candidates")
+            all_results = kept
+        except Exception as e:
+            print(f"  form-factor gate unavailable ({e}) - results unfiltered")
         # PRICE GUARD (Brian's proficiency directive, 2026-11-16):
         # screen every result before any price is believed. TRAPs are
         # excluded and counted; SUSPECTs stay but can never outrank a

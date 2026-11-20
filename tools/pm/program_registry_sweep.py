@@ -215,7 +215,12 @@ def sweep(dry=False):
                 "updated_at = now() WHERE id = %s",
                 (status, proof, row["id"]))
     today = date.today()
-    digest = hashlib.sha256("\n".join(lines).encode()).hexdigest()
+    # Hash the exception KEYS, not the text: stale ages tick every
+    # run, so hashing the lines would re-file a capture every 30 min
+    # for the same standing exceptions (the census sweep's lines are
+    # age-free; ours are not).
+    key_set = sorted(ln.split("—")[0].strip() for ln in lines)
+    digest = hashlib.sha256("\n".join(key_set).encode()).hexdigest()
     state = {}
     if os.path.exists(STATE_FILE):
         try:

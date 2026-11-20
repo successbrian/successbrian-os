@@ -14,6 +14,9 @@ PURPOSE: One CLI for the whole verified-backup system:
            status      plain-text status + writes the doctor's
                        state file (guardrails/state/backups_status.json)
            nightly     pg-backup + file-backup (the cron entry point)
+           prune-pg    apply Brian's 2026-11-19 pg retention (newest
+                       7 daily + newest 4 Sunday sets) to the dated
+                       dirs under pg_dump_root; --dry-run only reports
            selftest    offline checks of config, tools, tables
 WHY:     Brian (2026-10-27 Tier-1 order): no verified backups existed.
          Tool choice: restic (single-binary OSS) for files; pg_dump
@@ -38,6 +41,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -181,6 +185,66 @@ def cmd_pg_backup(args):
     write_status()
     print(f"[pg-backup] run_id={run_id} status={status} total_bytes={total}")
     return 0 if status == "ok" else 1
+
+
+# ------------------------------------------------------------ pg retention
+# Brian's ruling 2026-11-19 (review decision #9): the pg leg keeps the
+# newest 7 daily sets plus the newest 4 Sunday sets; older dated dirs
+# under pg_dump_root are pruned. Same shape as ecosystem_backup's
+# apply_retention, which has run the offsite staging sets since
+# 2026-11-09. Restic repos and offsite staging are NOT touched here.
+PG_KEEP_DAILY = 7
+PG_KEEP_WEEKLY = 4
+
+
+def pg_retention_plan(root):
+    """(keep, prune) dated set names under root, newest first.
+    Only real directories named YYYY-MM-DD are sets; the 'latest'
+    symlink and anything else are never touched."""
+    dated = []
+    if os.path.isdir(root):
+        for name in os.listdir(root):
+            p = os.path.join(root, name)
+            if not os.path.isdir(p) or os.path.islink(p):
+                continue
+            try:
+                d = datetime.strptime(name, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            dated.append((d, name))
+    dated.sort(reverse=True)
+    keep, sundays = [], 0
+    for i, (d, name) in enumerate(dated):
+        if i < PG_KEEP_DAILY:
+            keep.append(name)
+        elif d.weekday() == 6 and sundays < PG_KEEP_WEEKLY:
+            keep.append(name)
+            sundays += 1
+    keep_set = set(keep)
+    prune = [name for _d, name in dated if name not in keep_set]
+    return keep, prune
+
+
+def prune_pg_sets(dry_run=False):
+    """Apply the retention to the pg dump sets. Returns (kept,
+    pruned) name lists; dry_run changes nothing."""
+    root = os.path.expanduser(cfg()["pg_dump_root"])
+    keep, prune = pg_retention_plan(root)
+    pruned = []
+    for name in prune:
+        if not dry_run:
+            shutil.rmtree(os.path.join(root, name))
+        pruned.append(name)
+    return keep, pruned
+
+
+def cmd_prune_pg(args):
+    keep, pruned = prune_pg_sets(dry_run=args.dry_run)
+    mode = "DRY-RUN would prune" if args.dry_run else "pruned"
+    print(f"[pg-retention] keep {len(keep)}: {', '.join(keep)}")
+    print(f"[pg-retention] {mode} {len(pruned)}: "
+          f"{', '.join(pruned) if pruned else '(none)'}")
+    return 0
 
 
 # ------------------------------------------------------------- file backup
@@ -428,6 +492,13 @@ def cmd_status(args):
 
 def cmd_nightly(args):
     rc = cmd_pg_backup(args)
+    try:
+        keep, pruned = prune_pg_sets()
+        print(f"[pg-retention] kept {len(keep)} sets, pruned "
+              f"{len(pruned)}: "
+              f"{', '.join(pruned) if pruned else '(none)'}")
+    except Exception as e:
+        print(f"[pg-retention] FAILED (backup itself unaffected): {e}")
     rc2 = cmd_file_backup(args)
     return rc or rc2
 
@@ -476,13 +547,16 @@ def main(argv=None):
     sub.add_parser("drill")
     sub.add_parser("status")
     sub.add_parser("nightly")
+    pp = sub.add_parser("prune-pg")
+    pp.add_argument("--dry-run", action="store_true")
     sub.add_parser("selftest")
     chk = sub.add_parser("check")
     chk.add_argument("--subset", default=None)
     args = ap.parse_args(argv)
     fn = {"pg-backup": cmd_pg_backup, "file-backup": cmd_file_backup,
           "check": cmd_check, "drill": cmd_drill, "status": cmd_status,
-          "nightly": cmd_nightly, "selftest": cmd_selftest}[args.cmd]
+          "nightly": cmd_nightly, "selftest": cmd_selftest,
+          "prune-pg": cmd_prune_pg}[args.cmd]
     return fn(args)
 
 

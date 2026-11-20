@@ -52,6 +52,12 @@ Usage:
                       [--tier planner|morpheus|sonic|reap]
                       [--blocker TEXT] [--clear-blocker] [--seat TEXT]
                                    file one real look
+  planner_rotation.py --drive [N] [--dry-run]
+                                   B20-1: file up to N driver looks in
+                                   rotation order (default 1), each
+                                   assessed from the goal's live record
+                                   + tasks; --dry-run assesses but
+                                   files nothing
   planner_rotation.py --dispatch [N] [--dry-run]
                                    dispatch the N oldest undispatched
                                    looks to their recorded engine tier
@@ -76,6 +82,15 @@ ROTATION_EXCLUDED_STATUSES = ("done", "cancelled")
 ENGINE_TIERS = ("planner", "morpheus", "sonic", "reap")
 DEFAULT_SEAT = "planner"
 DEFAULT_TIER = "planner"
+# B20-1: driver looks are machine-filed on a cadence, so they carry
+# their own seat in the ledger - provenance that separates them from
+# looks a planner seat filed by hand.
+DRIVER_SEAT = "planner-driver"
+# B20-1: a driver look names a condition only when the live record
+# proves it (target passed, progress 100% while still active). A
+# condition is never invented, and a look never flips a goal's
+# status - a status change is Brian's call or a planner seat's
+# confirmed judgment, never the driver's.
 
 
 def rotation_key(row):
@@ -205,6 +220,158 @@ def look(slug, findings, work="", tier=DEFAULT_TIER, blocker=None,
         return 0
     finally:
         conn.close()
+
+
+def classify_look(state):
+    """Pure classification of a driver look from a goal-state dict.
+
+    state keys: slug, status, target_date (date|None),
+    progress_pct (int|None), updated_at (datetime|None),
+    tasks_total, tasks_done, blocker, has_record (bool).
+    Returns (findings, work, tier, blocker_or_None). Every clause
+    of the findings comes from a live row; work is spawned only
+    for a record-proven condition (target passed, progress 100%
+    while still active), at tier planner - the driver shapes, it
+    never judges at a harder tier and never flips status.
+    """
+    slug = state["slug"]
+    status = state["status"]
+    target = state.get("target_date")
+    if target is not None and hasattr(target, "date"):
+        target = target.date()
+    pct = state.get("progress_pct")
+    updated = state.get("updated_at")
+    total = state.get("tasks_total", 0)
+    done = state.get("tasks_done", 0)
+    blocker = state.get("blocker")
+    today = datetime.now(timezone.utc).date()
+
+    parts = [f"driver look: status {status}"]
+    if not state.get("has_record", True):
+        parts.append("no sbos_goals row for this slug")
+    if total:
+        parts.append(f"{done}/{total} tasks done")
+    else:
+        parts.append("no task nodes")
+    if pct is not None:
+        parts.append(f"progress {pct}%")
+    if target is None:
+        parts.append("no target date")
+    else:
+        delta = (today - target).days
+        if delta > 0:
+            parts.append(f"target {target} passed {delta}d ago")
+        elif delta == 0:
+            parts.append(f"target {target} today")
+        else:
+            parts.append(f"target {target} in {-delta}d")
+    if updated is not None:
+        upd = updated.date() if hasattr(updated, "date") else updated
+        parts.append(f"goal record updated {upd}")
+    parts.append(f"blocker on record: {blocker}" if blocker
+                 else "no blocker named")
+    findings = ", ".join(parts) + "."
+
+    conditions = []
+    if target is not None and (today - target).days > 0:
+        conditions.append(
+            f"target {target} passed while status {status}")
+    if pct == 100:
+        conditions.append(
+            f"progress 100% while status {status}")
+    if conditions:
+        work = ("confirm whether this goal is complete or needs "
+                "re-targeting: " + "; ".join(conditions))
+        return findings, work, "planner", "; ".join(conditions)
+    return (findings, "none - record current, no spawnable work "
+            "this look", "planner", None)
+
+
+def assess_goal(cur, slug):
+    """Read a goal's live record + tasks; derive a driver look.
+    Returns (findings, work, tier, blocker). Raises ValueError
+    when the goal has no node (same refusal shape as do_look).
+    """
+    cur.execute(
+        "SELECT status, blocker FROM atlas.goal_nodes "
+        "WHERE goal_slug = %s", [slug])
+    node = cur.fetchone()
+    if node is None:
+        raise ValueError(f"no goal node for slug: {slug}")
+    node_status, node_blocker = node
+    cur.execute(
+        "SELECT status, target_date, progress_pct, updated_at "
+        "FROM successbrian_os.sbos_goals WHERE goal_slug = %s",
+        [slug])
+    grow = cur.fetchone()
+    cur.execute(
+        "SELECT count(*), count(*) FILTER (WHERE status IN "
+        "('done', 'completed', 'closed')) FROM atlas.goal_tasks "
+        "WHERE goal_slug = %s", [slug])
+    total, done = cur.fetchone()
+    if grow is None:
+        state = {"slug": slug, "status": node_status,
+                 "target_date": None, "progress_pct": None,
+                 "updated_at": None, "tasks_total": total,
+                 "tasks_done": done, "blocker": node_blocker,
+                 "has_record": False}
+    else:
+        gstatus, target, pct, updated = grow
+        state = {"slug": slug, "status": gstatus,
+                 "target_date": target, "progress_pct": pct,
+                 "updated_at": updated, "tasks_total": total,
+                 "tasks_done": done, "blocker": node_blocker,
+                 "has_record": True}
+    return classify_look(state)
+
+
+def drive(limit=1, dry_run=False):
+    """File up to N driver looks in rotation order (never-looked
+    first, priority DESC). Each look is assessed from the goal's
+    live record + tasks via assess_goal; one transaction per look,
+    a failure rolls that look back and the run moves on. With
+    --dry-run, assesses but files nothing. The cadence cron runs
+    this: 1 look every 2 hours moves 12/day, so a 42-goal
+    rotation turns over in ~3.5 days, inside the 4-day coverage
+    window (B10)."""
+    rows = fetch_rotation()[:limit]
+    if not rows:
+        print("drive: rotation empty")
+        return 0
+    done, failed = 0, 0
+    for slug, prio, _status, _days, _overdue, _blocker in rows:
+        conn = sbos_common.connect()
+        try:
+            cur = conn.cursor()
+            cur.execute("BEGIN")
+            try:
+                findings, work, tier, new_blocker = assess_goal(
+                    cur, slug)
+                if dry_run:
+                    print(f"  {slug}: DRY-RUN would file: {findings} "
+                          f"| work: {work} | tier {tier}"
+                          + (f" | blocker: {new_blocker}"
+                             if new_blocker else ""))
+                    conn.rollback()
+                else:
+                    lid = do_look(cur, slug, findings, work, tier,
+                                  new_blocker, seat=DRIVER_SEAT)
+                    conn.commit()
+                    print(f"  look filed: goal_coverage id {lid} for "
+                          f"{slug} (driver, tier {tier})")
+                done += 1
+            except Exception as e:
+                conn.rollback()
+                print(f"  {slug}: FAILED {e}")
+                failed += 1
+        finally:
+            conn.close()
+    print(coverage_line())
+    if dry_run:
+        print(f"drive: {done} assessed, {failed} failed (dry-run)")
+    else:
+        print(f"drive: {done} filed, {failed} failed (live)")
+    return 0 if failed == 0 else 1
 
 
 # ------------------------------------------------------------- B12b dispatch
@@ -595,6 +762,79 @@ def selftest():
     finally:
         conn.close()
 
+    # B20-1 driver: pure classification, then a transactional
+    # assess + file probe (rolled back, no residue).
+    from datetime import date as _date
+    _past = {"slug": "g", "status": "planning",
+             "target_date": _date(2026, 9, 23), "progress_pct": 100,
+             "updated_at": None, "tasks_total": 0, "tasks_done": 0,
+             "blocker": None, "has_record": True}
+    _f, _w, _t, _b = classify_look(_past)
+    check("driver: target passed -> confirm work + blocker, planner",
+          _w.startswith("confirm") and _t == "planner"
+          and _b is not None and "2026-09-23" in _b
+          and "passed" in _f and "2026-09-23" in _f)
+    _cur = {"slug": "g", "status": "in_progress",
+            "target_date": _date(2099, 1, 1), "progress_pct": 50,
+            "updated_at": None, "tasks_total": 2, "tasks_done": 1,
+            "blocker": None, "has_record": True}
+    _f2, _w2, _t2, _b2 = classify_look(_cur)
+    check("driver: current goal -> no work, no new blocker",
+          _w2.startswith("none") and _b2 is None
+          and "1/2 tasks done" in _f2 and "progress 50%" in _f2)
+    _done = dict(_cur, target_date=_date(2099, 1, 1),
+                 progress_pct=100)
+    _f3, _w3, _t3, _b3 = classify_look(_done)
+    check("driver: 100% progress + active -> confirm-completion",
+          _w3.startswith("confirm") and _b3 is not None
+          and "100%" in _b3)
+    _norow = dict(_cur, has_record=False)
+    _f4, _w4, _t4, _b4 = classify_look(_norow)
+    check("driver: no sbos_goals row -> findings say so, no work",
+          "no sbos_goals row" in _f4 and _w4.startswith("none")
+          and _b4 is None)
+    probe_slug = "__selftest__b20__"
+    probe = {"goal_slug": probe_slug, "priority": 50,
+             "coverage_window_days": 4}
+    conn = sbos_common.connect()
+    try:
+        cur = conn.cursor()
+        cur.execute("BEGIN")
+        cur.execute(
+            "INSERT INTO atlas.nodes "
+            "(node_key, node_type, name, status, details, ref_kind, "
+            "ref_id) VALUES (%s, 'goal', 'SELFTEST disposable', "
+            "'planned', %s::jsonb, 'sbos_goal', '0')",
+            [gn.node_key_for_slug(probe_slug), json.dumps(probe)])
+        pf, pw, pt, pb = assess_goal(cur, probe_slug)
+        check("driver probe: assess on node without sbos row",
+              "no sbos_goals row" in pf and pw.startswith("none")
+              and pt == "planner" and pb is None)
+        lid = do_look(cur, probe_slug, pf, pw, pt, pb,
+                      seat=DRIVER_SEAT)
+        cur.execute("SELECT goal_slug, planner_seat, engine_tier "
+                    "FROM successbrian_os.goal_coverage WHERE id = %s",
+                    [lid])
+        lrow = cur.fetchone()
+        check("driver probe: ledger row carries driver seat",
+              lrow is not None and lrow[0] == probe_slug
+              and lrow[1] == DRIVER_SEAT and lrow[2] == "planner")
+        cur.execute("SELECT details FROM atlas.nodes WHERE node_key = %s",
+                    [gn.node_key_for_slug(probe_slug)])
+        check("driver probe: node advanced look_count 1",
+              cur.fetchone()[0].get("look_count") == 1)
+        cur.execute("ROLLBACK")
+        check("driver probe goal node rolled back, no residue",
+              sbos_common.pg_one(
+                  "SELECT count(*) FROM atlas.nodes WHERE node_key = %s",
+                  [gn.node_key_for_slug(probe_slug)]) == 0)
+        check("driver probe ledger row rolled back, no residue",
+              sbos_common.pg_one(
+                  "SELECT count(*) FROM successbrian_os.goal_coverage "
+                  "WHERE goal_slug = %s", [probe_slug]) == 0)
+    finally:
+        conn.close()
+
     print(f"PLANNER_ROTATION_OK ({len(steps)} checks)")
     return 0
 
@@ -614,9 +854,16 @@ def main():
     ap.add_argument("--seat", default=DEFAULT_SEAT)
     ap.add_argument("--dispatch", nargs="?", const=10, type=int,
                     metavar="N")
+    ap.add_argument("--drive", nargs="?", const=1, type=int,
+                    metavar="N",
+                    help="B20-1: file up to N driver looks in rotation "
+                    "order (default 1)")
     ap.add_argument("--dry-run", action="store_true",
-                    help="with --dispatch: build but send no REAP packet")
+                    help="with --dispatch: build but send no REAP "
+                    "packet; with --drive: assess but file no look")
     a = ap.parse_args()
+    if a.drive is not None:
+        return drive(a.drive, dry_run=a.dry_run)
     if a.dispatch is not None:
         return dispatch(a.dispatch, dry_run=a.dry_run)
     if a.selftest:

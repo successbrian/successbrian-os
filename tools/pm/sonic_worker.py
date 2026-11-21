@@ -35,8 +35,8 @@ Rules enforced in code, not in prompts (mirrored from morpheus_worker):
 Sonic endpoint: SONIC_URL (default http://127.0.0.1:11439/v1/chat/
 completions, from sbos_common). Model: SONIC_MODEL, default qwen-a3b
 — the model actually serving on 11439 per /v1/models 2026-11-13
-(sbos_common.SONIC_MODEL still defaults to qwen3.6, which is stale;
-flagged as a follow-up, not changed here).
+(sbos_common.SONIC_MODEL default corrected to qwen-a3b,
+improvement_log row 37, 2026-11-20.)
 
 A finished judgment step stores {parsed, raw_tail} as its result.
 """

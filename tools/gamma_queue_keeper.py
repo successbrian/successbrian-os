@@ -22,6 +22,14 @@ What it does (a faithful port of the cron, two fixes included):
   heartbeat directly into Lyra's table (worker
   'gamma-queue-keeper'); new gamma job failures file ONE Intel
   Bridge capture per run. No chat lines.
+- FIX 3 (B24, 2026-11-21) — dedup is TIME-SCOPED: a capture is
+  blocked only by an event fed AFTER the capture was created.
+  The 2026-11-17 port dropped improvement_log row 40's fix, so a
+  same-title event fed BEFORE a capture blocked it for 14 days —
+  recurring titles (e.g. '[agent-cycle:ceo] N QA checks failing')
+  never reached gamma again. fed_event_times() maps each title
+  to its latest fed event's created_at; is_blocked() compares
+  against the capture's own created_at.
 - NEVER inserts clerk_deep_pass (handler broken, cap 700 —
   SPENCER-NOTE-003). Never more than 5 in line or 5 per run.
 
@@ -30,6 +38,7 @@ Modes: run | dry-run | selftest.
 import os
 import re
 import sys
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.expanduser("~/successbrian-os/tools"))
 import sbos_common  # noqa: E402
@@ -76,22 +85,41 @@ def lane_depth():
         "('pending','processing') AND priority >= 5")
 
 
-def fed_titles():
+def fed_event_times():
+    """title -> created_at of the LATEST reap_infer event carrying it.
+
+    14-day window as before, but the time is kept: only an event fed
+    at or after a capture's own created_at blocks that capture.
+    """
     rows = sbos_common.pg_rows(
-        "SELECT payload->>'prompt' FROM bus.events "
+        "SELECT payload->>'prompt', created_at FROM bus.events "
         "WHERE event_type='reap_infer' AND created_at >= "
         "now() - interval '14 days'")
-    out = set()
-    for (prompt,) in rows:
+    out = {}
+    for prompt, created_at in rows:
         t = embedded_title(prompt)
         if t is not None:
-            out.add(t)
+            if t not in out or created_at > out[t]:
+                out[t] = created_at
     return out
+
+
+def is_blocked(title, capture_created_at, fed_times):
+    """True only when a same-title event was fed at/after the capture.
+
+    A same-title event fed BEFORE the capture must not block it:
+    the capture is new information about a recurring title.
+    """
+    fed_at = fed_times.get(title)
+    if fed_at is None or capture_created_at is None:
+        return False
+    return fed_at >= capture_created_at
 
 
 def raw_captures():
     return sbos_common.pg_rows(
-        "SELECT id, title, raw_text FROM atlas.scattered_captures "
+        "SELECT id, title, raw_text, created_at "
+        "FROM atlas.scattered_captures "
         "WHERE status='raw' ORDER BY created_at ASC")
 
 
@@ -136,19 +164,21 @@ def capture(title, body):
 def run(dry=False):
     depth = lane_depth()
     pile = raw_captures()
-    already = fed_titles()
+    already = fed_event_times()
     fed = 0
-    for cid, title, raw_text in pile:
+    for cid, title, raw_text, created_at in pile:
         if depth >= LANE_CAP or fed >= LANE_CAP:
             break
-        if title in already:
+        if is_blocked(title, created_at, already):
             continue
         if dry:
             print(f"  would feed capture {cid}: {title[:60]}")
         else:
             insert_event(title, raw_text)
             depth = lane_depth()
-        already.add(title)
+        # The just-fed event is now the latest for this title, so a
+        # second same-title capture in this run is still fed once.
+        already[title] = datetime.now(timezone.utc)
         fed += 1
     fails = new_failures()
     summary = (f"fed {fed} item(s), {len(pile)} in the pile, "
@@ -183,11 +213,28 @@ def selftest():
     check("extract quoted title", embedded_title(p),
           'He said "no" today')
     check("no prompt no title", embedded_title(""), None)
-    fed = {'HOURLY ORDER — priority resort'}
-    check("substring is NOT a dedup hit",
-          "HOURLY ORDER" in fed, False)
+    # Time-scoped dedup (B24): only a post-capture event blocks.
+    before = datetime(2026, 11, 15, 4, 58, tzinfo=timezone.utc)
+    cap_at = datetime(2026, 11, 16, 0, 0, tzinfo=timezone.utc)
+    after = datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
+    fed_map = {"[agent-cycle:ceo] 124 QA checks failing": before}
+    check("pre-capture event does NOT block",
+          is_blocked("[agent-cycle:ceo] 124 QA checks failing",
+                     cap_at, fed_map), False)
+    fed_map["[agent-cycle:ceo] 124 QA checks failing"] = after
+    check("post-capture event DOES block",
+          is_blocked("[agent-cycle:ceo] 124 QA checks failing",
+                     cap_at, fed_map), True)
+    check("same-instant event blocks (>=)",
+          is_blocked("T", cap_at, {"T": cap_at}), True)
+    check("no event for title does NOT block",
+          is_blocked("Unseen title", cap_at, fed_map), False)
+    check("substring title is NOT a dedup hit",
+          is_blocked("HOURLY ORDER", cap_at,
+                     {"HOURLY ORDER — priority resort": after}), False)
     check("exact title IS a dedup hit",
-          "HOURLY ORDER — priority resort" in fed, True)
+          is_blocked("HOURLY ORDER — priority resort", cap_at,
+                     {"HOURLY ORDER — priority resort": after}), True)
     check("prompt head carries v2 shape",
           "ROUTING:" in PROMPT_HEAD and "kick-aside" in PROMPT_HEAD,
           True)

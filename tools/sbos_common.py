@@ -602,6 +602,82 @@ def http_ok(url: str, timeout: int = 10) -> bool:
         return False
 
 
+# ---------------------------------------------------------------- sonic slots
+# B23-1 (2026-11-20): slot-occupancy probe for the Sonic llama-server.
+# The qwen-a3b server on :11439 runs 4 slots sharing one batch pipeline
+# (live 2026-11-20: total_slots 4, all busy, two ~30k-token prompts in
+# flight) — a giant prompt hogs the shared batch, so a small caller that
+# queues behind it burns its whole timeout. Callers probe first and fail
+# fast with a named busy reason instead of a silent timeout.
+
+SONIC_SLOTS_URL = os.environ.get(
+    "SONIC_SLOTS_URL", "http://127.0.0.1:11439/slots")
+# A prompt this big in flight means the shared batch is hogged: a new
+# small caller would queue behind it and burn its timeout. Normal chat
+# prompts are a few hundred to a few thousand tokens; 10k is the
+# giant-job line.
+SONIC_GIANT_PROMPT_TOKENS = 10000
+
+
+def parse_sonic_slots(payload):
+    """Pure parse of a llama-server GET /slots payload (a list of slot
+    dicts) into occupancy: total/busy/free, largest in-flight prompt
+    and its task id. Never raises — an unparseable payload is unknown,
+    never a false busy/free."""
+    try:
+        slots = payload if isinstance(payload, list) else []
+        total = len(slots)
+        busy = 0
+        max_prompt = 0
+        largest_task = None
+        for s in slots:
+            if not isinstance(s, dict):
+                continue
+            if s.get("is_processing"):
+                busy += 1
+            n = s.get("n_prompt_tokens") or 0
+            try:
+                n = int(n)
+            except (TypeError, ValueError):
+                n = 0
+            if n > max_prompt:
+                max_prompt = n
+                largest_task = s.get("id_task")
+        return {"ok": True, "total": total, "busy": busy,
+                "free": total - busy, "max_prompt_tokens": max_prompt,
+                "largest_task": largest_task}
+    except Exception:
+        return {"ok": False, "total": 0, "busy": 0, "free": 0,
+                "max_prompt_tokens": 0, "largest_task": None}
+
+
+def sonic_slot_status(url: str = None, timeout: int = 5) -> dict:
+    """Live GET of the Sonic /slots endpoint. Returns the parse_sonic_slots
+    dict, or ok=False with an 'error' key when the server is unreachable.
+    Never raises — a probe must not break its caller."""
+    slots_url = url or SONIC_SLOTS_URL
+    try:
+        req = urllib.request.Request(slots_url)
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            payload = json.loads(r.read().decode())
+        return parse_sonic_slots(payload)
+    except Exception as e:
+        return {"ok": False, "total": 0, "busy": 0, "free": 0,
+                "max_prompt_tokens": 0, "largest_task": None,
+                "error": str(e)[:120]}
+
+
+def sonic_hogged(status: dict = None) -> bool:
+    """True when a giant prompt is hogging Sonic's shared batch AND no
+    slot is free — a new small caller would queue behind it and burn its
+    timeout. A probe failure (ok False) is NOT hogged: the caller falls
+    through to its normal call and fails on its own terms."""
+    if not status or not status.get("ok"):
+        return False
+    return (status.get("free", 0) == 0
+            and status.get("max_prompt_tokens", 0) >= SONIC_GIANT_PROMPT_TOKENS)
+
+
 # ---------------------------------------------------------------- lyra pulse
 
 def pulse(source: str, message: str, metrics: dict = None) -> bool:
@@ -916,6 +992,40 @@ def selftest() -> int:
         except RuntimeError as e:
             check("groq fails closed without a key",
                   "GROQ_API_KEY" in str(e))
+
+    # Sonic slot probe (B23-1): pure parse on a canned /slots payload
+    # modeled on the live 2026-11-20 read (4 slots, 2 giant prompts).
+    _canned = [
+        {"id": 0, "is_processing": True, "id_task": 6486601,
+         "n_prompt_tokens": 283},
+        {"id": 1, "is_processing": True, "id_task": 6486066,
+         "n_prompt_tokens": 2844},
+        {"id": 2, "is_processing": True, "id_task": 6486331,
+         "n_prompt_tokens": 31119},
+        {"id": 3, "is_processing": True, "id_task": 6486589,
+         "n_prompt_tokens": 29371},
+    ]
+    _st = parse_sonic_slots(_canned)
+    check("sonic slots parse: 4 total, 0 free, largest 31119",
+          _st["ok"] and _st["total"] == 4 and _st["free"] == 0
+          and _st["max_prompt_tokens"] == 31119
+          and _st["largest_task"] == 6486331)
+    check("sonic hogged: all busy + giant prompt",
+          sonic_hogged(_st) is True)
+    check("sonic not hogged: a free slot",
+          sonic_hogged(parse_sonic_slots(
+              [{"id": 0, "is_processing": False,
+                "n_prompt_tokens": 31119}])) is False)
+    check("sonic not hogged: busy but small prompts",
+          sonic_hogged(parse_sonic_slots(
+              [{"id": 0, "is_processing": True,
+                "n_prompt_tokens": 500}])) is False)
+    check("sonic parse never raises on garbage",
+          parse_sonic_slots({"nope": 1})["ok"] is True
+          and parse_sonic_slots(None)["total"] == 0)
+    check("sonic probe never raises on dead server",
+          sonic_slot_status(
+              url="http://127.0.0.1:1/slots", timeout=2)["ok"] is False)
 
     print("SELFTEST " + ("GREEN" if not fails else f"FAILED: {fails}"))
     return 0 if not fails else 1

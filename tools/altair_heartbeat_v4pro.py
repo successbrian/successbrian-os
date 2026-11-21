@@ -82,6 +82,24 @@ DRY_SONIC_DECOMPOSE_PER_TICK = 5
 BUFFER_SONIC_DECOMPOSE_PER_TICK = 2
 SONIC_DEDUPE_DAYS = 7
 
+# Queue mode (Brian, 2026-11-08): SONIC_VIA_QUEUE=1 routes Sonic
+# decomposition through successbrian_os.sonic_queue — the tick
+# enqueues one small job per task and consumes finished results
+# on a later tick, instead of blocking on direct call_sonic().
+# Default OFF; flipped only after a shadow test compares both
+# paths. tools/engine_runner.py executes the queued jobs when
+# Sonic is free. Prompts are budgeted at the automated tier
+# (Brian's KV rule, 2026-11-08).
+SONIC_VIA_QUEUE = os.environ.get("SONIC_VIA_QUEUE", "0") == "1"
+
+# Heartbeat optimization (Brian, 2026-11-08): the full-board
+# worthiness judge can run as a queued Morpheus job instead of
+# a synchronous Sonic call. Verdicts persist in the job result,
+# so an escalation is judged ONCE — the direct path re-judged
+# every tick for 24h whenever the verdict was "not worthy".
+BOARD_JUDGE_VIA_QUEUE = os.environ.get(
+    "BOARD_JUDGE_VIA_QUEUE", "0") == "1"  
+
 PENDING_RE = re.compile(
     r"^\s*\*{0,2}\s*pending\s+brian\s+calls?\s*:\s*(.+?)\s*\*{0,2}\s*$",
     re.IGNORECASE | re.MULTILINE)
@@ -357,11 +375,107 @@ def task_sonic_decomposed_recently(task_id):
     return n.strip().isdigit() and int(n) > 0
 
 
+def sonic_enqueue_decomposition(t, summary, prompt):
+    """Queue mode: enqueue one decomposition job for task t.
+    Dedupe mirrors SONIC_DEDUPE_DAYS — at most one decomposition
+    job per task per week (checked against the queue itself)."""
+    existing = query(
+        "SELECT id FROM successbrian_os.sonic_queue "
+        "WHERE kind = 'heartbeat-decompose' "
+        "AND payload->>'task_id' = '%d' "
+        "AND status IN ('queued','claimed','done') "
+        "AND created_at > now() - interval '%d days' "
+        "ORDER BY id LIMIT 1" % (t["id"], SONIC_DEDUPE_DAYS))
+    existing = existing.strip()
+    if existing.isdigit():
+        return int(existing)
+    return sbos_common.engine_job_enqueue(
+        "sonic", "altair-heartbeat", "heartbeat-decompose",
+        "Decompose task #%d: %s" % (t["id"], t["title"][:80]),
+        payload={"task_id": t["id"], "summary": summary,
+                 "prompt": sbos_common.budget_prompt(
+                     prompt, sbos_common.SONIC_KV_AUTO)},
+        source_ref="task:%d" % t["id"])
+
+
+def sonic_consume_queue(dry_run=False):
+    """Queue mode: turn finished heartbeat-decompose jobs into
+    the same harness jobs the direct path creates. The runner
+    stores its result as a JSON string in the queue's TEXT
+    result column; a job is marked consumed inside that JSON
+    so it is never processed twice. Returns tasks consumed."""
+    consumed = 0
+    rows = sbos_common.pg_rows(
+        "SELECT id, payload, result FROM successbrian_os.sonic_queue "
+        "WHERE kind = 'heartbeat-decompose' AND status = 'done' "
+        "ORDER BY finished_at")
+    for job_id, payload, result_raw in rows:
+        try:
+            result = json.loads(result_raw or "{}")
+        except Exception:
+            result = {"text": result_raw or ""}
+        if result.get("consumed_by_heartbeat"):
+            continue
+        task_id = (payload or {}).get("task_id")
+        summary = (payload or {}).get("summary", "")
+        steps = extract_sonic_steps(result.get("text", ""))
+        if dry_run:
+            print("DRY-RUN would consume queue job #%d (task #%s): "
+                  "%d step(s)" % (job_id, task_id, len(steps)))
+            continue
+        made = 0
+        for step in steps:
+            if create_harness_job(
+                    task_id, summary, step, False,
+                    decomposer="Sonic (local, queue-mode)",
+                    source="sonic-decomposition",
+                    dedup_key="decompose-task-%d-%s" % (
+                        task_id, hashlib.md5(
+                            step["title"].encode()).hexdigest()[:10])):
+                made += 1
+        result["consumed_by_heartbeat"] = True
+        result["harness_jobs_made"] = made
+        sbos_common.pg_exec(
+            "UPDATE successbrian_os.sonic_queue SET result = %s "
+            "WHERE id = %s",
+            (json.dumps(result), job_id))
+        print("queue job #%d: task #%s decomposed into %d harness "
+              "job(s)" % (job_id, task_id, made))
+        consumed += 1
+    return consumed
+
+
 def sonic_decompose_tasks(tasks, max_n, dry_run=False, skip_ids=None):
     """Dry-mode doctrine (Brian 2026-10-16): decompose hard tasks into
     Sonic-sized harness jobs using Sonic himself — free and local, so the
     queue keeps growing through dry days. Returns (decomposed_count)."""
     skip_ids = skip_ids or set()
+    if SONIC_VIA_QUEUE:
+        sonic_consume_queue(dry_run)
+        enqueued = 0
+        for t, why in hard_tasks(tasks):
+            if enqueued >= max_n:
+                break
+            if t["id"] in skip_ids:
+                continue
+            if task_sonic_decomposed_recently(t["id"]):
+                continue
+            summary, ask, context, constraints = \
+                build_decomposition_prompt(t)
+            prompt = ("TASK: %s\nYOUR ASSIGNMENT: %s\n\nCONTEXT:\n%s\n\n"
+                      "CONSTRAINTS:\n%s"
+                      % (summary, ask, context, constraints))
+            if dry_run:
+                print("DRY-RUN would enqueue Sonic decomposition for "
+                      "task #%d: %s" % (t["id"], t["title"][:80]))
+                enqueued += 1
+                continue
+            jid = sonic_enqueue_decomposition(t, summary, prompt)
+            if jid:
+                print("task #%d: decomposition queued as sonic job #%s"
+                      % (t["id"], jid))
+                enqueued += 1
+        return enqueued
     if not sonic_available():
         print("sonic not available — cannot build local queue this tick")
         return 0
@@ -833,6 +947,35 @@ def scope_recently_queued(summary_frag, days=7):
     return bool(r)
 
 
+def tick_gate(key, hours, dry_run=False):
+    """Cadence gate for slow sub-jobs (Brian's heartbeat
+    optimization, 2026-11-08 — most tasks can run fewer times
+    a day with no data loss): returns True at most once per
+    `hours` per key, stamped in chain_controls (the same table
+    the monthly-eval marker uses). Dry runs always pass and
+    never stamp, so a dry tick cannot eat the real slot."""
+    if dry_run:
+        return True
+    import time as _time
+    now = _time.time()
+    row = query(
+        "SELECT value FROM successbrian_os.chain_controls "
+        "WHERE key = %s;" % pq("hb_gate_" + key)).strip()
+    try:
+        last = float(row)
+    except Exception:
+        last = 0.0
+    if now - last < hours * 3600:
+        return False
+    exec_sql(
+        "INSERT INTO successbrian_os.chain_controls "
+        "(key, value, updated_at) VALUES (%s, %s, now()) "
+        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, "
+        "updated_at = now();" % (pq("hb_gate_" + key),
+                                  pq(str(int(now)))))
+    return True
+
+
 def queue_health_assessment(dry_run=False):
     n = 0
     for scope_key, brief, sql, _extra in load_scopes("ecosystem-health"):
@@ -882,11 +1025,11 @@ def queue_cleanup_assessment(dry_run=False):
 
 
 
-def judge_full_board_worthy(question, context):
-    """Sonic judges: is this important/valuable enough for the full 14-seat
-    board? Returns (worthy: bool, reason: str). The system figures it out."""
-    import json, urllib.request
-    prompt = (
+def build_board_judge_prompt(question, context):
+    """The full-board worthiness prompt — one text, two paths:
+    the direct Sonic call below, and the queued Morpheus job
+    (payload prompt) when BOARD_JUDGE_VIA_QUEUE is on."""
+    return (
         "You judge whether a decision facing Brian warrants his full 14-seat "
         "board of directors (14 separate deliberations — expensive, reserved "
         "for important and valuable decisions).\n\n"
@@ -899,20 +1042,80 @@ def judge_full_board_worthy(question, context):
         "QUESTION: %s\n\nCONTEXT: %s\n\n"
         "Reply EXACTLY: WORTHY: yes|no \n REASON: <one line>."
         % (question[:1500], (context or "")[:1500]))
+
+
+def parse_board_verdict(out):
+    """(worthy, reason) from a judge reply — shared by the
+    direct call and the queued-job consumer."""
+    worthy = "WORTHY: YES" in (out or "").upper()
+    reason = ""
+    for ln in (out or "").split("\n"):
+        if ln.strip().upper().startswith("REASON:"):
+            reason = ln.strip()[7:].strip()[:300]
+    return worthy, reason or "(no reason given)"
+
+
+def judge_full_board_worthy(question, context):
+    """Sonic judges: is this important/valuable enough for the full 14-seat
+    board? Returns (worthy: bool, reason: str). The system figures it out."""
+    # B23-1 (2026-11-20): fail fast when Sonic is hogged — a giant prompt
+    # in flight with no free slot means this 150-token call would queue
+    # behind it and burn its 120s timeout. Named busy reason, not a
+    # silent timeout; a probe failure falls through to the normal call.
+    try:
+        _slots = sbos_common.sonic_slot_status()
+        if sbos_common.sonic_hogged(_slots):
+            return False, (
+                "sonic busy: %d/%d slots free, largest prompt %d tokens "
+                "(task %s)" % (_slots["free"], _slots["total"],
+                               _slots["max_prompt_tokens"],
+                               _slots["largest_task"]))
+    except Exception:
+        pass
+    prompt = build_board_judge_prompt(question, context)
     try:
         # Batch A migration (2026-10-27): delegates to sbos_common.llm_chat.
         out, _usage = sbos_common.llm_chat(
             prompt, url=SONIC_URL, model="qwen-a3b",
             max_tokens=150, temperature=0.3, timeout=120)
-        worthy = "WORTHY: YES" in out.upper()
-        reason = ""
-        for ln in out.split("\n"):
-            if ln.strip().upper().startswith("REASON:"):
-                reason = ln.strip()[7:].strip()[:300]
-        return worthy, reason or "(no reason given)"
+        return parse_board_verdict(out)
     except Exception as e:
         print("full-board judgment failed (%s) — defaulting to no" % str(e)[:80])
         return False, "judge unavailable"
+
+
+def judge_worthy_via_queue(eid, question, context):
+    """Queued judge (BOARD_JUDGE_VIA_QUEUE): one Morpheus chat
+    job per escalation, verdict read back from the job result.
+    Returns (state, worthy, reason): state is 'verdict' when a
+    finished judgment exists, 'pending' when a job is queued/
+    claimed/failed (do not re-judge — the job row IS the memory
+    the direct path lacked), 'enqueued' when a new job was just
+    created. The caller treats anything but 'verdict' as not
+    (yet) worthy."""
+    rows = sbos_common.pg_rows(
+        "SELECT status, result FROM successbrian_os.morpheus_queue "
+        "WHERE kind = 'chat' AND source_ref = %s "
+        "AND created_at > now() - interval '24 hours' "
+        "ORDER BY id DESC LIMIT 1",
+        ("fb-judge:%s" % eid,))
+    if rows:
+        status, result_raw = rows[0]
+        if status == "done":
+            try:
+                text = json.loads(result_raw or "{}").get("text", "")
+            except Exception:
+                text = result_raw or ""
+            worthy, reason = parse_board_verdict(text)
+            return "verdict", worthy, reason
+        return "pending", False, "judge %s" % status
+    sbos_common.engine_job_enqueue(
+        "morpheus", "altair-heartbeat", "chat",
+        "Full-board worthiness: escalation #%s" % eid,
+        payload={"prompt": build_board_judge_prompt(question, context),
+                 "max_tokens": 150, "temperature": 0.3},
+        source_ref="fb-judge:%s" % eid)
+    return "enqueued", False, "judge job queued"
 
 
 def queue_full_boards(dry_run=False):
@@ -956,7 +1159,14 @@ def queue_full_boards(dry_run=False):
             if dry_run:
                 judged.append((eid, q, ctx, "", "p2 (judgment skipped in dry-run)"))
                 continue
-            worthy, reason = judge_full_board_worthy(q, ctx)
+            if BOARD_JUDGE_VIA_QUEUE:
+                state, worthy, reason = judge_worthy_via_queue(eid, q, ctx)
+                if state != "verdict":
+                    print("full-board judgment on escalation #%s: %s — %s"
+                          % (eid, state, reason[:100]))
+                    continue
+            else:
+                worthy, reason = judge_full_board_worthy(q, ctx)
             print("full-board judgment on escalation #%s: %s — %s"
                   % (eid, "WORTHY" if worthy else "not worthy", reason[:100]))
             if worthy:
@@ -1118,6 +1328,16 @@ def file_lyra_pulse(dry_run=False, metrics=None):
 
 def main():
     dry_run = "--dry-run" in sys.argv
+    # Decider loop (Brian, 2026-11-08): Altair's seat of the
+    # Altair/Meghan package machinery — claim + break down clerk
+    # pass-ups, review finished packages, vote. A decider
+    # failure must never break the heartbeat itself.
+    try:
+        sys.path.insert(0, "/home/successbrian/successbrian-os/tools")
+        import decider_lib
+        decider_lib.decider_step("altair", dry_run=dry_run)
+    except Exception as e:
+        print("decider step failed: %s" % str(e)[:150])
     prev_digest = consume_completed(dry_run)
     avail = get_availability()
     dry = not avail.get("usable")
@@ -1141,9 +1361,15 @@ def main():
                               dry_run, skip_ids=v4_ids)
     print("buffer: Sonic decomposed %d additional task(s)" % b)
     queue_deep_pass(tasks, prev_digest, dry_run)
-    queue_atlas_research(dry_run)
-    queue_cleanup_assessment(dry_run)
-    queue_health_assessment(dry_run)
+    # Cadence gates (Brian's heartbeat optimization, 2026-11-08):
+    # these producers carry 7-day scope cooldowns — evaluating
+    # them every tick buys nothing. Every 4 hours loses no data.
+    if tick_gate("atlas_research", 4, dry_run):
+        queue_atlas_research(dry_run)
+    if tick_gate("cleanup_assessment", 4, dry_run):
+        queue_cleanup_assessment(dry_run)
+    if tick_gate("health_assessment", 4, dry_run):
+        queue_health_assessment(dry_run)
     queue_full_boards(dry_run)
     queue_monthly_eval(dry_run)
     rethink_answered(dry_run)

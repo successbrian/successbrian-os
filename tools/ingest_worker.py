@@ -46,7 +46,7 @@ import re
 import socket
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 sys.path.insert(0, "/home/successbrian/successbrian-os/tools")
 import sbos_common  # noqa: E402
@@ -374,7 +374,38 @@ def serve_job(job, engine, url):
     return "done"
 
 
+STALE_CLAIM_MINUTES = 120  # a legitimate sweep tops out ~25 min
+
+
+def reap_stale_claims(older_than_minutes=STALE_CLAIM_MINUTES, conn=None):
+    """Release penny ingest jobs claimed longer than the bound.
+
+    2026-11-22 (row 51 verdict did_not_work): jobs 556/557 sat claimed
+    17h+ after their runs died without finishing -- no reaper existed,
+    so the claims (and their captures) were orphaned. A legitimate
+    sweep tops out at ~25 min (600s sweep + 600s gamma wait), so the
+    2h bound never releases a live run. Returns the released count.
+    When conn is given the caller owns the transaction (selftest
+    probe); otherwise the write commits immediately.
+    """
+    sql = (
+        "UPDATE successbrian_os.penny_queue SET status = 'queued', "
+        "claimed_by = NULL, claimed_at = NULL "
+        "WHERE status = 'claimed' AND kind = %s "
+        "AND claimed_at < now() - %s")
+    params = (KIND, timedelta(minutes=int(older_than_minutes)))
+    if conn is None:
+        return sbos_common.pg_exec(sql, params)
+    cur = conn.cursor()
+    cur.execute(sql, params)
+    return cur.rowcount
+
+
 def run(max_jobs=1):
+    reaped = reap_stale_claims()
+    if reaped:
+        print(f"ingest-worker: reaped {reaped} stale claim(s) "
+              f"(>{STALE_CLAIM_MINUTES}m)")
     engine = QUEUE
     url = ENGINE_URLS.get(QUEUE, sbos_common.MORPHEUS_URL)
     worker = f"ingest-worker@{HOST}"
@@ -437,6 +468,36 @@ def selftest():
     assert has_decisions(per_cap)
     p = build_prompt(kept[0])
     assert "CAPTURE #1" in p and "CAPTURE #3" not in p
+    # Stale-claim reaper probe: transactional, zero residue. One
+    # claim 3h old (must release), one claim fresh (must hold).
+    conn = sbos_common.connect()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO successbrian_os.penny_queue "
+            "(created_by, kind, title, payload, status, claimed_by, "
+            " claimed_at) VALUES "
+            "('selftest', 'ingest', 'SELFTEST stale claim', '{}', "
+            "'claimed', 'selftest', now() - interval '3 hours') "
+            "RETURNING id")
+        stale_id = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO successbrian_os.penny_queue "
+            "(created_by, kind, title, payload, status, claimed_by, "
+            " claimed_at) VALUES "
+            "('selftest', 'ingest', 'SELFTEST fresh claim', '{}', "
+            "'claimed', 'selftest', now()) RETURNING id")
+        fresh_id = cur.fetchone()[0]
+        assert reap_stale_claims(conn=conn) == 1
+        cur.execute("SELECT status FROM successbrian_os.penny_queue "
+                    "WHERE id = %s", (stale_id,))
+        assert cur.fetchone()[0] == "queued"
+        cur.execute("SELECT status FROM successbrian_os.penny_queue "
+                    "WHERE id = %s", (fresh_id,))
+        assert cur.fetchone()[0] == "claimed"
+        conn.rollback()
+    finally:
+        conn.close()
     print("INGEST_WORKER_OK")
     return 0
 
@@ -446,10 +507,16 @@ def main():
     ap.add_argument("--once", action="store_true",
                     help="claim up to --max jobs, then exit")
     ap.add_argument("--max", type=int, default=1)
+    ap.add_argument("--reap-stale", action="store_true",
+                    help="release stale claims, then exit")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
         return selftest()
+    if a.reap_stale:
+        print(f"ingest-worker: reaped "
+              f"{reap_stale_claims()} stale claim(s)")
+        return 0
     return run(max_jobs=a.max)
 
 

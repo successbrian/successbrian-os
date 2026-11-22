@@ -4,6 +4,14 @@
 -- into SuccessBrian OS, with lookalike/clone detection. Clean-room
 -- implementation; new tables only. Existing tables are never altered.
 -- State home (R32): PostgreSQL, database people_unified, schema people.
+--
+-- 2026-11-22 upgrade (Brian: "upgrade successbrian os code", from the
+-- Heather Oscarson worked example): per-field claims with graded
+-- confidence + contradiction flagging, family-cluster evidence,
+-- a public-records lane, a searched-not-found search log, and the
+-- work-email domain bridge. New tables only, plus ONE additive
+-- column on this module's own identity_people table, following the
+-- breadth-column precedent above.
 
 CREATE SCHEMA IF NOT EXISTS people;
 
@@ -158,3 +166,89 @@ CREATE TABLE IF NOT EXISTS people.identity_life_events (
 
 CREATE INDEX IF NOT EXISTS idx_identity_life_events_profile_time
     ON people.identity_life_events (profile_id, detected_at DESC);
+
+-- ---------------------------------------------------------------
+-- 2026-11-22 upgrade: claims / public records / search log
+-- ---------------------------------------------------------------
+
+-- Public-record breadth for people with NO social profiles
+-- (Heather Oscarson: profile_count 0, yet fully researchable).
+-- Derived count, maintained by identity_resolution.py; this
+-- module's own table only, additive ALTER per the precedent above.
+ALTER TABLE people.identity_people
+    ADD COLUMN IF NOT EXISTS public_record_count INT NOT NULL DEFAULT 0;
+
+-- Per-field claims: a fact is a claim with a source and a grade,
+-- never a silent overwrite. A new claim supersedes an old one
+-- (the old row stays, status='superseded'); two ACTIVE claims
+-- with materially different values from different source kinds
+-- are flagged 'contradicted' — the contradiction IS the data
+-- (Heather: aggregator marital_status 'single' vs primary-source
+-- joint naming as a married couple).
+CREATE TABLE IF NOT EXISTS people.identity_field_claims (
+    id           BIGSERIAL PRIMARY KEY,
+    person_id    BIGINT NOT NULL REFERENCES people.identity_people(id)
+                 ON DELETE CASCADE,
+    field_name   TEXT NOT NULL,
+    value_text   TEXT,
+    value_json   JSONB,
+    source_kind  TEXT NOT NULL CHECK (source_kind IN (
+                     'primary_document', 'official_record',
+                     'aggregator', 'self_reported', 'brian',
+                     'agent_research', 'inferred')),
+    source_ref   TEXT,
+    grade        TEXT NOT NULL DEFAULT 'unknown'
+                 CHECK (grade IN ('high', 'medium', 'low', 'unknown')),
+    confidence   NUMERIC(4, 3),
+    status       TEXT NOT NULL DEFAULT 'active'
+                 CHECK (status IN ('active', 'superseded',
+                                   'contradicted')),
+    captured_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_identity_field_claims_person_field
+    ON people.identity_field_claims (person_id, field_name);
+CREATE INDEX IF NOT EXISTS idx_identity_field_claims_status
+    ON people.identity_field_claims (status);
+
+-- Public-records lane: board minutes, obituaries, licences and
+-- the like — the evidence trail for low-profile people whom
+-- social-first enrichment cannot see.
+CREATE TABLE IF NOT EXISTS people.identity_public_records (
+    id          BIGSERIAL PRIMARY KEY,
+    person_id   BIGINT NOT NULL REFERENCES people.identity_people(id)
+                ON DELETE CASCADE,
+    record_type TEXT NOT NULL CHECK (record_type IN (
+                    'board_minutes', 'obituary', 'licence', 'court',
+                    'marriage_index', 'property', 'aggregator_profile',
+                    'resume_scrape', 'other')),
+    source_url  TEXT,
+    summary     TEXT,
+    is_primary  BOOLEAN NOT NULL DEFAULT FALSE,
+    captured_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_identity_public_records_person
+    ON people.identity_public_records (person_id);
+
+-- Searched-not-found is a STATE (Brian's law: not knowing is not
+-- the same as not). 'blocked' is its own result — a bot-walled
+-- source (MOMS, 2026-11-22) is NOT a not_found and must never be
+-- recorded as one.
+CREATE TABLE IF NOT EXISTS people.identity_search_log (
+    id           BIGSERIAL PRIMARY KEY,
+    person_id    BIGINT REFERENCES people.identity_people(id)
+                 ON DELETE CASCADE,
+    subject_name TEXT,
+    source_name  TEXT NOT NULL,
+    query        TEXT,
+    result       TEXT NOT NULL CHECK (result IN (
+                     'found', 'not_found', 'blocked')),
+    checked_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    note         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_identity_search_log_person
+    ON people.identity_search_log (person_id);
+CREATE INDEX IF NOT EXISTS idx_identity_search_log_subject
+    ON people.identity_search_log (subject_name);

@@ -30,8 +30,12 @@ CALLED BY: agents and the friend-vetting daily run, from the repo
     tree: python3 tools/ecosystem_intel/identity_resolution.py <flag>
     State lives in PostgreSQL database people_unified, schema people,
     tables identity_people / identity_profiles / identity_matches /
-    identity_bio_snapshots / identity_life_events (NEW tables only;
-    no existing table is altered). DB access goes through
+    identity_bio_snapshots / identity_life_events, plus the
+    2026-11-22 upgrade tables identity_field_claims /
+    identity_public_records / identity_search_log (NEW tables only;
+    no existing table is altered — the one additive column,
+    identity_people.public_record_count, follows this module's
+    own breadth-column precedent). DB access goes through
     sbos_common with an explicit dbname="people_unified".
 
 NOTES:
@@ -100,6 +104,22 @@ NOTES:
       later upgrade, not a silent assumption.
     - UNKNOWN stays UNKNOWN: a signal with no data is recorded as
       UNKNOWN in the evidence, never as a negative.
+    - Per-field claims (2026-11-22, Heather Oscarson worked
+      example): a fact is a claim with a source kind and a grade,
+      never a silent overwrite — a new claim supersedes, the old
+      stays; two live claims for one field with different values
+      from different source kinds are flagged CONTRADICTED (the
+      contradiction IS the data). A work-email claim bridges to
+      an INFERRED employer_domain claim (grade low) — a domain
+      pointer, never confirmed employment. The public-records
+      lane (board minutes, obituaries, licences) covers people
+      with zero social profiles; public_record_count is their
+      breadth analogue. Searched-not-found is a logged STATE:
+      identity_search_log keeps 'blocked' (a bot-walled source)
+      distinct from 'not_found' — not knowing is not the same
+      as not. Pending matches render WITH their family cluster
+      (shared relatives / addresses from claims) so Brian rules
+      on recognition, not on a bare-name memory test.
 
 CLI:
     python3 identity_resolution.py --init-schema
@@ -108,6 +128,8 @@ CLI:
     python3 identity_resolution.py --queue
     python3 identity_resolution.py --stats
     python3 identity_resolution.py --selftest
+    python3 identity_resolution.py --match-context <match_id>
+    python3 identity_resolution.py --seed-heather
     python3 identity_resolution.py --backfill-profile-urls
     python3 identity_resolution.py --rule-same <profile_id> <profile_id>
     python3 identity_resolution.py --rule-different <profile_id> <profile_id>
@@ -242,7 +264,10 @@ def init_schema():
         conn.close()
     print("schema applied: people.identity_people, "
           "people.identity_profiles, people.identity_matches, "
-          "people.identity_bio_snapshots, people.identity_life_events")
+          "people.identity_bio_snapshots, people.identity_life_events, "
+          "people.identity_field_claims, "
+          "people.identity_public_records, "
+          "people.identity_search_log")
 
 
 # ------------------------------------------------------- normalization
@@ -2261,8 +2286,10 @@ def show_queue():
         print()
         cur.execute(
             "SELECT m.*, pa.platform AS pa_platform, pa.handle AS pa_handle,"
-            " pa.display_name AS pa_name, pb.platform AS pb_platform,"
-            " pb.handle AS pb_handle, pb.display_name AS pb_name "
+            " pa.display_name AS pa_name, pa.person_id AS pa_person,"
+            " pb.platform AS pb_platform,"
+            " pb.handle AS pb_handle, pb.display_name AS pb_name, "
+            "pb.person_id AS pb_person "
             "FROM people.identity_matches m "
             "JOIN people.identity_profiles pa ON pa.id = m.profile_a_id "
             "JOIN people.identity_profiles pb ON pb.id = m.profile_b_id "
@@ -2286,6 +2313,32 @@ def show_queue():
                   f"({row['pa_name']}) <-> {row['pb_platform']} "
                   f"@{row['pb_handle']} ({row['pb_name']}) — {evidence}"
                   f"{miss_txt}")
+            # Ask with context (Brian's rule): when a family
+            # cluster is on record (stored in signals, or
+            # computable from both anchors' claims), the pending
+            # pair is rendered with it — never as two bare
+            # handles and a score. Pairs with no cluster data
+            # print as before (UNKNOWN stays UNKNOWN).
+            try:
+                cluster = signals.get("family_cluster")
+                if cluster is None and row.get("pa_person") \
+                        and row.get("pb_person"):
+                    cluster = compute_family_cluster(
+                        cur, row["pa_person"], row["pb_person"])
+                if cluster and (cluster.get("shared_relatives")
+                                or cluster.get(
+                                    "shared_addresses")):
+                    rel_txt = ", ".join(
+                        cluster["shared_relatives"]
+                    ) or "none on record"
+                    addr_txt = ", ".join(
+                        cluster["shared_addresses"]
+                    ) or "none on record"
+                    print("      family cluster — shared "
+                          f"relatives: {rel_txt}; shared "
+                          f"addresses: {addr_txt}")
+            except Exception:  # noqa: BLE001 — context is additive
+                pass
         cur.execute(
             "SELECT m.*, pa.platform AS pa_platform, pa.handle AS pa_handle,"
             " pa.display_name AS pa_name, pb.platform AS pb_platform,"
@@ -3338,6 +3391,808 @@ def _selftest_evidence_import(ck):
     ck("evidence-import fixtures cleaned up", bool(profile_ids))
 
 
+# ------------------------------------------- 2026-11-22 upgrade
+# Per-field claims with graded confidence, family-cluster
+# evidence, the public-records lane, the searched-not-found
+# search log, and the work-email domain bridge. All five parts
+# come from one worked example (Brian, 2026-11-22): Heather
+# Oscarson — profile_count 0, no social profiles, no photo, yet
+# fully researchable through public records; aggregator fields
+# that contradicted each other; identity settled by the family
+# cluster (mother Mary of Plymouth + sisters Hollie and Heidi),
+# confirmed by Brian, not by name alone (three Heather
+# Oscarsons exist nationally).
+
+FREEMAIL_DOMAINS = GENERIC_EMAIL_DOMAINS | {
+    "ymail.com", "rocketmail.com", "hotmail.co.uk", "live.co.uk",
+    "googlemail.com", "fastmail.com", "tutanota.com",
+    "yahoo.co.uk", "att.net", "sbcglobal.net", "verizon.net",
+    "comcast.net", "cox.net", "charter.net", "earthlink.net",
+}
+
+CLAIM_SOURCE_KINDS = {
+    "primary_document", "official_record", "aggregator",
+    "self_reported", "brian", "agent_research", "inferred",
+}
+
+PUBLIC_RECORD_TYPES = {
+    "board_minutes", "obituary", "licence", "court",
+    "marriage_index", "property", "aggregator_profile",
+    "resume_scrape", "other",
+}
+
+SEARCH_RESULTS = {"found", "not_found", "blocked"}
+
+RELATIVE_FIELDS = ("relative", "mother", "father", "sister",
+                   "brother", "spouse", "child", "family_member")
+ADDRESS_FIELDS = ("address_city", "address", "residence",
+                  "city_history")
+
+
+def classify_email_domain(email):
+    """Classify an email address's domain: freemail vs work.
+
+    Returns {"domain", "kind", "organisation"} where kind is
+    'freemail', 'work', or 'unknown' (no usable domain). The
+    organisation for a work domain is a label derived from the
+    domain stem — an INFERRED pointer at the organisation the
+    domain names, never a confirmed employer."""
+    if not email or "@" not in str(email):
+        return {"domain": None, "kind": "unknown",
+                "organisation": None}
+    domain = str(email).strip().lower().rsplit("@", 1)[-1]
+    domain = domain.strip().strip(".")
+    if not domain or "." not in domain:
+        return {"domain": domain or None, "kind": "unknown",
+                "organisation": None}
+    if domain in FREEMAIL_DOMAINS:
+        return {"domain": domain, "kind": "freemail",
+                "organisation": None}
+    stem = domain.split(".")[0]
+    organisation = stem.replace("-", " ").replace("_", " ").title()
+    return {"domain": domain, "kind": "work",
+            "organisation": organisation}
+
+
+def _claim_value(claim):
+    """The comparable value of a claim row/dict: JSON value when
+    present, else the text value."""
+    if claim.get("value_json") is not None:
+        return claim["value_json"]
+    return claim.get("value_text")
+
+
+def _norm_claim_value(value):
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, sort_keys=True).lower()
+    if value is None:
+        return ""
+    return re.sub(r"\s+", " ", str(value).strip().lower())
+
+
+def find_contradictions(claims):
+    """Pure: pairs of live claims (status active/contradicted)
+    for the same field whose normalised values differ AND whose
+    source kinds differ. Same-source disagreement is a data
+    refresh, not a contradiction; cross-source disagreement is
+    the signal (Heather: aggregator 'single' vs primary-document
+    married-style joint naming). Returns [(claim_a, claim_b)]."""
+    pairs = []
+    live = [c for c in claims
+            if c.get("status", "active") in ("active", "contradicted")]
+    for i, a in enumerate(live):
+        for b in live[i + 1:]:
+            if a.get("field_name") != b.get("field_name"):
+                continue
+            if a.get("source_kind") == b.get("source_kind"):
+                continue
+            if (_norm_claim_value(_claim_value(a))
+                    != _norm_claim_value(_claim_value(b))):
+                pairs.append((a, b))
+    return pairs
+
+
+def add_field_claim(conn, person_id, field_name, value,
+                    source_kind, source_ref=None, grade="unknown",
+                    confidence=None, supersedes=None,
+                    employer_org=None):
+    """Append a claim; never overwrite. With supersedes=<claim
+    id>, that claim is marked 'superseded' (and stays). After the
+    insert, live cross-source contradictions on this field are
+    flagged. An 'email' claim on a work domain also creates the
+    derived 'employer_domain' claim (source_kind='inferred',
+    grade='low') — the bridge from a work email to the
+    organisation its domain names. That derived claim is an
+    inferred pointer only; this code never upgrades it to
+    confirmed employment.
+    Returns {"claim_id", "employer_claim_id" (or None),
+             "contradictions": [(id_a, id_b), ...]}."""
+    if source_kind not in CLAIM_SOURCE_KINDS:
+        raise ValueError(f"unknown source_kind: {source_kind}")
+    cur = conn.cursor()
+    if isinstance(value, (dict, list)):
+        value_text, value_json = None, json.dumps(value)
+    else:
+        value_text, value_json = (None if value is None
+                                  else str(value)), None
+    cur.execute(
+        "INSERT INTO people.identity_field_claims "
+        "(person_id, field_name, value_text, value_json, "
+        "source_kind, source_ref, grade, confidence) VALUES "
+        "(%s, %s, %s, %s::jsonb, %s, %s, %s, %s) RETURNING id",
+        (person_id, field_name, value_text, value_json,
+         source_kind, source_ref, grade, confidence))
+    claim_id = cur.fetchone()[0]
+    if supersedes:
+        cur.execute(
+            "UPDATE people.identity_field_claims SET "
+            "status='superseded' WHERE id=%s AND person_id=%s "
+            "AND status='active'", (supersedes, person_id))
+    flagged = flag_field_contradictions(cur, person_id, field_name)
+    employer_claim_id = None
+    if field_name == "email" and value_text:
+        info = classify_email_domain(value_text)
+        if info["kind"] == "work":
+            cur.execute(
+                "SELECT id FROM people.identity_field_claims "
+                "WHERE person_id=%s AND "
+                "field_name='employer_domain' AND "
+                "status IN ('active', 'contradicted') AND "
+                "value_json->>'domain'=%s",
+                (person_id, info["domain"]))
+            if cur.fetchone() is None:
+                derived = {
+                    "domain": info["domain"],
+                    "organisation": employer_org
+                    or info["organisation"],
+                    "derived_from_claim": claim_id,
+                    "note": "work-email domain pointer only — "
+                            "NOT confirmed employment",
+                }
+                cur.execute(
+                    "INSERT INTO people.identity_field_claims "
+                    "(person_id, field_name, value_text, "
+                    "value_json, source_kind, source_ref, grade) "
+                    "VALUES (%s, 'employer_domain', %s, "
+                    "%s::jsonb, 'inferred', %s, 'low') "
+                    "RETURNING id",
+                    (person_id, info["domain"],
+                     json.dumps(derived),
+                     f"derived from email claim #{claim_id}"))
+                employer_claim_id = cur.fetchone()[0]
+    conn.commit()
+    return {"claim_id": claim_id,
+            "employer_claim_id": employer_claim_id,
+            "contradictions": flagged}
+
+
+def flag_field_contradictions(cur, person_id, field_name=None):
+    """Flag live cross-source contradictions as 'contradicted'
+    instead of letting one value silently win. Returns the list
+    of (id_a, id_b) pairs flagged."""
+    sql = ("SELECT id, field_name, value_text, value_json, "
+           "source_kind, status FROM "
+           "people.identity_field_claims WHERE person_id=%s "
+           "AND status IN ('active', 'contradicted')")
+    params = [person_id]
+    if field_name:
+        sql += " AND field_name=%s"
+        params.append(field_name)
+    cur.execute(sql, tuple(params))
+    cols = [d[0] for d in cur.description]
+    claims = [dict(zip(cols, row)) for row in cur.fetchall()]
+    flagged = []
+    for a, b in find_contradictions(claims):
+        for claim in (a, b):
+            if claim["status"] != "contradicted":
+                cur.execute(
+                    "UPDATE people.identity_field_claims SET "
+                    "status='contradicted' WHERE id=%s",
+                    (claim["id"],))
+        flagged.append((a["id"], b["id"]))
+    return flagged
+
+
+def _claim_name_set(claims, fields):
+    names = set()
+    for claim in claims:
+        if claim.get("field_name") in fields:
+            value = _claim_value(claim)
+            if isinstance(value, dict):
+                value = value.get("name") or value.get("value")
+            if value:
+                names.add(str(value))
+    return names
+
+
+def family_cluster_from_claims(claims_a, claims_b):
+    """Pure: the family-cluster overlap between two claim sets —
+    shared relatives, shared addresses/cities, and household
+    members (shared relatives, when the pair also shares an
+    address, are household evidence, not just kinship)."""
+    rel_a = _claim_name_set(claims_a, RELATIVE_FIELDS)
+    rel_b = _claim_name_set(claims_b, RELATIVE_FIELDS)
+    addr_a = _claim_name_set(claims_a, ADDRESS_FIELDS)
+    addr_b = _claim_name_set(claims_b, ADDRESS_FIELDS)
+    shared_relatives = sorted(rel_a & rel_b)
+    shared_addresses = sorted(addr_a & addr_b)
+    household = shared_relatives if shared_addresses else []
+    return {"shared_relatives": shared_relatives,
+            "shared_addresses": shared_addresses,
+            "shared_household_members": household,
+            "relatives_a": sorted(rel_a),
+            "relatives_b": sorted(rel_b),
+            "addresses_a": sorted(addr_a),
+            "addresses_b": sorted(addr_b)}
+
+
+def _person_claims(cur, person_id):
+    cur.execute(
+        "SELECT field_name, value_text, value_json, source_kind, "
+        "status FROM people.identity_field_claims "
+        "WHERE person_id=%s AND status IN ('active', "
+        "'contradicted')", (person_id,))
+    cols = [d[0] for d in cur.description]
+    return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def compute_family_cluster(cur, person_id, other_person_id=None,
+                           other_claims=None):
+    """DB: family-cluster evidence for a candidate pair — a
+    person vs another identity_people row, or vs a loose claim
+    set (e.g. a public-records namesake who has no row yet)."""
+    claims_a = _person_claims(cur, person_id)
+    if other_person_id is not None:
+        claims_b = _person_claims(cur, other_person_id)
+    else:
+        claims_b = list(other_claims or [])
+    return family_cluster_from_claims(claims_a, claims_b)
+
+
+def attach_family_cluster(cur, match_id, cluster):
+    """Store a computed cluster in a match's signals JSONB under
+    'family_cluster', preserving every other signal."""
+    cur.execute(
+        "UPDATE people.identity_matches SET signals = "
+        "jsonb_set(COALESCE(signals, '{}'::jsonb), "
+        "'{family_cluster}', %s::jsonb), updated_at=now() "
+        "WHERE id=%s",
+        (json.dumps(cluster), match_id))
+
+
+def render_pending_match_context(cur, match_id):
+    """Render a pending-review match WITH its cluster context:
+    both profiles, both anchors, the shared relatives and
+    addresses — Brian rules on recognition, not on a bare-name
+    memory test (his rule: ask with context)."""
+    cur.execute(
+        "SELECT m.id, m.score, m.grade, m.signals, "
+        "pa.platform AS pa_platform, pa.handle AS pa_handle, "
+        "pa.display_name AS pa_name, pa.person_id AS pa_person, "
+        "pb.platform AS pb_platform, pb.handle AS pb_handle, "
+        "pb.display_name AS pb_name, pb.person_id AS pb_person "
+        "FROM people.identity_matches m "
+        "JOIN people.identity_profiles pa ON pa.id=m.profile_a_id "
+        "JOIN people.identity_profiles pb ON pb.id=m.profile_b_id "
+        "WHERE m.id=%s", (match_id,))
+    row = cur.fetchone()
+    if row is None:
+        return f"match {match_id}: UNKNOWN (no such match)"
+    cols = [d[0] for d in cur.description]
+    match = dict(zip(cols, row))
+    signals = match.get("signals") or {}
+    if isinstance(signals, str):
+        signals = json.loads(signals)
+    cluster = signals.get("family_cluster")
+    lines = [
+        f"match [{match['id']}] score {match['score']} "
+        f"{match['grade']}:",
+        f"  A: {match['pa_platform']} "
+        f"@{match['pa_handle'] or 'no-handle'} "
+        f"({match['pa_name'] or 'UNKNOWN name'})",
+        f"  B: {match['pb_platform']} "
+        f"@{match['pb_handle'] or 'no-handle'} "
+        f"({match['pb_name'] or 'UNKNOWN name'})",
+    ]
+    for side, key in (("A", "pa_person"), ("B", "pb_person")):
+        person_id = match.get(key)
+        if not person_id:
+            lines.append(f"  {side} anchor: UNKNOWN (profile not "
+                         f"linked to a person)")
+            continue
+        cur.execute("SELECT display_name FROM "
+                    "people.identity_people WHERE id=%s",
+                    (person_id,))
+        prow = cur.fetchone()
+        claims = _person_claims(cur, person_id)
+        rels = _claim_name_set(claims, RELATIVE_FIELDS)
+        addrs = _claim_name_set(claims, ADDRESS_FIELDS)
+        lines.append(
+            f"  {side} anchor: "
+            f"{prow[0] if prow else 'UNKNOWN'} — relatives: "
+            f"{', '.join(sorted(rels)) or 'UNKNOWN'}; addresses: "
+            f"{', '.join(sorted(addrs)) or 'UNKNOWN'}")
+    if cluster is None and match.get("pa_person") \
+            and match.get("pb_person"):
+        cluster = compute_family_cluster(
+            cur, match["pa_person"], match["pb_person"])
+    if cluster:
+        rel_txt = ", ".join(cluster.get('shared_relatives')
+                            or []) or "none on record"
+        addr_txt = ", ".join(cluster.get('shared_addresses')
+                             or []) or "none on record"
+        hh_txt = ", ".join(
+            cluster.get('shared_household_members')
+            or []) or "none on record"
+        lines.append(
+            f"  family cluster — shared relatives: {rel_txt}; "
+            f"shared addresses: {addr_txt}; shared household "
+            f"members: {hh_txt}")
+    else:
+        lines.append("  family cluster: UNKNOWN (no claim sets "
+                     "on either side yet)")
+    return "\n".join(lines)
+
+
+def recompute_public_record_count(cur, person_id):
+    cur.execute(
+        "SELECT count(*) FROM people.identity_public_records "
+        "WHERE person_id=%s", (person_id,))
+    count = cur.fetchone()[0]
+    cur.execute(
+        "UPDATE people.identity_people SET "
+        "public_record_count=%s, updated_at=now() WHERE id=%s",
+        (count, person_id))
+    return count
+
+
+def attach_public_record(conn, person_id, record_type,
+                         source_url=None, summary=None,
+                         is_primary=False):
+    """Attach one public record and bump the derived
+    public_record_count on the person."""
+    if record_type not in PUBLIC_RECORD_TYPES:
+        raise ValueError(f"unknown record_type: {record_type}")
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO people.identity_public_records "
+        "(person_id, record_type, source_url, summary, "
+        "is_primary) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+        (person_id, record_type, source_url, summary,
+         bool(is_primary)))
+    record_id = cur.fetchone()[0]
+    count = recompute_public_record_count(cur, person_id)
+    conn.commit()
+    return {"record_id": record_id,
+            "public_record_count": count}
+
+
+def log_search(conn, subject_name, source_name, query, result,
+               person_id=None, note=None):
+    """Record that a source was searched and what came back.
+    'blocked' is a first-class result: a bot-walled source is
+    not a not_found (Brian's law: not knowing != not)."""
+    if result not in SEARCH_RESULTS:
+        raise ValueError(f"unknown search result: {result}")
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO people.identity_search_log "
+        "(person_id, subject_name, source_name, query, result, "
+        "note) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+        (person_id, subject_name, source_name, query, result,
+         note))
+    row_id = cur.fetchone()[0]
+    conn.commit()
+    return row_id
+
+
+def seed_heather_oscarson(conn):
+    """Seed the first live public-records case: Heather
+    Oscarson (Brian confirmed the identity cluster 2026-11-22 —
+    mother Mary of Plymouth MN, sisters Hollie and Heidi).
+    Idempotent: reuses the person row and skips claims /
+    records / log rows already present. Seed discipline follows
+    the published page: NO street addresses, NO phone numbers,
+    NO exact birth date — month/year and city level only."""
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id FROM people.identity_people WHERE "
+        "name_norm=%s ORDER BY id LIMIT 1",
+        (normalize_name("Heather Oscarson"),))
+    row = cur.fetchone()
+    if row:
+        person_id = row[0]
+        cur.execute(
+            "UPDATE people.identity_people SET "
+            "brian_confirmed=TRUE, updated_at=now() WHERE id=%s",
+            (person_id,))
+        conn.commit()
+    else:
+        cur.execute(
+            "INSERT INTO people.identity_people "
+            "(display_name, name_norm, brian_confirmed, notes) "
+            "VALUES (%s, %s, TRUE, %s) RETURNING id",
+            ("Heather Oscarson",
+             normalize_name("Heather Oscarson"),
+             "Public-records identity case seeded 2026-11-22. "
+             "Brian confirmed the family cluster (mother Mary, "
+             "Plymouth MN; sisters Hollie and Heidi) on "
+             "2026-11-22. Source: Heather Oscarson deep-dig "
+             "report, 2026-11-22. profile_count 0 — researchable "
+             "only through the public-records lane."))
+        person_id = cur.fetchone()[0]
+        conn.commit()
+
+    def _claim_exists(field, value_text, source_kind):
+        cur.execute(
+            "SELECT id FROM people.identity_field_claims WHERE "
+            "person_id=%s AND field_name=%s AND value_text=%s "
+            "AND source_kind=%s AND status IN ('active', "
+            "'contradicted') LIMIT 1",
+            (person_id, field, value_text, source_kind))
+        return cur.fetchone() is not None
+
+    nuwber = "https://nuwber.com/person/563aa63ba219445d52e36c63"
+    claims = [
+        ("birth_period", "1974-05", "aggregator", nuwber, "low"),
+        ("alias", "Heather Ann Kapas", "aggregator",
+         "https://unmask.com/address/8420-Fremont-Avenue-S--"
+         "Minneapolis-MN-55420/", "medium"),
+        ("marital_status", "single", "aggregator", nuwber,
+         "low"),
+        ("marital_status", "married_or_partnered",
+         "primary_document",
+         "https://meetings.boardbook.org/public/Projector/"
+         "2488?meeting=514332", "medium"),
+        ("spouse", "Robert Craig Kapas", "aggregator",
+         "https://radaris.com/p/Robert/Kapas/", "medium"),
+        ("co_residence",
+         "St. Paul Park, MN (shared with Robert C. Kapas)",
+         "aggregator", nuwber, "low"),
+        ("occupation",
+         "Customer Technical Service Representative II, "
+         "Thomson Reuters Westlaw, Eagan (since Jun 2012)",
+         "self_reported",
+         "https://trustoria.com/doctor/Optician/"
+         "Minneapolis-MN-4", "medium"),
+        ("occupation",
+         "Life Fulfillment Counselor, WOLF Inc., Cottage "
+         "Grove (since Mar 2006)", "self_reported",
+         "https://trustoria.com/doctor/Optician/"
+         "Minneapolis-MN-4", "medium"),
+        ("relative", "Mary C. Oscarson (mother)", "brian",
+         "Brian confirmed 2026-11-22: mother named Mary, "
+         "lived in Plymouth, MN", "high"),
+        ("relative", "Hollie Wolfgram, nee Oscarson (sister)",
+         "brian",
+         "Brian confirmed 2026-11-22: the Hollie/Heidi/Heather "
+         "combo matches his memory", "high"),
+        ("relative", "Heidi Lenzen, nee Oscarson (sister)",
+         "brian",
+         "Brian confirmed 2026-11-22: the Hollie/Heidi/Heather "
+         "combo matches his memory", "high"),
+        ("address_city", "Plymouth, MN", "aggregator",
+         "https://www.simplecontacts.com/profile/"
+         "George-Distor-7ae0b3c", "medium"),
+        ("address_city", "Minneapolis, MN", "aggregator",
+         nuwber, "medium"),
+        ("address_city", "Eagan / St. Paul, MN", "aggregator",
+         nuwber, "low"),
+        ("address_city", "St. Paul Park, MN", "aggregator",
+         nuwber, "medium"),
+        ("child", "Jay (son; full name and father unknown)",
+         "primary_document",
+         "https://www.dignitymemorial.com/obituaries/"
+         "woodbury-mn/jeffrey-kubitschek-10190140", "medium"),
+    ]
+    added = 0
+    for field, value, kind, ref, grade in claims:
+        if not _claim_exists(field, value, kind):
+            add_field_claim(conn, person_id, field, value, kind,
+                            source_ref=ref, grade=grade)
+            added += 1
+    # The work-email claim goes last: it fires the inferred
+    # employer_domain bridge (Park Nicollet — inferred only,
+    # never confirmed employment).
+    if not _claim_exists("email", "oscarh@parknicollet.com",
+                         "aggregator"):
+        add_field_claim(
+            conn, person_id, "email", "oscarh@parknicollet.com",
+            "aggregator",
+            source_ref="https://unmask.com/address/"
+                       "8420-Fremont-Avenue-S--Minneapolis-MN-"
+                       "55420/",
+            grade="low", employer_org="Park Nicollet")
+        added += 1
+
+    records = [
+        ("board_minutes",
+         "https://meetings.boardbook.org/public/Projector/"
+         "2488?meeting=514332",
+         "NE Metro 916 board minutes, 2022-02-02: Automotive "
+         "Technology received a 2004 Pontiac Montana from "
+         "Robert and Heather Kapas.", True),
+        ("obituary",
+         "https://www.dignitymemorial.com/obituaries/"
+         "woodbury-mn/jeffrey-kubitschek-10190140",
+         "Jeffrey Kubitschek obituary (Wulff Woodbury): WOLF "
+         "Inc/ESR staff Heather Kapas (and son Jay), Rob Kapas.",
+         True),
+        ("resume_scrape",
+         "https://trustoria.com/doctor/Optician/"
+         "Minneapolis-MN-4",
+         "Scraped LinkedIn resume republished by Trustoria: "
+         "Thomson Reuters Westlaw (2012-), WOLF Inc. (2006-), "
+         "Luxottica optician (earlier). Self-reported, not "
+         "employer-verified.", False),
+        ("aggregator_profile", nuwber,
+         "Aggregator profile: Heather A. Oscarson, b. May 1974, "
+         "Plymouth to St. Paul Park address history, alias "
+         "Kapas, relatives Mary/Hollie/Heidi.", False),
+    ]
+    records_added = 0
+    for rtype, url, summary, primary in records:
+        cur.execute(
+            "SELECT id FROM people.identity_public_records "
+            "WHERE person_id=%s AND record_type=%s AND "
+            "source_url=%s LIMIT 1", (person_id, rtype, url))
+        if cur.fetchone() is None:
+            attach_public_record(conn, person_id, rtype,
+                                 source_url=url, summary=summary,
+                                 is_primary=primary)
+            records_added += 1
+
+    searches = [
+        ("Minnesota Official Marriage System (MOMS)",
+         "Kapas / Oscarson marriage search", "blocked",
+         "Cloudflare bot challenge, 2026-11-22. Blocked is NOT "
+         "not_found: no MOMS record must NOT be claimed."),
+        ("Facebook profile search",
+         "Heather Oscarson / Heather Kapas, Minnesota",
+         "not_found",
+         "No identifiable public profile found in index "
+         "searches, 2026-11-22. Unknown, not 'she has none'."),
+        ("Image search",
+         "Heather Oscarson / Heather Kapas, Minnesota",
+         "not_found",
+         "Results were unrelated Heathers; no identifiable "
+         "image of her, 2026-11-22."),
+    ]
+    searches_added = 0
+    for source_name, query, result, note in searches:
+        cur.execute(
+            "SELECT id FROM people.identity_search_log WHERE "
+            "person_id=%s AND source_name=%s LIMIT 1",
+            (person_id, source_name))
+        if cur.fetchone() is None:
+            log_search(conn, "Heather Oscarson", source_name,
+                       query, result, person_id=person_id,
+                       note=note)
+            searches_added += 1
+    count = recompute_public_record_count(cur, person_id)
+    conn.commit()
+    print(f"seeded Heather Oscarson: person_id={person_id}, "
+          f"claims added={added}, records added={records_added} "
+          f"(public_record_count={count}), search-log rows "
+          f"added={searches_added}")
+    return person_id
+
+
+def _selftest_claims_records(ck):
+    """DB fixture round-trip for the 2026-11-22 upgrade.
+
+    Creates two throwaway people, exercises all five parts
+    (claims + contradiction flagging + supersede, family
+    cluster, public records, search log, email-domain bridge),
+    then deletes every fixture row. Follows the ecosystem
+    pattern: selftest rows are created, exercised, and cleaned
+    in the same pass."""
+    person_ids = []
+    profile_ids = []
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        for name in ("Fixture Claims Person",
+                     "Fixture Cluster Person"):
+            cur.execute(
+                "INSERT INTO people.identity_people "
+                "(display_name, name_norm) VALUES (%s, %s) "
+                "RETURNING id",
+                (name, normalize_name(name)))
+            person_ids.append(cur.fetchone()[0])
+        conn.commit()
+        pa, pb = person_ids
+
+        # Pure contradiction finder + email classification.
+        ck("pure: cross-source differing values contradict, "
+           "same-source do not",
+           len(find_contradictions([
+               {"field_name": "marital_status",
+                "value_text": "single",
+                "source_kind": "aggregator", "status": "active"},
+               {"field_name": "marital_status",
+                "value_text": "married",
+                "source_kind": "primary_document",
+                "status": "active"}])) == 1
+           and find_contradictions([
+               {"field_name": "marital_status",
+                "value_text": "single",
+                "source_kind": "aggregator", "status": "active"},
+               {"field_name": "marital_status",
+                "value_text": "married",
+                "source_kind": "aggregator",
+                "status": "active"}]) == [])
+        ck("email domain: work vs freemail classification",
+           classify_email_domain("oscarh@parknicollet.com")
+           ["kind"] == "work"
+           and classify_email_domain("someone@gmail.com")
+           ["kind"] == "freemail"
+           and classify_email_domain("not-an-email")["kind"]
+           == "unknown")
+
+        # Part 5: work-email bridge creates an INFERRED
+        # employer_domain claim, never a confirmed one;
+        # freemail creates none.
+        work = add_field_claim(
+            conn, pa, "email", "fixture@northwind-clinic.org",
+            "aggregator", grade="low")
+        cur.execute(
+            "SELECT source_kind, grade, value_json FROM "
+            "people.identity_field_claims WHERE id=%s",
+            (work["employer_claim_id"],))
+        erow = cur.fetchone()
+        ck("work email creates inferred employer_domain claim "
+           "(low grade, never confirmed)",
+           erow is not None and erow[0] == "inferred"
+           and erow[1] == "low"
+           and (erow[2] or {}).get("domain")
+           == "northwind-clinic.org")
+        free = add_field_claim(
+            conn, pa, "email", "fixture@gmail.com", "aggregator",
+            grade="low")
+        ck("freemail creates NO employer_domain claim",
+           free["employer_claim_id"] is None)
+
+        # Part 1: contradiction is flagged, not overwritten.
+        add_field_claim(conn, pa, "marital_status", "single",
+                        "aggregator", grade="low")
+        add_field_claim(conn, pa, "marital_status", "married",
+                        "primary_document", grade="medium")
+        cur.execute(
+            "SELECT status FROM people.identity_field_claims "
+            "WHERE person_id=%s AND "
+            "field_name='marital_status' ORDER BY id", (pa,))
+        statuses = [r[0] for r in cur.fetchall()]
+        ck("contradictory cross-source claims are BOTH flagged "
+           "contradicted (neither overwritten)",
+           statuses == ["contradicted", "contradicted"])
+
+        # Supersede: old row stays, marked superseded.
+        old = add_field_claim(conn, pa, "address_city",
+                              "Oldtown, MN", "aggregator")
+        add_field_claim(conn, pa, "address_city", "Newtown, MN",
+                        "aggregator",
+                        supersedes=old["claim_id"])
+        cur.execute(
+            "SELECT status FROM people.identity_field_claims "
+            "WHERE id=%s", (old["claim_id"],))
+        ck("superseded claim stays on record, marked superseded",
+           cur.fetchone()[0] == "superseded")
+
+        # Part 2: family cluster from claims, stored on a match,
+        # and rendered with context.
+        for pid, rel in ((pa, "Mary Fixture (mother)"),
+                         (pb, "Mary Fixture (mother)")):
+            add_field_claim(conn, pid, "relative", rel, "brian",
+                            grade="high")
+            add_field_claim(conn, pid, "address_city",
+                            "Plymouth, MN", "aggregator")
+        cluster = compute_family_cluster(cur, pa, pb)
+        ck("family cluster computes shared relatives, addresses "
+           "and household members",
+           cluster["shared_relatives"]
+           == ["Mary Fixture (mother)"]
+           and cluster["shared_addresses"] == ["Plymouth, MN"]
+           and cluster["shared_household_members"]
+           == ["Mary Fixture (mother)"])
+        for pid, platform, plat_id, handle in (
+                (pa, "facebook", "selftest-claim-1",
+                 "fixtureclaimsfb"),
+                (pb, "instagram", "selftest-claim-2",
+                 "fixtureclaimsig")):
+            cur.execute(
+                "INSERT INTO people.identity_profiles "
+                "(person_id, platform, platform_id, handle, "
+                "handle_norm, display_name, source) VALUES "
+                "(%s, %s, %s, %s, %s, %s, 'selftest') "
+                "RETURNING id",
+                (pid, platform, plat_id, handle,
+                 normalize_handle(handle),
+                 "Fixture Claims Person" if pid == pa
+                 else "Fixture Cluster Person"))
+            profile_ids.append(cur.fetchone()[0])
+        cur.execute(
+            "INSERT INTO people.identity_matches "
+            "(kind, profile_a_id, profile_b_id, score, grade, "
+            "signals, method, status) VALUES ('same_person', "
+            "%s, %s, 0.62, 'POSSIBLE', '{}'::jsonb, 'engine', "
+            "'pending_review') RETURNING id",
+            (profile_ids[0], profile_ids[1]))
+        match_id = cur.fetchone()[0]
+        attach_family_cluster(cur, match_id, cluster)
+        conn.commit()
+        cur.execute(
+            "SELECT signals->'family_cluster'->"
+            "'shared_relatives' FROM people.identity_matches "
+            "WHERE id=%s", (match_id,))
+        stored = cur.fetchone()[0]
+        ck("family cluster stored in match signals",
+           stored == ["Mary Fixture (mother)"])
+        rendered = render_pending_match_context(cur, match_id)
+        ck("pending match renders WITH cluster context (names, "
+           "shared relatives, shared addresses)",
+           "Mary Fixture (mother)" in rendered
+           and "Plymouth, MN" in rendered
+           and "Fixture Claims Person" in rendered)
+
+        # Part 3: public record bumps the derived count.
+        rec = attach_public_record(
+            conn, pa, "board_minutes",
+            source_url="https://example.invalid/selftest-minutes",
+            summary="selftest fixture minutes", is_primary=True)
+        cur.execute(
+            "SELECT public_record_count FROM "
+            "people.identity_people WHERE id=%s", (pa,))
+        ck("public record attach bumps public_record_count",
+           rec["public_record_count"] == 1
+           and cur.fetchone()[0] == 1)
+
+        # Part 4: blocked and not_found are distinct states;
+        # an invalid result is refused.
+        log_search(conn, "Fixture Claims Person",
+                   "Selftest Marriage Index", "fixture query",
+                   "blocked", person_id=pa,
+                   note="bot wall — not a not_found")
+        log_search(conn, "Fixture Claims Person",
+                   "Selftest Social Search", "fixture query",
+                   "not_found", person_id=pa)
+        cur.execute(
+            "SELECT result FROM people.identity_search_log "
+            "WHERE person_id=%s ORDER BY id", (pa,))
+        results = [r[0] for r in cur.fetchall()]
+        refused = False
+        try:
+            log_search(conn, "Fixture", "Selftest", "q",
+                       "searched_maybe")
+        except ValueError:
+            refused = True
+        ck("search log keeps blocked distinct from not_found "
+           "and refuses an invalid result",
+           results == ["blocked", "not_found"] and refused)
+    finally:
+        try:
+            cur = conn.cursor()
+            if profile_ids:
+                cur.execute(
+                    "DELETE FROM people.identity_matches WHERE "
+                    "profile_a_id = ANY(%s) OR "
+                    "profile_b_id = ANY(%s)",
+                    (profile_ids, profile_ids))
+                cur.execute(
+                    "DELETE FROM people.identity_profiles WHERE "
+                    "id = ANY(%s)", (profile_ids,))
+            if person_ids:
+                cur.execute(
+                    "DELETE FROM people.identity_people WHERE "
+                    "id = ANY(%s)", (person_ids,))
+            conn.commit()
+        finally:
+            conn.close()
+    ck("claims/records/search-log fixtures cleaned up",
+       len(person_ids) == 2)
+
+
+
 # ------------------------------------------------------------ selftest
 
 def selftest():
@@ -3783,6 +4638,11 @@ def selftest():
         _selftest_evidence_import(ck)
     except Exception as exc:  # noqa: BLE001
         ck("evidence-import DB fixtures raised %s" % exc, False)
+    try:
+        _selftest_claims_records(ck)
+    except Exception as exc:  # noqa: BLE001
+        ck("claims/records/search-log DB fixtures raised %s"
+           % exc, False)
 
     failed = [name for name, ok in checks if not ok]
     for name, ok in checks:
@@ -3805,6 +4665,16 @@ def main():
     parser.add_argument("--queue", action="store_true")
     parser.add_argument("--stats", action="store_true")
     parser.add_argument("--selftest", action="store_true")
+    parser.add_argument("--match-context", type=int,
+                        metavar="MATCH_ID",
+                        help="render one pending match WITH its "
+                             "family-cluster context for Brian's "
+                             "ruling")
+    parser.add_argument("--seed-heather", action="store_true",
+                        help="seed Heather Oscarson as the first "
+                             "live public-records case "
+                             "(idempotent; Brian-confirmed "
+                             "2026-11-22)")
     parser.add_argument("--backfill-profile-urls",
                         action="store_true",
                         help="fill NULL profile_url values with "
@@ -3879,6 +4749,19 @@ def main():
         if not args.text:
             parser.error("--road-note requires --text")
         road_note(args.road_note, args.text)
+    elif args.match_context is not None:
+        conn = _conn()
+        try:
+            print(render_pending_match_context(
+                conn.cursor(), args.match_context))
+        finally:
+            conn.close()
+    elif args.seed_heather:
+        conn = _conn()
+        try:
+            seed_heather_oscarson(conn)
+        finally:
+            conn.close()
     elif args.selftest:
         selftest()
     else:

@@ -303,6 +303,37 @@ def backfill_depths(conn, dry_run=False):
     return len(rows), changed
 
 
+def sweep_depths(conn, dry_run=False):
+    """Stamp depths on EVERY unclassified capture, any status —
+    raw rows waiting on the next triage run and discarded rows
+    triage never touches included (B25: the unclassified backlog
+    refills between triage runs, and a discarded row never gets
+    triaged at all, so it would sit unclassified forever).
+    Uses the same depth_for() rule triage() applies, so a later
+    triage re-stamps the identical value; idempotent.
+    Returns (rows_considered, rows_stamped)."""
+    ensure(conn)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, title, raw_text, context FROM "
+            "atlas.scattered_captures WHERE depth = 'unclassified' "
+            "ORDER BY id")
+        rows = cur.fetchall()
+    stamped = 0
+    for cid, title, raw, context in rows:
+        depth = depth_for(title, raw, context)
+        stamped += 1
+        if not dry_run:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE atlas.scattered_captures SET depth = %s "
+                    "WHERE id = %s AND depth = 'unclassified'",
+                    (depth, cid))
+    if not dry_run:
+        conn.commit()
+    return len(rows), stamped
+
+
 def triage(conn):
     ensure(conn)
     with conn.cursor() as cur:
@@ -547,6 +578,47 @@ def selftest(conn):
             "WHERE id = %s", (ids[0],))
         check(cur.fetchone()[0] == "team_working",
               "backfilled row re-stamped team_working")
+    # Sweep probe (B25): a raw row AND a discarded row, both
+    # unclassified, get stamped by sweep_depths() — the two legs
+    # backfill-depths never reaches (raw is excluded there;
+    # discarded is never triaged). Both rows are SSBTEST-titled,
+    # so the cleanup below removes them.
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO atlas.scattered_captures "
+            "(title, raw_text, context, cluster_key, status, depth) "
+            "VALUES (%s, %s, %s, %s, 'raw', 'unclassified') "
+            "RETURNING id",
+            ("SSBTEST sweep raw brian to do",
+             "", "", cluster_key("SSBTEST sweep raw brian to do")))
+        sweep_raw = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO atlas.scattered_captures "
+            "(title, raw_text, context, cluster_key, status, depth) "
+            "VALUES (%s, %s, %s, %s, 'discarded', 'unclassified') "
+            "RETURNING id",
+            ("SSBTEST sweep discarded qa_failing:9,9",
+             "", "",
+             cluster_key("SSBTEST sweep discarded qa_failing")))
+        sweep_disc = cur.fetchone()[0]
+    conn.commit()
+    total, stamped = sweep_depths(conn)
+    check(stamped >= 2,
+          "sweep_depths stamps the raw + discarded rows "
+          "(%d/%d)" % (stamped, total))
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, depth FROM atlas.scattered_captures "
+            "WHERE id = ANY(%s) ORDER BY id",
+            ([sweep_raw, sweep_disc],))
+        swept = {r[0]: r[1] for r in cur.fetchall()}
+    check(swept.get(sweep_raw) == "brian_decision",
+          "swept raw row is brian_decision (%s)"
+          % swept.get(sweep_raw))
+    check(swept.get(sweep_disc) == "system_self",
+          "swept discarded row is system_self (%s)"
+          % swept.get(sweep_disc))
+    print("SWEEP_OK")
     print("DEPTH_OK")
     rc = rule(conn, ids[2], "park", "selftest hold")
     check(rc == 0, "ruling 'park' applies")
@@ -636,11 +708,18 @@ def main(argv):
                   "capture(s), %d stamped"
                   % (" (dry run)" if dry else "", total, changed))
             return 0
+        if cmd == "sweep-depths":
+            dry = "--dry-run" in argv
+            total, stamped = sweep_depths(conn, dry_run=dry)
+            print("sweep-depths%s: %d unclassified capture(s), "
+                  "%d stamped"
+                  % (" (dry run)" if dry else "", total, stamped))
+            return 0
         if cmd == "selftest":
             return selftest(conn)
         print("usage: scattered_brain.py "
               "[capture|list|triage|digest|rule|backfill-depths|"
-              "selftest]")
+              "sweep-depths|selftest]")
         return 2
     finally:
         conn.close()

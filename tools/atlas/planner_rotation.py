@@ -94,11 +94,14 @@ DRIVER_SEAT = "planner-driver"
 
 
 def rotation_key(row):
-    """Sort key: priority DESC, least-recently-looked first (None =
-    never looked heads the queue), slug ASC tiebreak.
+    """Sort key: never-looked first across priorities, then priority
+    DESC, least-recently-looked first, slug ASC tiebreak. Priority
+    alone used to dominate, so once the top tier was all looked the
+    driver re-looked it forever and lower tiers starved (B20: coverage
+    stalled at 15/42 with 27 never-looked goals waiting).
     Row shape: (goal_slug, priority, days_since_look)."""
     slug, prio, days = row[0], row[1], row[2]
-    return (-prio, 0 if days is None else 1, -(days or 0), slug)
+    return (0 if days is None else 1, -prio, -(days or 0), slug)
 
 
 def fetch_rotation():
@@ -107,8 +110,8 @@ def fetch_rotation():
         "SELECT goal_slug, priority, status, days_since_look, "
         "look_overdue, blocker FROM atlas.goal_nodes "
         "WHERE status NOT IN ('done', 'cancelled') "
-        "ORDER BY priority DESC, days_since_look DESC NULLS FIRST, "
-        "goal_slug")
+        "ORDER BY days_since_look IS NULL DESC, priority DESC, "
+        "days_since_look DESC, goal_slug")
     return rows
 
 
@@ -547,15 +550,15 @@ def selftest():
         steps.append((name, bool(cond)))
         assert cond, f"selftest step failed: {name}"
 
-    # Pure ordering: priority first, never-looked before looked,
-    # slug tiebreak.
+    # Pure ordering: never-looked first across priorities, then
+    # priority, then stalest, slug tiebreak.
     rows = [("b-goal", 75, 2.0), ("a-goal", 75, None),
             ("c-goal", 90, None), ("d-goal", 90, 5.0),
             ("e-goal", 50, None)]
     ordered = sorted(rows, key=rotation_key)
-    check("rotation order: prio, never-first, slug tiebreak",
-          [r[0] for r in ordered] == ["c-goal", "d-goal", "a-goal",
-                                      "b-goal", "e-goal"])
+    check("rotation order: never-first, prio, stalest, slug tiebreak",
+          [r[0] for r in ordered] == ["c-goal", "a-goal", "e-goal",
+                                      "d-goal", "b-goal"])
     check("staler looked goal before fresher at same prio",
           rotation_key(("x", 75, 5.0)) < rotation_key(("y", 75, 1.0)))
     check("bad tier rejected",

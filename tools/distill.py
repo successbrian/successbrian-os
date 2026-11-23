@@ -77,7 +77,11 @@ Source span: {span}"""
 # discriminate correctly (supported exact + restated -> SUPPORTS,
 # unsupported -> NO). The budget must cover the reasoning leg;
 # the acceptance rule (reply must START with SUPPORTS) is unchanged.
-VERIFY_MAX_TOKENS = 256
+# Budget sizing, measured 2026-11-23: 256 was NOT enough - a verify
+# of a claim identical to its span still returned empty content with
+# all 256 completion tokens consumed by reasoning. 1024 matches the
+# proven Sonic budget in post_prompt_integrate.py (1000).
+VERIFY_MAX_TOKENS = 1024
 
 
 def parse_drafts(out):
@@ -236,7 +240,7 @@ def selftest():
     check("span too short rejected",
           not span_ok("short", "a short text"))
     check("verify budget covers Sonic reasoning leg",
-          VERIFY_MAX_TOKENS >= 256)
+          VERIFY_MAX_TOKENS >= 1024)
     failed = [n for n, ok in checks if not ok]
     print("SELFTEST " + ("OK" if not failed else
                          "FAILED: " + ", ".join(failed)))

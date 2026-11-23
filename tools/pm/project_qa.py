@@ -316,7 +316,10 @@ def run_judgment_check(check, spec):
                  "max_tokens": int(spec.get("max_tokens", 800))})
     record_run(cur, check["id"], "queued", {"filed_step": step_key},
                pm_step_key=step_key)
-    mark_check(cur, check, "queued", advance=False)
+    # last_status stays terminal-only (B27, row 53 partial): stamping
+    # queued here hid failing checks from the cycle failing list
+    # (check 502, 2026-11-23) — the queued run row above is the
+    # pending-state record; the verdict lands via the collect path.
     c.commit()
     c.close()
     return "queued", {"filed_step": step_key}
@@ -423,6 +426,35 @@ def selftest():
     print("PASS cleanup — project QA selftest green")
 
 
+def check_last_status_terminal():
+    """B27 probe: last_status must be the last TERMINAL verdict. Prints
+    LAST_STATUS_TERMINAL_OK when no check hides a terminal fail behind
+    a non-fail last_status (the 'queued' stamp did exactly this to
+    check 502 on 2026-11-23); exits 1 with the offending ids otherwise."""
+    c = dict_conn()
+    cur = c.cursor()
+    cur.execute(
+        """SELECT c.id FROM successbrian_os.pm_project_checks c
+            WHERE c.last_status IS DISTINCT FROM 'fail'
+              AND EXISTS (SELECT 1 FROM successbrian_os.pm_project_qa_runs r
+                           WHERE r.check_id = c.id
+                             AND r.status IN ('pass', 'fail')
+                             AND r.ran_at = (SELECT max(ran_at)
+                                               FROM successbrian_os.pm_project_qa_runs
+                                              WHERE check_id = c.id
+                                                AND status IN ('pass', 'fail'))
+                             AND r.status = 'fail')""")
+    bad = [r["id"] if isinstance(r, dict) else r[0]
+           for r in cur.fetchall()]
+    c.close()
+    if bad:
+        print("LAST_STATUS_TERMINAL_FAIL: checks hiding a terminal fail: %s"
+              % bad)
+        return 1
+    print("LAST_STATUS_TERMINAL_OK: 0 checks hide a terminal fail")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="SBOS project registry + QA")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -442,6 +474,7 @@ def main(argv=None):
                     choices=["command", "http", "judgment"])
     ac.add_argument("--interval-min", type=int, default=1440)
     ac.add_argument("--spec", required=True, help="JSON spec for the check")
+    sub.add_parser("check-last-status-terminal")
     sub.add_parser("run-due")
     sub.add_parser("list")
     sub.add_parser("selftest")
@@ -449,6 +482,8 @@ def main(argv=None):
     if args.cmd == "selftest":
         selftest()
         return 0
+    if args.cmd == "check-last-status-terminal":
+        return check_last_status_terminal()
     if args.cmd == "run-due":
         run_due()
         return 0

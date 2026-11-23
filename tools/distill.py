@@ -46,10 +46,17 @@ Capture text:
 {text}
 
 Output ONLY a JSON array (no prose) of up to 3 objects:
-[{{"claim": "<one-sentence learning>", "span": "<exact verbatim
-substring of the capture text that proves the claim>"}}]
+[{{"claim": "<the learning, stated in nearly the span's own
+words>", "span": "<exact verbatim substring of the capture text
+that proves the claim>"}}]
 The span MUST be copied character-for-character from the text
-above. If there is nothing durable, output []."""
+above. The claim MUST be a near-verbatim restatement of the span
+itself: keep the span's own words and facts, and add NOTHING the
+span does not say — no inference, no wider summary of the capture,
+no combining facts from different places into one claim. One claim
+per span, and the span alone must fully prove the claim: a strict
+checker rejects any claim that goes one word beyond its span. If
+there is nothing durable, output []."""
 
 VERIFY_PROMPT = """You verify one extracted learning. Answer with
 exactly one word: SUPPORTS if the source span fully supports the
@@ -58,6 +65,19 @@ beyond the span.
 
 Claim: {claim}
 Source span: {span}"""
+
+# Sonic (qwen-a3b) spends up to ~256 tokens reasoning BEFORE any
+# content (documented in tools/altair/post_prompt_integrate.py:
+# "a smaller budget returns empty content"). The verify call
+# originally ran with max_tokens=10, so SUPPORTS verdicts came back
+# empty or as truncated reasoning openings and were counted as
+# verify_rejected — measured 2026-11-23: 690 of 690 lifetime
+# verify verdicts rejected, 0 claims ever filed, while the same
+# prompts at a 256-token budget return clean SUPPORTS / NO and
+# discriminate correctly (supported exact + restated -> SUPPORTS,
+# unsupported -> NO). The budget must cover the reasoning leg;
+# the acceptance rule (reply must START with SUPPORTS) is unchanged.
+VERIFY_MAX_TOKENS = 256
 
 
 def parse_drafts(out):
@@ -89,11 +109,14 @@ def distill_capture(cap, dry_run=False):
     # char prefill + 700-token draft blew a 240s timeout. The
     # durable content of a capture is front-loaded; 3,000 chars
     # and a 450-token draft fit the leg's real speed.
+    # 2026-11-19 (decision #10): claims are now near-verbatim
+    # restatements of their spans, so drafts are much shorter;
+    # max_tokens cut to 256 to shrink the timeout window further.
     text = (cap.get("raw_text") or "")[:3000]
     title = cap.get("title") or "capture"
     out, _u = llm_chat(prompt=DRAFT_PROMPT.format(
         title=title, text=text), url=MORPHEUS_URL,
-        model=MORPHEUS_MODEL, max_tokens=450, timeout=600)
+        model=MORPHEUS_MODEL, max_tokens=256, timeout=600)
     cands = parse_drafts(out)
     stats = {"drafted": len(cands), "span_rejected": 0,
              "verify_rejected": 0, "filed": 0, "parked": 0}
@@ -103,7 +126,8 @@ def distill_capture(cap, dry_run=False):
             continue
         vout, _u2 = llm_chat(prompt=VERIFY_PROMPT.format(
             claim=c["claim"], span=c["span"]), url=SONIC_URL,
-            model=SONIC_MODEL, max_tokens=10, timeout=120)
+            model=SONIC_MODEL, max_tokens=VERIFY_MAX_TOKENS,
+            timeout=300)
         if not (vout or "").strip().upper().startswith("SUPPORTS"):
             stats["verify_rejected"] += 1
             continue
@@ -126,19 +150,35 @@ def distill_capture(cap, dry_run=False):
     return stats
 
 
+RETRY_CAP = 3
+
+
 def run(limit=8, dry_run=False):
     # Error outcomes are RETRYABLE (a slow night must not
-    # permanently skip a capture): only non-error log rows count
-    # as processed.
+    # permanently skip a capture) — but only up to RETRY_CAP
+    # attempts; past the cap the capture is parked (its log row
+    # says error-parked) so one slow capture can never head the
+    # queue forever. Ordering is shortest-text-first: short
+    # captures draft fast, which keeps the 30-minute cycle inside
+    # Morpheus's real speed. (Brian's ruling 2026-11-19, #10.)
+    try:
+        _exec("ALTER TABLE altair.distill_log ADD COLUMN IF NOT "
+              "EXISTS attempts int NOT NULL DEFAULT 0")
+    except Exception:
+        pass  # app role is not the table owner; the column is
+        # applied by the owner (done 2026-11-19 with this fix).
     caps = _rows(
-        "SELECT c.id, c.title, c.raw_text, c.workspace_slug FROM "
-        "atlas.scattered_captures c WHERE c.status = 'triaged' "
+        "SELECT c.id, c.title, c.raw_text, c.workspace_slug, "
+        "COALESCE(d.attempts, 0) AS attempts FROM "
+        "atlas.scattered_captures c LEFT JOIN altair.distill_log d "
+        "ON d.capture_id = c.id WHERE c.status = 'triaged' "
         "AND length(c.raw_text) > 200 AND c.title NOT LIKE "
         "'Ruling-audit flag%%' AND c.title NOT LIKE 'FRESHNESS "
         "ALARM%%' AND NOT EXISTS (SELECT 1 FROM altair.distill_log "
-        "d WHERE d.capture_id = c.id AND d.outcome NOT LIKE "
-        "'error%%') ORDER BY c.created_at LIMIT %s",
-        (limit,))
+        "x WHERE x.capture_id = c.id AND (x.outcome NOT LIKE "
+        "'error%%' OR x.attempts >= %s)) "
+        "ORDER BY length(c.raw_text), c.created_at LIMIT %s",
+        (RETRY_CAP, limit))
     totals = {"captures": 0, "drafted": 0, "span_rejected": 0,
               "verify_rejected": 0, "filed": 0, "parked": 0,
               "errors": 0}
@@ -153,13 +193,19 @@ def run(limit=8, dry_run=False):
         except Exception as e:
             totals["errors"] += 1
             outcome, detail = "error", str(e)[:200]
+            if (cap.get("attempts") or 0) + 1 >= RETRY_CAP:
+                outcome = "error-parked"
+                detail = ("retry cap %d reached; parked. last: %s"
+                          % (RETRY_CAP, detail))
         if not dry_run:
             _exec("INSERT INTO altair.distill_log (capture_id, "
-                  "outcome, detail) VALUES (%s, %s, %s) ON CONFLICT "
-                  "(capture_id) DO UPDATE SET outcome = "
-                  "EXCLUDED.outcome, detail = EXCLUDED.detail, "
-                  "created_at = now()",
-                  (cap["id"], outcome, detail))
+                  "outcome, detail, attempts) VALUES (%s, %s, %s, "
+                  "%s) ON CONFLICT (capture_id) DO UPDATE SET "
+                  "outcome = EXCLUDED.outcome, detail = "
+                  "EXCLUDED.detail, created_at = now(), attempts = "
+                  "EXCLUDED.attempts",
+                  (cap["id"], outcome, detail,
+                   (cap.get("attempts") or 0) + 1))
         print("capture %d: %s %s" % (cap["id"], outcome, detail),
               flush=True)
     print(totals)
@@ -189,6 +235,8 @@ def selftest():
                       "xx the quick brown fox jumps yy"))
     check("span too short rejected",
           not span_ok("short", "a short text"))
+    check("verify budget covers Sonic reasoning leg",
+          VERIFY_MAX_TOKENS >= 256)
     failed = [n for n, ok in checks if not ok]
     print("SELFTEST " + ("OK" if not failed else
                          "FAILED: " + ", ".join(failed)))

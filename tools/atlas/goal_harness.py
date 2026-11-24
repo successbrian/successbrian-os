@@ -70,6 +70,30 @@ PURPOSE: wrap every goal in ONE loop and keep the loop turning:
   (bus event or engine job) in the ledger, and a reaper returns
   stale harness claims to the queue.
 
+  PAPERCLIP FOLD-INS (study capture #3121 / second_brain
+  #103683, folded in 2026-11-23): (1) plan_decompositions -
+  every written-back Einstein plan revision is fingerprinted
+  with the exact step set it materialized, tracked to
+  completion; materialization is exactly-once because
+  pm_core.add_step is ON CONFLICT (step_key) DO NOTHING.
+  (2) Blocker edges are first-class data on the existing
+  pm_step_deps table: add_blocker enforces acyclicity, the
+  claim loop never claims a blocked step, blocked_pass names
+  each blocked step's blockers in the ledger, and wake_pass
+  wakes dependents when a blocker clears (priority nudge +
+  goal due-early). (3) Disposition guard: held_brian without
+  a named reason, or a payload narrating waiting_on with no
+  blocker edge, is flagged - a step must name its blocker or
+  be claimable. (4) Claimed steps carry a heartbeat-context
+  packet (item + goal/movement + relations + continuation).
+  (5) Plan-writing restraint in both prompt contracts: split
+  only at owner/parallel/prerequisite/review boundaries.
+  (6) Exact-title dedup runs as the deterministic floor under
+  the semantic sweep; fan-out cap 25 and depth cap 2 bound
+  harness-created work. NOT copied from Paperclip (confirmed
+  absences): goal metrics on the goal row, completion by
+  self-report, no stall detection, no cross-goal dedup.
+
 SAFETY (standing law, same as einstein_planner): the harness
 never changes a goal's status/progress, never closes a goal,
 never merges or deletes a step, never sends/publishes/buys.
@@ -96,6 +120,7 @@ QA: sbos-program-registry/goal-harness-proof-fresh +
     sbos-program-registry/goal-harness-outcomes-moving.
 """
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -123,6 +148,13 @@ CLAIM_PER_CYCLE = 3
 SWEEP_POOL_CAP = 50
 SWEEP_MIN_AGE_H = 20
 STALE_CLAIM_H = 6
+# Paperclip fold-in (study capture #3121, 2026-11-23): caps on
+# agent-created work - a consolidation group may not exceed 25
+# member steps (fan-out), and harness-created steps nest at most
+# 2 levels deep (look -> step; the claim loop refuses deeper).
+FANOUT_CAP = 25
+DEPTH_CAP = 2
+EXACT_TITLE_MIN_AGE_H = 20
 
 # Tier config (Brian's spec, capture #3108; thresholds are config,
 # not law - see module docstring). sbos_goals.priority label ->
@@ -159,7 +191,7 @@ WORTH: Grade this goal against Brian's four tests (his ruling, 2026-11-23): (1) 
 VERIFIED STATE: What the evidence in the record actually proves about this goal today, each claim tied to the record item it rests on. At most 60 words.
 CLAIMED vs VERIFIED: Where the goal's claimed state (status, progress, dates) disagrees with the evidence, say so plainly and name the correction you propose. These are flagged for a human - you are not applying them. At most 50 words.
 BLOCKERS: What is actually stopping progress, from the record. "none proven" if the record shows none. At most 30 words.
-PLAN: The concrete next steps, in order, numbered "1." "2." "3." inline - each step a single executable action a worker could claim and finish, at most 25 words per step. At most 4 steps. A step that only Brian can perform does not belong here - it belongs in FOR BRIAN.
+PLAN: The concrete next steps, in order, numbered "1." "2." "3." inline - each step a single executable action a worker could claim and finish, at most 25 words per step. At most 4 steps. RESTRAINT (Paperclip doctrine): a plan's steps do not each need to be a task - split only where the owner changes, work can run in parallel, a prerequisite boundary falls, or a review gate sits; merge micro-actions into the step that owns them. A step that only Brian can perform does not belong here - it belongs in FOR BRIAN.
 RESEARCH NEEDS: What is UNKNOWN that research could settle, each item in exactly this shape: NEED: <the question> | WHY: <why it matters to this goal> | WHERE: <where the answer likely lives>. At most 2 items. A question only Brian can answer is NOT a research need - it belongs in FOR BRIAN. "none" if nothing is missing.
 FOR BRIAN: Only what the operator himself must decide or supply - the residue no research and no worker can settle. At most 25 words. "none" if there is none.
 
@@ -253,6 +285,28 @@ def ensure_schema(cur):
     cur.execute(
         "CREATE INDEX IF NOT EXISTS harness_claims_step_idx "
         "ON successbrian_os.harness_claims (step_id, action)")
+    # Paperclip fold-in: accepted-plan decomposition bookkeeping
+    # (their issue_plan_decompositions). One row per Einstein look
+    # whose plan was written back: the plan fingerprint + the
+    # exact step set it materialized, tracked to completion.
+    # Materialization itself is exactly-once by construction:
+    # pm_core.add_step is ON CONFLICT (step_key) DO NOTHING, so a
+    # revision's steps can never duplicate on re-look/re-collect.
+    cur.execute(
+        "CREATE TABLE IF NOT EXISTS "
+        "successbrian_os.plan_decompositions ("
+        "id serial PRIMARY KEY, "
+        "look_id bigint NOT NULL UNIQUE, "
+        "pass_id bigint, "
+        "goal_slug text NOT NULL, "
+        "fingerprint text NOT NULL, "
+        "step_keys jsonb NOT NULL DEFAULT '[]'::jsonb, "
+        "steps_total integer NOT NULL DEFAULT 0, "
+        "steps_done integer NOT NULL DEFAULT 0, "
+        "depth integer NOT NULL DEFAULT 1, "
+        "materialized_at timestamptz NOT NULL DEFAULT now(), "
+        "completed_at timestamptz, "
+        "updated_at timestamptz NOT NULL DEFAULT now())")
 
 
 # ---------------------------------------------------------------- tiers
@@ -691,10 +745,15 @@ def parse_groups(text, pool_ids):
             continue
         ids = [int(x) for x in re.findall(r"\d+", gm.group(2))]
         ids = [i for i in ids if i in pool_ids]
+        why = gm.group(3).strip()[:200]
+        if len(ids) > FANOUT_CAP:
+            why = (why + f" [fan-out capped at {FANOUT_CAP} of "
+                   f"{len(ids)} members]").strip()
+            ids = ids[:FANOUT_CAP]
         if len(ids) >= 2:
             groups.append({"title": gm.group(1).strip()[:120],
                            "step_ids": ids,
-                           "why": gm.group(3).strip()[:200]})
+                           "why": why})
     return groups
 
 
@@ -946,6 +1005,391 @@ def apply_boosts(cur):
     return n
 
 
+# ------------------------------------------------- Paperclip fold-ins
+# Study: capture #3121 / second_brain #103683 (Paperclip's
+# decomposition bookkeeping, blockedBy edges, disposition guard,
+# heartbeat-context packet, plan-to-task restraint, exact-title
+# floor). Confirmed Paperclip absences NOT copied: no goal
+# metrics on the goal row, completion by self-report, no stall
+# detection/re-look, no cross-goal consolidation - the harness
+# already supplies those; Paperclip supplies the bookkeeping.
+
+def normalize_title(title):
+    """Exact-title floor key: strip the leading [goal] bracket,
+    lowercase, drop punctuation, collapse whitespace."""
+    t = re.sub(r"^\s*\[[^\]]*\]\s*", "", str(title or ""))
+    t = re.sub(r"[^a-z0-9 ]+", " ", t.lower())
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def step_depth(step_key):
+    """Nesting depth of a step: Einstein-filed steps sit under a
+    look (depth 2); planner dispatch steps and everything else
+    are depth 1."""
+    if str(step_key or "").startswith("einstein-look-"):
+        return 2
+    return 1
+
+
+def would_cycle(adj, step_id, dep_id):
+    """True if adding edge step_id -> dep_id (step depends on
+    dep) would close a cycle in the depends-on graph adj
+    {step_id: {dep_ids}}: dep can already reach step."""
+    seen, stack = set(), [dep_id]
+    while stack:
+        node = stack.pop()
+        if node == step_id:
+            return True
+        if node in seen:
+            continue
+        seen.add(node)
+        stack.extend(adj.get(node, ()))
+    return False
+
+
+def _deps_adjacency(cur):
+    cur.execute("SELECT step_id, depends_on_id FROM "
+                "successbrian_os.pm_step_deps")
+    adj = {}
+    for a, b in cur.fetchall():
+        adj.setdefault(a, set()).add(b)
+    return adj
+
+
+def step_blockers(cur, step_id):
+    """The step's blocker edges as data: [{dep_id, dep_key,
+    dep_status}] from pm_step_deps joined to the blocking step."""
+    cur.execute(
+        "SELECT d.depends_on_id, s.step_key, s.status FROM "
+        "successbrian_os.pm_step_deps d JOIN "
+        "successbrian_os.pm_steps s ON s.id = d.depends_on_id "
+        "WHERE d.step_id = %s ORDER BY d.depends_on_id", [step_id])
+    return [{"dep_id": r[0], "dep_key": r[1], "dep_status": r[2]}
+            for r in cur.fetchall()]
+
+
+def add_blocker(cur, step_key, blocked_by_key, reason="", by="operator"):
+    """Record a first-class blocker edge (Paperclip blockedBy):
+    step_key cannot proceed until blocked_by_key is done.
+    Acyclicity is enforced - a cycle-closing edge is refused.
+    Returns (ok, message)."""
+    cur.execute("SELECT id FROM successbrian_os.pm_steps "
+                "WHERE step_key = %s", [step_key])
+    a = cur.fetchone()
+    cur.execute("SELECT id FROM successbrian_os.pm_steps "
+                "WHERE step_key = %s", [blocked_by_key])
+    b = cur.fetchone()
+    if not a or not b:
+        return False, "step key not found"
+    if a[0] == b[0]:
+        return False, "a step cannot block itself"
+    adj = _deps_adjacency(cur)
+    if would_cycle(adj, a[0], b[0]):
+        return False, "edge would close a dependency cycle - refused"
+    cur.execute(
+        "INSERT INTO successbrian_os.pm_step_deps "
+        "(step_id, depends_on_id) VALUES (%s, %s) "
+        "ON CONFLICT DO NOTHING", [a[0], b[0]])
+    cur.execute(
+        "INSERT INTO successbrian_os.harness_claims "
+        "(step_id, step_key, route, action, outcome, detail) "
+        "VALUES (%s, %s, 'blockers', 'blocker-added', 'recorded', "
+        "%s::jsonb)",
+        [a[0], step_key, json.dumps(
+            {"blocked_by": blocked_by_key, "reason": reason,
+             "by": by})])
+    return True, f"{step_key} is blocked by {blocked_by_key}"
+
+
+def collect_decompositions(cur):
+    """Fingerprint every collected Einstein plan revision and
+    record the exact step set it materialized, tracked to
+    completion (Paperclip's issue_plan_decompositions shape)."""
+    cur.execute(
+        "SELECT p.id, p.goal_slug, p.look_id, p.plan_text FROM "
+        "successbrian_os.einstein_passes p WHERE p.status = "
+        "'collected' AND p.look_id IS NOT NULL ORDER BY p.id")
+    n = 0
+    for pass_id, slug, look_id, plan_text in cur.fetchall():
+        src = f"goal_coverage:{look_id}"
+        cur.execute(
+            "SELECT step_key, status FROM successbrian_os.pm_steps "
+            "WHERE source = %s ORDER BY id", [src])
+        steps = cur.fetchall()
+        keys = [r[0] for r in steps]
+        done = sum(1 for r in steps if r[1] == "done")
+        # depth: 2 when this look was itself dispatched by a step
+        # an earlier Einstein look filed (chain), else 1.
+        depth = 1
+        cur.execute(
+            "SELECT source FROM successbrian_os.pm_steps "
+            "WHERE step_key = %s", [f"goal-look-{look_id}-dispatch"])
+        drow = cur.fetchone()
+        if drow and str(drow[0] or "").startswith("goal_coverage:"):
+            depth = 2
+        fp = hashlib.sha256(
+            (plan_text or "").encode("utf-8")).hexdigest()[:16]
+        cur.execute(
+            "SELECT id FROM successbrian_os.plan_decompositions "
+            "WHERE look_id = %s", [look_id])
+        if cur.fetchone():
+            cur.execute(
+                "UPDATE successbrian_os.plan_decompositions SET "
+                "step_keys = %s::jsonb, steps_total = %s, "
+                "steps_done = %s, updated_at = now(), "
+                "completed_at = CASE WHEN %s > 0 AND %s = %s "
+                "THEN COALESCE(completed_at, now()) ELSE "
+                "completed_at END WHERE look_id = %s",
+                [json.dumps(keys), len(keys), done, len(keys), done,
+                 len(keys), look_id])
+        else:
+            cur.execute(
+                "INSERT INTO successbrian_os.plan_decompositions "
+                "(look_id, pass_id, goal_slug, fingerprint, "
+                "step_keys, steps_total, steps_done, depth, "
+                "completed_at) VALUES (%s, %s, %s, %s, %s::jsonb, "
+                "%s, %s, %s, CASE WHEN %s > 0 AND %s = %s THEN now() "
+                "END)",
+                [look_id, pass_id, slug, fp, json.dumps(keys),
+                 len(keys), done, depth, len(keys), done, len(keys)])
+            n += 1
+    return n
+
+
+def blocked_pass(cur):
+    """Name the blockers of queued goal steps that carry blocker
+    edges (the disposition guard's positive side): a waiting step
+    must name its blocker in the ledger, once per step."""
+    n = 0
+    for s in open_goal_steps(cur, limit=400):
+        blockers = [b for b in step_blockers(cur, s["id"])
+                    if b["dep_status"] != "done"]
+        if blockers and not ledger_has(cur, s["id"], "held-blocked"):
+            cur.execute(
+                "INSERT INTO successbrian_os.harness_claims "
+                "(step_id, step_key, goal_slug, route, action, "
+                "outcome, detail) VALUES (%s, %s, %s, 'blockers', "
+                "'held-blocked', 'held', %s::jsonb)",
+                [s["id"], s["step_key"], s["goal_slug"],
+                 json.dumps({"blocked_by": [
+                     b["dep_key"] for b in blockers]})])
+            n += 1
+    return n
+
+
+def wake_pass(cur):
+    """Resolution wakes (Paperclip blockedBy semantics): when a
+    blocking step finished in the last 26h and a dependent's
+    blockers are now ALL clear, the dependent wakes - priority
+    nudge, ledger record, and its goal marked due-early."""
+    n = 0
+    goals = {s["id"]: s["goal_slug"]
+             for s in open_goal_steps(cur, limit=1000)}
+    cur.execute(
+        "SELECT id, step_key FROM successbrian_os.pm_steps WHERE "
+        "status = 'done' AND finished_at > now() - interval "
+        "'26 hours'")
+    for dep_id, dep_key in cur.fetchall():
+        cur.execute(
+            "SELECT step_id FROM successbrian_os.pm_step_deps "
+            "WHERE depends_on_id = %s", [dep_id])
+        for (sid,) in cur.fetchall():
+            cur.execute(
+                "SELECT step_key, status, priority FROM "
+                "successbrian_os.pm_steps WHERE id = %s", [sid])
+            srow = cur.fetchone()
+            if not srow or srow[1] != "queued":
+                continue
+            if any(b["dep_status"] != "done"
+                   for b in step_blockers(cur, sid)):
+                continue
+            cur.execute(
+                "SELECT 1 FROM successbrian_os.harness_claims "
+                "WHERE step_id = %s AND action = 'wake' AND "
+                "detail->>'wake_on' = %s LIMIT 1", [sid, dep_key])
+            if cur.fetchone():
+                continue
+            cur.execute(
+                "UPDATE successbrian_os.pm_steps SET priority = %s, "
+                "updated_at = now() WHERE id = %s",
+                [srow[2] + 5, sid])
+            cur.execute(
+                "INSERT INTO successbrian_os.harness_claims "
+                "(step_id, step_key, goal_slug, route, action, "
+                "outcome, detail) VALUES (%s, %s, %s, "
+                "'queue-order', 'wake', 'applied', %s::jsonb)",
+                [sid, srow[0], goals.get(sid),
+                 json.dumps({"wake_on": dep_key,
+                             "old_priority": srow[2],
+                             "new_priority": srow[2] + 5})])
+            if goals.get(sid):
+                set_due_early(cur, goals[sid],
+                              f"blocker cleared: {dep_key}")
+            n += 1
+    return n
+
+
+def disposition_audit(cur):
+    """Paperclip's disposition guard: the system refuses narrated
+    waiting states. A step in a waiting disposition must NAME its
+    blocker - held_brian without a reason in payload, or a queued
+    step whose payload narrates waiting_on with no blocker edge,
+    is flagged in the ledger (visibility; no state is changed)."""
+    n = 0
+    cur.execute(
+        "SELECT id, step_key, payload FROM successbrian_os.pm_steps "
+        "WHERE status = 'held_brian'")
+    for sid, skey, payload in cur.fetchall():
+        payload = payload or {}
+        named = any(k in payload for k in
+                    ("reason", "decision", "blocker", "why", "note"))
+        if not named and not ledger_has(cur, sid, "disposition-guard"):
+            cur.execute(
+                "INSERT INTO successbrian_os.harness_claims "
+                "(step_id, step_key, route, action, outcome, detail) "
+                "VALUES (%s, %s, 'brian', 'disposition-guard', "
+                "'flagged', %s::jsonb)",
+                [sid, skey, json.dumps(
+                    {"issue": "held_brian without a named reason "
+                              "or blocker in payload"})])
+            n += 1
+    for s in open_goal_steps(cur, limit=400):
+        payload = s.get("payload") or {}
+        if "waiting_on" in payload:
+            if step_blockers(cur, s["id"]):
+                continue
+            if ledger_has(cur, s["id"], "disposition-guard"):
+                continue
+            cur.execute(
+                "INSERT INTO successbrian_os.harness_claims "
+                "(step_id, step_key, goal_slug, route, action, "
+                "outcome, detail) VALUES (%s, %s, %s, 'blockers', "
+                "'disposition-guard', 'flagged', %s::jsonb)",
+                [s["id"], s["step_key"], s["goal_slug"],
+                 json.dumps({"issue": "payload narrates waiting_on "
+                                       "but no blocker edge names "
+                                       "the blocker",
+                             "waiting_on": str(
+                                 payload.get("waiting_on"))[:200]})])
+            n += 1
+    return n
+
+
+def exact_title_pass(cur):
+    """The deterministic floor under the semantic sweep
+    (Paperclip's exact-title dedup): open goal steps whose
+    normalized titles are IDENTICAL across >=2 goals are the
+    same work by construction. Files proposals like the sweep's
+    (ordering effect only), watermark-gated to ~daily."""
+    cur.execute("SELECT value FROM successbrian_os.harness_meta "
+                "WHERE key = 'exact_title_last_at'")
+    row = cur.fetchone()
+    now_ts = datetime.now(timezone.utc).timestamp()
+    if row and row[0]:
+        try:
+            age_h = (now_ts - float(row[0])) / 3600.0
+            if age_h < EXACT_TITLE_MIN_AGE_H:
+                return 0
+        except ValueError:
+            pass
+    pool = open_goal_steps(cur, limit=200)
+    groups = {}
+    for s in pool:
+        key = normalize_title(s["title"])
+        if len(key) >= 12:
+            groups.setdefault(key, []).append(s)
+    cur.execute(
+        "SELECT step_ids FROM successbrian_os.consolidation_proposals")
+    existing = [set(r[0] or []) for r in cur.fetchall()]
+    candidates = []
+    for key, members in groups.items():
+        goals = {m["goal_slug"] for m in members}
+        if len(members) < 2 or len(goals) < 2:
+            continue
+        ids = [m["id"] for m in members][:FANOUT_CAP]
+        idset = set(ids)
+        if any(len(idset & e) / max(1, len(idset)) >= 0.8
+               or len(idset & e) / max(1, len(e)) >= 0.8
+               for e in existing):
+            continue
+        candidates.append((key, ids, goals))
+        existing.append(idset)
+    filed = 0
+    if candidates:
+        cur.execute(
+            "INSERT INTO successbrian_os.consolidation_sweeps "
+            "(probe_id, bus_event_id, steps_scanned, pool_ids, "
+            "status, note) VALUES (%s, NULL, %s, %s::jsonb, "
+            "'collected', %s) RETURNING id",
+            [f"harness-exact-{int(now_ts)}", len(pool),
+             json.dumps([m["id"] for m in pool]),
+             "exact-title floor pass (deterministic; no Einstein "
+             "packet)"])
+        sweep_id = cur.fetchone()[0]
+        for i, (key, ids, goals) in enumerate(candidates, 1):
+            cur.execute(
+                "INSERT INTO successbrian_os.consolidation_proposals "
+                "(sweep_id, group_key, title, step_ids, goal_slugs, "
+                "gate_count, rationale) VALUES (%s, %s, %s, "
+                "%s::jsonb, %s::jsonb, %s, %s)",
+                [sweep_id, f"exact-{sweep_id}-{i}", key[:120],
+                 json.dumps(ids), json.dumps(sorted(goals)),
+                 len(goals),
+                 "exact-title match across goals (deterministic "
+                 "floor under the semantic sweep)"])
+            filed += 1
+    cur.execute(
+        "INSERT INTO successbrian_os.harness_meta (key, value) "
+        "VALUES ('exact_title_last_at', %s) ON CONFLICT (key) DO "
+        "UPDATE SET value = EXCLUDED.value, updated_at = now()",
+        [str(now_ts)])
+    if filed:
+        print(f"  exact-title floor: {filed} group(s) filed")
+    return filed
+
+
+def step_context_packet(cur, s):
+    """Heartbeat-context packet for a claimed step (Paperclip's
+    heartbeat shape): the item, its goal/ancestor summary, its
+    relations, and the continuation summary of prior touches -
+    one block the working seat can act on without re-digging."""
+    blockers = step_blockers(cur, s["id"])
+    cur.execute("SELECT source FROM successbrian_os.pm_steps "
+                "WHERE id = %s", [s["id"]])
+    srow = cur.fetchone()
+    step_source = srow[0] if srow else None
+    cur.execute(
+        "SELECT count(*) FROM successbrian_os.pm_step_deps "
+        "WHERE depends_on_id = %s", [s["id"]])
+    dependents = cur.fetchone()[0]
+    gates = group_gates(cur)
+    gate = gates.get(s["id"], (0, None))[0]
+    cur.execute(
+        "SELECT verdict FROM successbrian_os.harness_movements "
+        "WHERE goal_slug = %s AND verdict IS NOT NULL ORDER BY id "
+        "DESC LIMIT 1", [s["goal_slug"]])
+    mv = cur.fetchone()
+    cur.execute(
+        "SELECT action, outcome, claimed_at FROM "
+        "successbrian_os.harness_claims WHERE step_id = %s ORDER "
+        "BY id DESC LIMIT 3", [s["id"]])
+    prior = cur.fetchall()
+    bl = "; ".join(f"{b['dep_key']} ({b['dep_status']})"
+                   for b in blockers) or "none"
+    pr = "; ".join(f"{a} -> {o or 'open'} at {str(t)[:16]}"
+                   for a, o, t in prior) or "none - first touch"
+    return (
+        "STEP CONTEXT (goal harness heartbeat packet)\n"
+        f"ITEM: [{s['step_key']}] {s['title']} "
+        f"(kind {s['kind']}, priority {s.get('priority')})\n"
+        f"GOAL: {s['goal_slug']} - last movement verdict: "
+        f"{(mv[0] if mv else 'no look yet')}\n"
+        f"SOURCE: {step_source}\n"
+        f"RELATIONS: blocked by [{bl}]; steps depending on this "
+        f"one: {dependents}; consolidation gate_count: {gate}\n"
+        f"CONTINUATION: prior harness touches: {pr}")
+
+
 def claim_cycle(cur, limit=CLAIM_PER_CYCLE):
     """One claim pass in harness order: consolidated/shared steps
     first, then research, then goal tier. Safe classes only -
@@ -967,6 +1411,22 @@ def claim_cycle(cur, limit=CLAIM_PER_CYCLE):
     for s in pool:
         if claimed >= limit:
             break
+        if step_depth(s["step_key"]) > DEPTH_CAP:
+            if not ledger_has(cur, s["id"], "depth-cap-refused"):
+                cur.execute(
+                    "INSERT INTO successbrian_os.harness_claims "
+                    "(step_id, step_key, goal_slug, route, action, "
+                    "outcome, detail) VALUES (%s, %s, %s, 'none', "
+                    "'depth-cap-refused', 'held', %s::jsonb)",
+                    [s["id"], s["step_key"], s["goal_slug"],
+                     json.dumps({"reason": f"step depth exceeds "
+                                           f"the {DEPTH_CAP}-level "
+                                           f"cap on harness-created "
+                                           f"work"})])
+            continue
+        if any(b["dep_status"] != "done"
+               for b in step_blockers(cur, s["id"])):
+            continue  # blocked: named in the ledger by blocked_pass
         if is_outward(s):
             if not ledger_has(cur, s["id"], "held-for-brian"):
                 cur.execute(
@@ -989,6 +1449,7 @@ def claim_cycle(cur, limit=CLAIM_PER_CYCLE):
                 slug=s["goal_slug"], question=payload.get("question")
                 or s["title"], why=payload.get("why", ""),
                 where=payload.get("where_answer_lives", ""))
+            prompt += "\n\n" + step_context_packet(cur, s)
             probe_id = f"harness-research-{s['id']}"
             packet = sbos_common.build_reap_packet(
                 prompt, source=SOURCE, probe_id=probe_id,
@@ -1015,7 +1476,8 @@ def claim_cycle(cur, limit=CLAIM_PER_CYCLE):
                 engine, "goal-harness", "goal-step", s["title"][:120],
                 payload={"step_key": s["step_key"],
                          "instruction": payload.get("instruction", ""),
-                         "goal_slug": s["goal_slug"]},
+                         "goal_slug": s["goal_slug"],
+                         "context": step_context_packet(cur, s)},
                 source_ref=s["step_key"], priority=100)
             cur.execute(
                 "INSERT INTO successbrian_os.harness_claims "
@@ -1162,6 +1624,15 @@ def cycle(limit=DISPATCH_PER_CYCLE):
         ncl = collect_claims(cur)
         conn.commit()
         cur.execute("BEGIN")
+        ndec = collect_decompositions(cur)
+        nblk = blocked_pass(cur)
+        nwak = wake_pass(cur)
+        ndsp = disposition_audit(cur)
+        conn.commit()
+        cur.execute("BEGIN")
+        nex = exact_title_pass(cur)
+        conn.commit()
+        cur.execute("BEGIN")
         nev = scan_capture_events(cur, slugs)
         conn.commit()
         cur.execute("BEGIN")
@@ -1203,6 +1674,9 @@ def cycle(limit=DISPATCH_PER_CYCLE):
               f"looks dispatched {sent}, boosts {boosts}, "
               f"claimed {claimed}, held-for-brian {held}, "
               f"unrouted-noted {noted}")
+        print(f"cycle: paperclip passes: decompositions +{ndec}, "
+              f"blocked-named {nblk}, wakes {nwak}, disposition "
+              f"flags {ndsp}, exact-title groups {nex}")
         return 0
     finally:
         conn.close()
@@ -1289,6 +1763,31 @@ def selftest():
           len(groups) == 2 and groups[0]["step_ids"] == [11, 12])
     check("parse_groups: GROUPS none -> []",
           parse_groups("GROUPS: none", pool) == [])
+    big_pool = set(range(100, 140))
+    big = ("GROUPS: GROUP 1: Big shared task | STEPS: "
+           + ", ".join(str(i) for i in range(100, 132))
+           + " | WHY: same work")
+    bgroups = parse_groups(big, big_pool)
+    check("parse_groups fan-out cap holds at 25",
+          len(bgroups) == 1
+          and len(bgroups[0]["step_ids"]) == FANOUT_CAP
+          and "fan-out capped" in bgroups[0]["why"])
+    check("normalize_title strips goal bracket + punctuation",
+          normalize_title("[gotbackup] Confirm whether this goal "
+                          "is complete or needs re-targeting:")
+          == "confirm whether this goal is complete or needs "
+             "re targeting")
+    check("normalize_title equates case/punctuation variants",
+          normalize_title("Count Signups, Weekly!")
+          == normalize_title("count signups weekly"))
+    adj = {1: {2}, 2: {3}}
+    check("would_cycle catches a cycle-closing edge",
+          would_cycle(adj, 3, 1))
+    check("would_cycle allows an acyclic edge",
+          not would_cycle(adj, 1, 3))
+    check("step_depth: einstein-filed steps are depth 2",
+          step_depth("einstein-look-271-step-1") == 2
+          and step_depth("goal-look-271-dispatch") == 1)
 
     class FakeStep(dict):
         pass
@@ -1337,7 +1836,32 @@ def main():
                     help="with --cycle: dispatch one named goal "
                          "(force re-look)")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--add-blocker", metavar="STEP_KEY",
+                    help="record a blocker edge: STEP_KEY cannot "
+                         "proceed until --blocked-by is done")
+    ap.add_argument("--blocked-by", metavar="STEP_KEY")
+    ap.add_argument("--reason", default="",
+                    help="with --add-blocker: why the edge exists")
     args = ap.parse_args()
+    if args.add_blocker:
+        if not args.blocked_by:
+            print("--add-blocker needs --blocked-by STEP_KEY")
+            return 2
+        conn = sbos_common.connect()
+        try:
+            cur = conn.cursor()
+            ensure_schema(cur)
+            conn.commit()
+            cur.execute("BEGIN")
+            ok, msg = add_blocker(cur, args.add_blocker,
+                                  args.blocked_by, args.reason,
+                                  by="cli")
+            conn.commit() if ok else conn.rollback()
+            print(("blocker recorded: " if ok else "refused: ")
+                  + msg)
+            return 0 if ok else 1
+        finally:
+            conn.close()
     if args.selftest:
         return selftest()
     if args.status:

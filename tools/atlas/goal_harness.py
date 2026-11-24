@@ -471,7 +471,25 @@ def dispatch_harness_look(cur, slug, dry_run=False, force=False):
     cur.execute(
         "INSERT INTO successbrian_os.einstein_passes "
         "(goal_slug, probe_id, bus_event_id, status) "
-        "VALUES (%s, %s, %s, 'dispatched')", [slug, probe_id, event_id])
+        "VALUES (%s, %s, %s, 'dispatched') RETURNING id",
+        [slug, probe_id, event_id])
+    pass_id = cur.fetchone()[0]
+    # Snapshot the movement Einstein is about to judge, keyed by
+    # the pass: the collect pass attaches his verdict to THIS row,
+    # so the stored counts are the exact numbers he saw - not a
+    # re-measurement taken after his own write-back filed new
+    # steps into the same ledger.
+    cur.execute(
+        "INSERT INTO successbrian_os.harness_movements "
+        "(goal_slug, pass_id, since_at, completed, failed, running, "
+        "queued, stuck, detail) VALUES (%s, %s, %s, %s, %s, %s, %s, "
+        "%s, %s::jsonb)",
+        [slug, pass_id, mv["since"], mv["completed"], mv["failed"],
+         mv["running"], mv["queued"], mv["stuck"],
+         json.dumps({"done_keys": mv["done_keys"],
+                     "stuck_keys": mv["stuck_keys"],
+                     "total": mv["total"],
+                     "snapshot": "at-dispatch"})])
     print(f"  {slug}: harness look dispatched (bus event {event_id}, "
           f"probe {probe_id})")
     return event_id, probe_id
@@ -520,24 +538,44 @@ def collect_movements(cur):
         "WHERE p.probe_id LIKE 'harness-look-%' "
         "AND p.status = 'collected' AND NOT EXISTS ("
         "SELECT 1 FROM successbrian_os.harness_movements m "
-        "WHERE m.pass_id = p.id) ORDER BY p.id")
+        "WHERE m.pass_id = p.id AND m.verdict IS NOT NULL) "
+        "ORDER BY p.id")
     rows = cur.fetchall()
     n = 0
     for pass_id, slug, look_id, plan_text in rows:
         mv = movement_for(cur, slug)
         verdict = parse_movement(plan_text)
         cur.execute(
-            "INSERT INTO successbrian_os.harness_movements "
-            "(goal_slug, pass_id, look_id, since_at, completed, failed, "
-            "running, queued, stuck, verdict, detail) VALUES "
-            "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)",
-            [slug, pass_id, look_id, mv["since"], mv["completed"],
-             mv["failed"], mv["running"], mv["queued"], mv["stuck"],
-             verdict[:600] if verdict else None,
-             json.dumps({"done_keys": mv["done_keys"],
-                         "stuck_keys": mv["stuck_keys"],
-                         "total": mv["total"],
-                         "worth": parse_worth(plan_text)})])
+            "SELECT detail FROM successbrian_os.harness_movements "
+            "WHERE pass_id = %s ORDER BY id LIMIT 1", [pass_id])
+        snap = cur.fetchone()
+        if snap:
+            # Dispatch-time snapshot exists: attach the verdict and
+            # the WORTH grade to the numbers Einstein actually saw.
+            detail = dict(snap[0] or {})
+            detail["worth"] = parse_worth(plan_text)
+            cur.execute(
+                "UPDATE successbrian_os.harness_movements SET "
+                "look_id = %s, verdict = %s, detail = %s::jsonb "
+                "WHERE pass_id = %s",
+                [look_id, verdict[:600] if verdict else None,
+                 json.dumps(detail), pass_id])
+        else:
+            cur.execute(
+                "INSERT INTO successbrian_os.harness_movements "
+                "(goal_slug, pass_id, look_id, since_at, completed, "
+                "failed, running, queued, stuck, verdict, detail) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+                "%s::jsonb)",
+                [slug, pass_id, look_id, mv["since"], mv["completed"],
+                 mv["failed"], mv["running"], mv["queued"],
+                 mv["stuck"], verdict[:600] if verdict else None,
+                 json.dumps({"done_keys": mv["done_keys"],
+                             "stuck_keys": mv["stuck_keys"],
+                             "total": mv["total"],
+                             "worth": parse_worth(plan_text),
+                             "snapshot": "at-collect (no dispatch "
+                                         "snapshot - pre-fix pass)"})])
         cur.execute(
             "UPDATE successbrian_os.goal_harness_state SET "
             "last_movement_at = now(), updated_at = now() "

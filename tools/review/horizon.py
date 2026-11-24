@@ -2540,9 +2540,15 @@ def horizon_selftest():
     crep = content_chain()
     check("two-questions: content-chain carries the section",
           bool((crep.get("two_questions") or {}).get("blogs")))
+    # Fleet size is Brian-ruled and moves with merges (30 on 2026-11-17,
+    # 27 after the 2026-11-18 full merges of kaspa, crypto-trading-yield
+    # and oliabo-blog) - a hardcoded floor re-breaks on the next merge.
+    # The live invariant is the label's own: every blog row in the
+    # registry gets a two-questions verdict.
+    fleet_blogs = pg_one("SELECT count(*) FROM campaignsdesk.blogs")
     check("two-questions: fleet blogs all get verdicts",
           len((crep.get("two_questions") or {}).get(
-              "blogs") or []) >= 30)
+              "blogs") or []) == fleet_blogs)
     print("selftest horizon: "
           f"{'ALL PASS' if ok and rc == 0 else 'FAILURES PRESENT'}")
     return 0 if (ok and rc == 0) else 1

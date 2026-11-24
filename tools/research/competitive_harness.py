@@ -486,7 +486,12 @@ def _route_outputs(cur, qrow, parsed, capture_id):
                    "study_capture_id": capture_id, "why": why}
         if kind in ("TASK", "RESEARCH"):
             step_kind = "research" if kind == "RESEARCH" else "task"
-            key = f"crh-q{qid}-{step_kind}-{n}"
+            # the title hash keeps a later study's output from
+            # deduping into an earlier step that shares its slot
+            # number (bit q4 on its repair dig, 2026-11-23)
+            import hashlib
+            key = (f"crh-q{qid}-{step_kind}-{n}-"
+                   + hashlib.sha1(title.encode()).hexdigest()[:6])
             step_id, created = pm_core.add_step(
                 cur, key, title, kind=step_kind,
                 source=f"competitive-research:q{qid}",

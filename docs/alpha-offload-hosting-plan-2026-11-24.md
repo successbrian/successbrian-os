@@ -122,3 +122,22 @@ the open Dec 2 question — it is not settled by this plan.
   one Canada listing; no used US listing) — route decision is Brian's.
 - Next: Dec 2 prep package assembles NAS + database + rack + hosting
   options priced, for one resolving pass.
+
+## Ruling appended 2026-11-24 (later, Brian)
+
+Brian: "this system needs to host contactflowcrm and trafficstreemz."
+
+- The SaaS home is SETTLED: ContactFlowCRM and TrafficStreemz are hosted
+  on this system — the rack base. Cloud-hosting the SaaS products outright
+  is struck from Open decision 2; it is no longer an option shape.
+- What Dec 2 still decides is only the public EDGE: how public traffic
+  reaches the rack (revived/replaced VPS as edge + tunnel, direct home
+  public exposure, or a hybrid where only static web sits outside).
+- The inventory table's SaaS row is amended by this ruling: landing zone
+  reads "this system (ruled 2026-11-24)".
+- Consequence for the sequence: the rack base now carries two production
+  SaaS products, which raises the weight of step 0 — the verified
+  off-alpha backup and the circuit check are prerequisites for paying
+  customers' systems, not just internal tools. Both products remain gated
+  on finished code under the launch-readiness law; this ruling settles
+  their hosting home, not their launch readiness.

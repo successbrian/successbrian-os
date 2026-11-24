@@ -26,6 +26,21 @@ PURPOSE: wrap every goal in ONE loop and keep the loop turning:
      ledger by this module and fed to him as facts. The verdict
      is parsed back out and stored in harness_movements, so the
      movement record is true whether or not anyone reads the plan.
+  2b. WORTH (Brian's ruling, 2026-11-23 18:14 CST) - every look
+     also grades the goal against his four tests: (1) does it
+     make sense for the ecosystem? (2) is it better than what we
+     are currently doing? (3) how easy or hard is it to add?
+     (4) is it more lucrative? - weighed against the scarcest
+     resource, Brian's own bandwidth: Brian-hours cost a goal;
+     work the fleet carries without him counts for it. A goal's
+     ORIGIN is a label, not the gate ("the goals don't have to
+     have 'me' in them... they just have to make sense for our
+     ecosystem. I can only do so much."): provenance labeling
+     stays exactly as the briefs built it - honesty about origin,
+     verdict by merit. For an unadopted goal the WORTH section is
+     its adoption brief; for an adopted goal, its periodic
+     re-justification. The verdict is stored with the movement
+     record (harness_movements.detail.worth).
   3. EVENT TRIGGERS - a research answer landing for a goal, or a
      capture landing that names the goal (subject-match, the
      brief compiler's attribution test), marks the goal due-early:
@@ -131,15 +146,17 @@ OUTWARD_RE = re.compile(
 HARNESS_BEGIN = "<!-- GOAL-HARNESS:BEGIN -->"
 HARNESS_END = "<!-- GOAL-HARNESS:END -->"
 
-SECTION_HEADERS = ("MOVEMENT", "VERIFIED STATE", "CLAIMED vs VERIFIED",
-                   "BLOCKERS", "PLAN", "RESEARCH NEEDS", "FOR BRIAN")
+SECTION_HEADERS = ("MOVEMENT", "WORTH", "VERIFIED STATE",
+                   "CLAIMED vs VERIFIED", "BLOCKERS", "PLAN",
+                   "RESEARCH NEEDS", "FOR BRIAN")
 
 PROMPT_TEMPLATE = """You are Einstein, the deep-planning engine in a solo operator's goal system. Below is one goal's MOVEMENT DATA (measured by the goal harness from the work ledger since your last look at this goal), then its standing brief - compiled from everything the operator's ecosystem holds about this goal: his own recorded words (quoted verbatim, attributed, dated), the goal's origin and provenance, its connected work, the standing rulings that constrain it, and its measured state - followed by its live record. Judge ONLY from this record. Where the record is silent, say UNKNOWN - never invent a fact, a date, or a person's intent. Weigh provenance: a goal whose brief shows an agent-assembled origin and no words of Brian's is an unadopted proposal, not his directive - plan accordingly and say so where it matters.
 
-Write a planning assessment with EXACTLY these seven sections, in this order, plain text, no preamble, no closing remarks. CRITICAL FORMAT RULE: write the ENTIRE assessment as one single unbroken block of text - NO blank lines anywhere, NO paragraph breaks. The channel that carries your answer back keeps only the first block, so a blank line ends your answer and the rest is lost. Start immediately with "MOVEMENT:" and run each section's header inline, like this: MOVEMENT: <text> VERIFIED STATE: <text> CLAIMED vs VERIFIED: <text> BLOCKERS: <text> PLAN: 1. <step> 2. <step> RESEARCH NEEDS: <items> FOR BRIAN: <text>
+Write a planning assessment with EXACTLY these eight sections, in this order, plain text, no preamble, no closing remarks. CRITICAL FORMAT RULE: write the ENTIRE assessment as one single unbroken block of text - NO blank lines anywhere, NO paragraph breaks. The channel that carries your answer back keeps only the first block, so a blank line ends your answer and the rest is lost. Start immediately with "MOVEMENT:" and run each section's header inline, like this: MOVEMENT: <text> WORTH: <text> VERIFIED STATE: <text> CLAIMED vs VERIFIED: <text> BLOCKERS: <text> PLAN: 1. <step> 2. <step> RESEARCH NEEDS: <items> FOR BRIAN: <text>
 
-MOVEMENT: Judge the MOVEMENT DATA below: since the last look, what pieces and subtasks actually got completed, what is stuck, and is this goal moving at the pace its priority deserves? Name the counts you are judging from. At most 40 words.
-VERIFIED STATE: What the evidence in the record actually proves about this goal today, each claim tied to the record item it rests on. At most 70 words.
+MOVEMENT: Judge the MOVEMENT DATA below: since the last look, what pieces and subtasks actually got completed, what is stuck, and is this goal moving at the pace its priority deserves? Name the counts you are judging from. At most 35 words.
+WORTH: Grade this goal against Brian's four tests (his ruling, 2026-11-23): (1) Does it make sense for the ecosystem? (2) Is it better than what we are currently doing? (3) How easy or hard is it to add? (4) Is it more lucrative? - weighed against the scarcest resource in the system, Brian's own time: a goal that costs Brian-hours weighs against itself; work the fleet can carry without him weighs in its favor. A goal does NOT need Brian's authorship to pass - origin is a label, not a gate; judge by merit against these tests. For an unadopted (agent-assembled) goal this section is its adoption brief; for an adopted goal it is the periodic re-justification. End with a verdict word: STRONG, SOUND, WEAK, or FAILING. At most 55 words.
+VERIFIED STATE: What the evidence in the record actually proves about this goal today, each claim tied to the record item it rests on. At most 60 words.
 CLAIMED vs VERIFIED: Where the goal's claimed state (status, progress, dates) disagrees with the evidence, say so plainly and name the correction you propose. These are flagged for a human - you are not applying them. At most 50 words.
 BLOCKERS: What is actually stopping progress, from the record. "none proven" if the record shows none. At most 30 words.
 PLAN: The concrete next steps, in order, numbered "1." "2." "3." inline - each step a single executable action a worker could claim and finish, at most 25 words per step. At most 4 steps. A step that only Brian can perform does not belong here - it belongs in FOR BRIAN.
@@ -385,11 +402,23 @@ def movement_block(mv):
 
 def parse_movement(text):
     """Extract the MOVEMENT section from a harness plan (it runs up
-    to the VERIFIED STATE header). '' when absent."""
+    to the WORTH or VERIFIED STATE header). '' when absent."""
     if not text:
         return ""
     flat = " ".join(str(text).split())
-    m = re.search(r"MOVEMENT\s*:\s*(.*?)\s*VERIFIED STATE\s*:", flat,
+    m = re.search(r"MOVEMENT\s*:\s*(.*?)\s*(?:WORTH|VERIFIED STATE)"
+                  r"\s*:", flat, re.IGNORECASE)
+    return m.group(1).strip() if m else ""
+
+
+def parse_worth(text):
+    """Extract the WORTH section (Brian's four tests, ruling
+    2026-11-23) from a harness plan. '' when absent (plans written
+    before the ruling carry none)."""
+    if not text:
+        return ""
+    flat = " ".join(str(text).split())
+    m = re.search(r"WORTH\s*:\s*(.*?)\s*VERIFIED STATE\s*:", flat,
                   re.IGNORECASE)
     return m.group(1).strip() if m else ""
 
@@ -507,7 +536,8 @@ def collect_movements(cur):
              verdict[:600] if verdict else None,
              json.dumps({"done_keys": mv["done_keys"],
                          "stuck_keys": mv["stuck_keys"],
-                         "total": mv["total"]})])
+                         "total": mv["total"],
+                         "worth": parse_worth(plan_text)})])
         cur.execute(
             "UPDATE successbrian_os.goal_harness_state SET "
             "last_movement_at = now(), updated_at = now() "
@@ -1202,6 +1232,16 @@ def selftest():
           parse_movement(sample).startswith("2 of 5 steps completed"))
     check("parse_movement empty on section-less text",
           parse_movement("just some prose") == "")
+    worth_sample = ("MOVEMENT: nothing completed; 3 queued. WORTH: "
+                    "Makes sense for the ecosystem; fleet carries it "
+                    "without Brian-hours; verdict SOUND. VERIFIED "
+                    "STATE: record shows x. BLOCKERS: none proven.")
+    check("parse_movement stops at WORTH",
+          parse_movement(worth_sample) == "nothing completed; 3 queued.")
+    check("parse_worth extracts the four-tests grade",
+          parse_worth(worth_sample).endswith("verdict SOUND."))
+    check("parse_worth empty on pre-ruling plans",
+          parse_worth(sample) == "")
     pool = {11, 12, 13, 21, 22}
     gtext = ("GROUPS: GROUP 1: Warm a sending domain | STEPS: 11, 12, "
              "99 | WHY: same warm-up work ;; GROUP 2: Count signups | "

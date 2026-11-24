@@ -168,19 +168,20 @@ BRIEF_END = "<!-- GOAL-BRIEF:END -->"
 PLAN_BEGIN = "<!-- EINSTEIN-PLAN:BEGIN -->"
 PLAN_END = "<!-- EINSTEIN-PLAN:END -->"
 
-SECTION_HEADERS = ("VERIFIED STATE", "CLAIMED vs VERIFIED", "BLOCKERS",
-                   "PLAN", "RESEARCH NEEDS", "FOR BRIAN")
+SECTION_HEADERS = ("VERIFIED STATE", "WORTH", "CLAIMED vs VERIFIED",
+                   "BLOCKERS", "PLAN", "RESEARCH NEEDS", "FOR BRIAN")
 
-PROMPT_TEMPLATE = """You are Einstein, the deep-planning engine in a solo operator's goal system. Below is one goal's standing brief - compiled from everything the operator's ecosystem holds about this goal: his own recorded words (quoted verbatim, attributed, dated), the goal's origin and provenance, its connected work, the standing rulings that constrain it, and its measured state - followed by its live record (goal row, Atlas node, recent planner looks, tasks, recent captures). Judge ONLY from this record. Where the record is silent, say UNKNOWN - never invent a fact, a date, or a person's intent. Weigh provenance: a goal whose brief shows an agent-assembled origin and no words of Brian's is an unadopted proposal, not his directive - plan accordingly and say so where it matters.
+PROMPT_TEMPLATE = """You are Einstein, the deep-planning engine in a solo operator's goal system. Below is one goal's standing brief - compiled from everything the operator's ecosystem holds about this goal: his own recorded words (quoted verbatim, attributed, dated), the goal's origin and provenance, its connected work, the standing rulings that constrain it, and its measured state - followed by its live record (goal row, Atlas node, recent planner looks, tasks, recent captures). Judge ONLY from this record. Where the record is silent, say UNKNOWN - never invent a fact, a date, or a person's intent. Weigh provenance: a goal whose brief shows an agent-assembled origin and no words of Brian's is an unadopted proposal, not his directive - say so where it matters. But origin is a label, not a gate (Brian's ruling, 2026-11-23): a goal does not need his authorship to be worth doing - grade its merit in the WORTH section on the same tests as any adopted goal.
 
-Write a planning assessment with EXACTLY these six sections, in this order, plain text, no preamble, no closing remarks. CRITICAL FORMAT RULE: write the ENTIRE assessment as one single unbroken block of text - NO blank lines anywhere, NO paragraph breaks. The channel that carries your answer back keeps only the first block, so a blank line ends your answer and the rest is lost. Start immediately with "VERIFIED STATE:" and run each section's header inline, like this: VERIFIED STATE: <text> CLAIMED vs VERIFIED: <text> BLOCKERS: <text> PLAN: 1. <step> 2. <step> RESEARCH NEEDS: <items> FOR BRIAN: <text>
+Write a planning assessment with EXACTLY these seven sections, in this order, plain text, no preamble, no closing remarks. CRITICAL FORMAT RULE: write the ENTIRE assessment as one single unbroken block of text - NO blank lines anywhere, NO paragraph breaks. The channel that carries your answer back keeps only the first block, so a blank line ends your answer and the rest is lost. Start immediately with "VERIFIED STATE:" and run each section's header inline, like this: VERIFIED STATE: <text> WORTH: <text> CLAIMED vs VERIFIED: <text> BLOCKERS: <text> PLAN: 1. <step> 2. <step> RESEARCH NEEDS: <items> FOR BRIAN: <text>
 
-VERIFIED STATE: What the evidence in the record actually proves about this goal today, each claim tied to the record item it rests on. At most 80 words.
-CLAIMED vs VERIFIED: Where the goal's claimed state (status, progress, dates) disagrees with the evidence, say so plainly and name the correction you propose. These are flagged for a human - you are not applying them. At most 60 words.
+VERIFIED STATE: What the evidence in the record actually proves about this goal today, each claim tied to the record item it rests on. At most 70 words.
+WORTH: Grade this goal against Brian's four tests (his ruling, 2026-11-23): (1) Does it make sense for the ecosystem? (2) Is it better than what we are currently doing? (3) How easy or hard is it to add? (4) Is it more lucrative? - weighed against the scarcest resource in the system, Brian's own time: a goal that costs Brian-hours weighs against itself; work the fleet can carry without him weighs in its favor. For an unadopted (agent-assembled) goal this section is its adoption brief; for an adopted goal it is the periodic re-justification. End with a verdict word: STRONG, SOUND, WEAK, or FAILING. At most 55 words.
+CLAIMED vs VERIFIED: Where the goal's claimed state (status, progress, dates) disagrees with the evidence, say so plainly and name the correction you propose. These are flagged for a human - you are not applying them. At most 50 words.
 BLOCKERS: What is actually stopping progress, from the record. "none proven" if the record shows none. At most 40 words.
 PLAN: The concrete next steps, in order, numbered "1." "2." "3." inline - each step a single executable action a worker could claim and finish, at most 25 words per step. At most 5 steps. A step that only Brian can perform does not belong here - it belongs in FOR BRIAN.
-RESEARCH NEEDS: What is UNKNOWN that research could settle, each item in exactly this shape: NEED: <the question> | WHY: <why it matters to this goal> | WHERE: <where the answer likely lives>. At most 3 items. A question only Brian can answer is NOT a research need - it belongs in FOR BRIAN. "none" if nothing is missing.
-FOR BRIAN: Only what the operator himself must decide or supply - the residue no research and no worker can settle. At most 30 words. "none" if there is none.
+RESEARCH NEEDS: What is UNKNOWN that research could settle, each item in exactly this shape: NEED: <the question> | WHY: <why it matters to this goal> | WHERE: <where the answer likely lives>. At most 2 items. A question only Brian can answer is NOT a research need - it belongs in FOR BRIAN. "none" if nothing is missing.
+FOR BRIAN: Only what the operator himself must decide or supply - the residue no research and no worker can settle. At most 25 words. "none" if there is none.
 
 Keep the whole answer under 420 tokens - the channel truncates at 500, and a plan whose tail is cut off is a failed plan. Be concrete and brief; a short true plan beats a long vague one.
 
@@ -1115,7 +1116,7 @@ def parse_plan(text):
     always preserved by the caller. Returns dict with keys
     verified, claimed, blockers, plan_steps (list), research
     (list of {question, why, where}), for_brian."""
-    out = {"verified": "", "claimed": "", "blockers": "",
+    out = {"verified": "", "worth": "", "claimed": "", "blockers": "",
            "plan_steps": [], "research": [], "for_brian": ""}
     if not text:
         return out
@@ -1127,7 +1128,7 @@ def parse_plan(text):
     # that arrives line-broken anyway.
     flat = " ".join(str(text).split())
     header_re = re.compile(
-        r"(VERIFIED STATE|CLAIMED vs VERIFIED|BLOCKERS|PLAN|"
+        r"(VERIFIED STATE|WORTH|CLAIMED vs VERIFIED|BLOCKERS|PLAN|"
         r"RESEARCH NEEDS|FOR BRIAN)\s*:", re.IGNORECASE)
     marks = list(header_re.finditer(flat))
     sections = {}
@@ -1138,6 +1139,7 @@ def parse_plan(text):
         if key not in sections:
             sections[key] = flat[start:end].strip()
     out["verified"] = sections.get("VERIFIED STATE", "")
+    out["worth"] = sections.get("WORTH", "")
     out["claimed"] = sections.get("CLAIMED VS VERIFIED", "")
     out["blockers"] = sections.get("BLOCKERS", "")
     out["for_brian"] = sections.get("FOR BRIAN", "")
@@ -1327,6 +1329,9 @@ def write_back(cur, pass_row, text):
                       f"probe {probe_id})."]
     if parsed["verified"]:
         findings_parts.append(f"VERIFIED STATE: {parsed['verified']}")
+    if parsed.get("worth"):
+        findings_parts.append(
+            f"WORTH (Brian's four tests): {parsed['worth']}")
     if parsed["claimed"]:
         findings_parts.append(
             f"CLAIMED vs VERIFIED (corrections FLAGGED, not applied): "

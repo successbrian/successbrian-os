@@ -31,8 +31,11 @@
 
 Current population (Brian, 2026-11-24): 2x DL380p Gen8 (Proxmox, 2U each),
 2x Gertoli (decider heartbeats), 2x Aoostar, bravo (GMKtec K11) — the minis
-on rack shelves. Later per the roadmap: Dell R630 (1U), Node Echo (2U),
-Mantis-3/4 (4U each) — total planned 15U + shelves, fits the 25U frame.
+on rack shelves. Later per the roadmap: Node Echo (2U) and
+Mantis-3/4 (4U each). (The roadmap Frame A sketch also showed a Dell
+R630 at 1U — a pending purchase from Aaron, roadmap item 0.1, NOT owned
+hardware; it is not part of this plan base. See the correction
+appended 2026-11-24.)
 
 The DL380p service capacity is real: 2x E5-2670 v2 (20 cores) and 128GB
 DDR3 per box, Proxmox already their assigned role. The MI25 upgrade
@@ -44,9 +47,9 @@ service-VM role.
 
 | Workload | Runs now | Exposure | Landing zone |
 |---|---|---|---|
-| PostgreSQL (ecosystem_central) | k11-alpha | internal | DL380 VM or R630 — Dec 2 database decision (needs-plan s.6 open question: Echo vs DL380 #1 split) |
-| SuccessBrian OS services (Altair, clerk/board, crons, Lyra) | k11-alpha | internal | DL380 / R630 VMs |
-| Desks (CampaignsDesk, DealsDesk, blogging desk, TradesDesk) | k11-alpha | internal | DL380 / R630 VMs |
+| PostgreSQL (ecosystem_central) | k11-alpha | internal | DL380 VM — Dec 2 database decision (needs-plan s.6 open question: Echo vs DL380 #1 split) |
+| SuccessBrian OS services (Altair, clerk/board, crons, Lyra) | k11-alpha | internal | DL380 VMs |
+| Desks (CampaignsDesk, DealsDesk, blogging desk, TradesDesk) | k11-alpha | internal | DL380 VMs |
 | Scrapers (MSV/Vera fleet), SearXNG | gamma / alpha (split history) | internal | Rack VMs (roadmap 0.8) |
 | AnythingLLM, monitoring | k11-alpha | internal | Rack VM (light tenants; AnythingLLM is 5.4GB disk / ~0.55GB RAM) |
 | Web hosting (sites + blog network) | Supabase + Netlify free tier (bolt.new stack); Hostinger VPS successbrianvps.com DOWN since 2026-11-15 (disk full, stopped by Hostinger) | PUBLIC | Open decision (Dec 2) |
@@ -103,7 +106,7 @@ the open Dec 2 question — it is not settled by this plan.
 
 ## Open decisions — Dec 2 package
 
-1. DATABASE HOME: DL380 VM vs R630 vs the Echo/DL380 split left open in
+1. DATABASE HOME: DL380 VM vs the Echo/DL380 split left open in
    needs-plan s.6. (The Dec 2 database solution.)
 2. HOSTING EDGE (the public half): revive/replace the Hostinger VPS as a
    public edge in front of the rack / cloud hosting for the SaaS products
@@ -141,3 +144,16 @@ Brian: "this system needs to host contactflowcrm and trafficstreemz."
   customers' systems, not just internal tools. Both products remain gated
   on finished code under the launch-readiness law; this ruling settles
   their hosting home, not their launch readiness.
+
+## Correction appended 2026-11-24 (Brian: "there is no R630")
+
+Brian challenged the R630 in this plan, and he is right: there is no
+R630. The machine exists only in fleet-roadmap items 0.1 / 0.7 / 0.8 as
+a purchase to close with Aaron (RAM type, backplane, caddies and rails
+unconfirmed; pickup unarranged). It is not owned hardware —
+public.owned_hardware carries no R630. The plan as first written
+tonight carried it as a landing zone ("DL380 / R630 VMs"), which read
+as if the machine exists. Corrected in place above: every landing zone
+is now the two owned DL380p boxes (plus the minis where a workload fits
+them). If the R630 purchase ever closes, it joins the base as added
+capacity. Nothing in this plan depends on it.

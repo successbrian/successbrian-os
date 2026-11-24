@@ -165,3 +165,17 @@ Each is UNKNOWN until he rules; none blocks the attested base.
    commit 8e5a02c).
 5. This register created. Nothing was deleted; every demotion is toward
    "not confirmed", never toward a false negative about what Brian owns.
+
+## Machinery appended 2026-11-24 (Brian: "i need it in the code, not just md files")
+
+The rule now runs as code: tools/ownership_guard.py (this repo). Its
+in-code registry is the enforceable source of truth and wins over this
+document on conflict. Planners call
+require_planning_eligible(name) — it raises for anything not
+Brian-attested; the CLI checks names, lists the registry, and
+--audit scans owned_hardware, ai_inventory, model_seats and
+dealsdesk.builds against it (violations fail; unattested claims are
+reported as residue). First live run, 2026-11-24: selftest 11/11,
+audit 0 violations, 19 unattested claims — exactly section B/C above.
+When Brian rules on a residue item, the ruling lands as a registry
+edit in that module, with this doc updated to match.

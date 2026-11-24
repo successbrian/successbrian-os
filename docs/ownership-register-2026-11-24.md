@@ -201,3 +201,12 @@ every purchase decision). One vocabulary hazard surfaced by the
 audit: dealsdesk build ‘DDR4 fleet deployment (Oct 2026)’ carries
 status ‘active’ — a plan wearing an existence word, now flagged in
 every audit run.
+
+
+## Addendum 2026-11-24 ~04:21 CST — R8 partially resolved by Brian's attestation
+
+Brian (2026-11-24 04:21 CST): "i already own the board and the cpu -- i just need memory, drives".
+
+- The Node Echo build's motherboard (Supermicro X11SAE-F) and CPU (Intel Xeon E3-1245 v6) are Brian-attested OWNED, recorded in `tools/ownership_guard.py` as `attested_components` on the `node_echo` entry.
+- The machine as a whole remains UNCONFIRMED: memory and drives are an open need (stated by Brian, not owned), and the chassis, PSUs, Noctua cooling and rails were not individually attested.
+- Drew Covi's listing (the design reference) was verified SOLD the same night (2026-11-24 ~04:16 CST; it was Available on 2026-10-26). That no longer matters to the build: Echo is being assembled from an owned core, not bought whole.

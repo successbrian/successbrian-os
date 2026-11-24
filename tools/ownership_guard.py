@@ -180,8 +180,9 @@ REGISTRY = [
      "note": "Register D4."},
     {"id": "node_echo", "verdict": UNCONFIRMED, "decision": "planning",
      "names": ["Node Echo", "node-echo"],
-     "source": "Split records: owned_hardware 'planned' vs ai_inventory 'active' (set to 'unconfirmed' 2026-11-24); roadmap 0.2 frames it as a purchase",
-     "note": "Residue R8. NOT owned until Brian says so — register D1."},
+     "source": "Split records: owned_hardware 'planned' vs ai_inventory 'active' (set to 'unconfirmed' 2026-11-24); roadmap 0.2 frames it as a purchase. Components attested by Brian 2026-11-24.",
+     "attested_components": ["Supermicro X11SAE-F motherboard", "Intel Xeon E3-1245 v6 CPU"],
+     "note": "Residue R8. The MACHINE is not owned. COMPONENTS ATTESTED by Brian 2026-11-24 ('i already own the board and the cpu -- i just need memory, drives'): the board and CPU are Brian-attested owned. Memory and drives are the stated need, not owned. Chassis, PSUs, Noctua cooling and rails are not individually attested \u2014 register D1."},
 
     # -- Planned / paper: the records themselves agree these are not owned ----
     {"id": "k11_zeus", "verdict": PLANNED, "decision": "planning",

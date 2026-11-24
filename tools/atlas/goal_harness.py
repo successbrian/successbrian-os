@@ -94,6 +94,21 @@ PURPOSE: wrap every goal in ONE loop and keep the loop turning:
   absences): goal metrics on the goal row, completion by
   self-report, no stall detection, no cross-goal dedup.
 
+  FIELD-STUDY ADDENDUM (capture #3122, folded in 2026-11-23):
+  (1) MAGENTIC stall counter - goal_harness_state.stall_count
+  counts consecutive looks with zero verified completions; at
+  STALL_LOOK_THRESHOLD the goal is marked due-early for a
+  re-look/replan (Magentic-One's ablation: removing the stall
+  mechanism cost 31% on GAIA). (2) METAGPT verification
+  standard - a claim settles 'verified-done' only when its
+  output passes a check, never on the worker's word: research
+  answers must carry an ANSWER + EVIDENCE naming a checkable
+  artifact (verify_research_answer), else the step is requeued
+  with 'verification-failed-requeued' in the ledger. Context:
+  Berkeley MAST measured 41-86.7% failure rates across 7 agent
+  frameworks, specification/verification failures the largest
+  category - verification is the layer this harness weights.
+
 SAFETY (standing law, same as einstein_planner): the harness
 never changes a goal's status/progress, never closes a goal,
 never merges or deletes a step, never sends/publishes/buys.
@@ -155,6 +170,11 @@ STALE_CLAIM_H = 6
 FANOUT_CAP = 25
 DEPTH_CAP = 2
 EXACT_TITLE_MIN_AGE_H = 20
+# Magentic stall threshold (field study addendum, capture
+# #3122): consecutive looks without a verified completion that
+# pull a re-look/replan forward. Magentic-One's ablation put
+# the stall mechanism's worth at 31% of GAIA performance.
+STALL_LOOK_THRESHOLD = 2
 
 # Tier config (Brian's spec, capture #3108; thresholds are config,
 # not law - see module docstring). sbos_goals.priority label ->
@@ -307,6 +327,14 @@ def ensure_schema(cur):
         "materialized_at timestamptz NOT NULL DEFAULT now(), "
         "completed_at timestamptz, "
         "updated_at timestamptz NOT NULL DEFAULT now())")
+    # Magentic stall counter columns (capture #3122).
+    cur.execute(
+        "ALTER TABLE successbrian_os.goal_harness_state "
+        "ADD COLUMN IF NOT EXISTS stall_count integer NOT NULL "
+        "DEFAULT 0")
+    cur.execute(
+        "ALTER TABLE successbrian_os.goal_harness_state "
+        "ADD COLUMN IF NOT EXISTS last_progress_at timestamptz")
 
 
 # ---------------------------------------------------------------- tiers
@@ -630,10 +658,33 @@ def collect_movements(cur):
                              "worth": parse_worth(plan_text),
                              "snapshot": "at-collect (no dispatch "
                                          "snapshot - pre-fix pass)"})])
+        # Magentic stall counter (field study addendum, capture
+        # #3122): a look with zero verified completions increments
+        # the goal's stall counter; any verified completion resets
+        # it. At the threshold the next re-look/replan is pulled
+        # forward (due-early) - stalling triggers replanning, it
+        # does not wait for the cadence clock.
+        cur.execute(
+            "SELECT stall_count FROM successbrian_os."
+            "goal_harness_state WHERE goal_slug = %s", [slug])
+        srow = cur.fetchone()
+        new_stall, progressed = stall_update(
+            srow[0] if srow and srow[0] is not None else 0,
+            mv["completed"])
         cur.execute(
             "UPDATE successbrian_os.goal_harness_state SET "
-            "last_movement_at = now(), updated_at = now() "
-            "WHERE goal_slug = %s", [slug])
+            "last_movement_at = now(), stall_count = %s, "
+            "last_progress_at = CASE WHEN %s THEN now() ELSE "
+            "last_progress_at END, updated_at = now() "
+            "WHERE goal_slug = %s", [new_stall, progressed, slug])
+        if not progressed and new_stall >= STALL_LOOK_THRESHOLD:
+            set_due_early(
+                cur, slug,
+                f"stall counter {new_stall}: no verified "
+                f"completion across {new_stall} consecutive "
+                f"looks - replan pulled forward (Magentic)")
+            print(f"  {slug}: STALL {new_stall} - re-look pulled "
+                  f"forward")
         n += 1
         print(f"  {slug}: movement recorded (pass {pass_id}: "
               f"+{mv['completed']} done, {mv['stuck']} stuck; "
@@ -1020,6 +1071,49 @@ def normalize_title(title):
     t = re.sub(r"^\s*\[[^\]]*\]\s*", "", str(title or ""))
     t = re.sub(r"[^a-z0-9 ]+", " ", t.lower())
     return re.sub(r"\s+", " ", t).strip()
+
+
+def stall_update(stall_count, completed):
+    """Magentic stall counter transition: any verified
+    completion is progress (reset); a look without one stalls
+    (+1). Returns (new_count, progressed)."""
+    if completed and completed > 0:
+        return 0, True
+    return (stall_count or 0) + 1, False
+
+
+# A research answer is checkable when its EVIDENCE names
+# something the system can re-check: a URL, a file, a
+# second_brain entry, a capture, a schema.table, a QA check, a
+# date. (MetaGPT verification standard, capture #3122.)
+CHECKABLE_RE = re.compile(
+    r"https?://|\w+\.(?:py|md|sql|json|csv|txt)\b|second_brain|"
+    r"capture\s+#?\d+|\b\w+\.\w+\b|QA\s*\d+|\b\d{4}-\d{2}-\d{2}\b")
+
+
+def verify_research_answer(text):
+    """MetaGPT gate (field study addendum, capture #3122): a
+    worker's self-report is never 'done'. Where the output is
+    checkable, verify by checking: a research answer settles
+    only if it carries a substantive ANSWER and an EVIDENCE
+    section naming at least one checkable artifact. Returns
+    (ok, reason)."""
+    if not text or len(str(text).strip()) < 40:
+        return False, "answer empty or trivially short"
+    flat = " ".join(str(text).split())
+    am = re.search(r"ANSWER\s*:\s*(.*?)\s*EVIDENCE\s*:", flat,
+                   re.IGNORECASE)
+    if not am:
+        return False, "no ANSWER/EVIDENCE structure to verify"
+    if len(am.group(1).strip()) < 30:
+        return False, "ANSWER section too thin to settle the question"
+    em = re.search(r"EVIDENCE\s*:\s*(.*?)\s*STILL UNKNOWN\s*:",
+                   flat, re.IGNORECASE)
+    evidence = em.group(1) if em else flat.split("EVIDENCE:")[-1]
+    if not CHECKABLE_RE.search(evidence):
+        return False, ("EVIDENCE names nothing checkable (no URL, "
+                       "file, entry, table, or dated record)")
+    return True, "answer carries checkable evidence"
 
 
 def step_depth(step_key):
@@ -1526,21 +1620,43 @@ def collect_claims(cur):
                 res = env.get("result") or {}
                 text = res.get("text") if isinstance(res, dict) else None
                 if env.get("ok") and text:
+                    # MetaGPT gate: never settle on the worker's
+                    # word - the answer must carry checkable
+                    # evidence, or the step goes back to the
+                    # queue with the failure recorded.
+                    vok, vwhy = verify_research_answer(text)
+                    if not vok:
+                        requeue_step(cur, step_id)
+                        cur.execute(
+                            "UPDATE successbrian_os.harness_claims "
+                            "SET outcome = "
+                            "'verification-failed-requeued', "
+                            "finished_at = now(), detail = "
+                            "detail || %s::jsonb WHERE id = %s",
+                            [json.dumps({"verification": vwhy}),
+                             cid])
+                        settled += 1
+                        print(f"  claim NOT settled: {step_key} "
+                              f"failed verification ({vwhy}); "
+                              f"requeued")
+                        continue
                     pm_core.finish(cur, step_key, "done", {
                         "answer": text[:1500],
                         "via": "goal-harness research (Einstein REAP)",
+                        "verification": vwhy,
                         "bus_event_id": event_id})
                     cur.execute(
                         "UPDATE successbrian_os.harness_claims SET "
-                        "outcome = 'done', finished_at = now() "
-                        "WHERE id = %s", [cid])
+                        "outcome = 'verified-done', "
+                        "finished_at = now() WHERE id = %s", [cid])
                     if slug:
                         set_due_early(
                             cur, slug,
                             f"research answer landed: {step_key}")
                     settled += 1
-                    print(f"  claim settled: {step_key} done "
-                          f"(research answer landed; {slug} due-early)")
+                    print(f"  claim settled: {step_key} "
+                          f"verified-done (research answer "
+                          f"landed; {slug} due-early)")
                 else:
                     requeue_step(cur, step_id)
                     cur.execute(
@@ -1788,6 +1904,24 @@ def selftest():
     check("step_depth: einstein-filed steps are depth 2",
           step_depth("einstein-look-271-step-1") == 2
           and step_depth("goal-look-271-dispatch") == 1)
+    check("stall_update: completion resets, silence increments",
+          stall_update(3, 2) == (0, True)
+          and stall_update(1, 0) == (2, False)
+          and stall_update(0, 0) == (1, False))
+    good = ("ANSWER: The count lives in public.keyword_inventory "
+            "and 19 phrases were filed 2026-11-21. EVIDENCE: "
+            "second_brain entry 103641 and keyword_inventory ids "
+            "15741-15759. STILL UNKNOWN: none")
+    check("verify_research_answer passes checkable evidence",
+          verify_research_answer(good)[0])
+    check("verify_research_answer rejects bare self-report",
+          not verify_research_answer(
+              "ANSWER: It is definitely handled and fine now. "
+              "EVIDENCE: I checked carefully and it works. "
+              "STILL UNKNOWN: none")[0])
+    check("verify_research_answer rejects empty output",
+          not verify_research_answer("")[0]
+          and not verify_research_answer("ANSWER: x")[0])
 
     class FakeStep(dict):
         pass

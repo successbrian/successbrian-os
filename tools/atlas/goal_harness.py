@@ -335,6 +335,52 @@ def ensure_schema(cur):
     cur.execute(
         "ALTER TABLE successbrian_os.goal_harness_state "
         "ADD COLUMN IF NOT EXISTS last_progress_at timestamptz")
+    # Brian's additions, 2026-11-23 19:05: decomposition assist
+    # for weaker seats + effectiveness follow-up on completed
+    # tasks.
+    cur.execute(
+        "CREATE TABLE IF NOT EXISTS "
+        "successbrian_os.breakdown_drafts ("
+        "id serial PRIMARY KEY, "
+        "goal_slug text NOT NULL, "
+        "author_seat text NOT NULL, "
+        "status text NOT NULL DEFAULT 'drafting', "
+        "engine_job_id bigint, "
+        "review_event_id bigint, "
+        "brief_fingerprint text, "
+        "draft_text text, "
+        "review_count integer NOT NULL DEFAULT 0, "
+        "review_verdict text, "
+        "review_notes text, "
+        "intended_effect text, "
+        "fingerprint text, "
+        "materialized_step_keys jsonb, "
+        "created_at timestamptz NOT NULL DEFAULT now(), "
+        "updated_at timestamptz NOT NULL DEFAULT now())")
+    cur.execute(
+        "CREATE TABLE IF NOT EXISTS "
+        "successbrian_os.effect_followups ("
+        "id serial PRIMARY KEY, "
+        "step_id bigint NOT NULL UNIQUE, "
+        "step_key text NOT NULL, "
+        "goal_slug text, "
+        "kind text, "
+        "author_seat text, "
+        "intended_effect text, "
+        "completed_at timestamptz, "
+        "due_at timestamptz, "
+        "status text NOT NULL DEFAULT 'pending', "
+        "verdict text, "
+        "evidence text, "
+        "checked_at timestamptz, "
+        "created_at timestamptz NOT NULL DEFAULT now())")
+    cur.execute(
+        "CREATE OR REPLACE VIEW "
+        "successbrian_os.effectiveness_rollup AS "
+        "SELECT author_seat, kind, verdict, count(*) AS n "
+        "FROM successbrian_os.effect_followups "
+        "WHERE verdict IS NOT NULL "
+        "GROUP BY author_seat, kind, verdict")
 
 
 # ---------------------------------------------------------------- tiers
@@ -457,11 +503,22 @@ def movement_for(cur, slug):
              if s["started_at"] and (now - s["started_at"]).days >= 1]
     stuck += [s for s in queued
               if s["created_at"] and (now - s["created_at"]).days >= 7]
+    eff = []
+    try:
+        cur.execute(
+            "SELECT step_key, verdict FROM "
+            "successbrian_os.effect_followups WHERE goal_slug "
+            "= %s AND verdict IS NOT NULL ORDER BY checked_at "
+            "DESC LIMIT 3", [slug])
+        eff = [f"{r[0]}: {r[1]}" for r in cur.fetchall()]
+    except Exception:
+        eff = []
     return {"since": since, "completed": len(done), "failed": len(failed),
             "running": len(running), "queued": len(queued),
             "stuck": len(stuck), "total": len(steps),
             "done_keys": [s["step_key"] for s in done][:10],
-            "stuck_keys": [s["step_key"] for s in stuck][:10]}
+            "stuck_keys": [s["step_key"] for s in stuck][:10],
+            "effectiveness": eff}
 
 
 def movement_block(mv):
@@ -479,6 +536,10 @@ def movement_block(mv):
         lines.append("completed: " + ", ".join(mv["done_keys"]))
     if mv["stuck_keys"]:
         lines.append("stuck: " + ", ".join(mv["stuck_keys"]))
+    if mv.get("effectiveness"):
+        lines.append("EFFECTIVENESS FOLLOW-UPS (verdicts on this "
+                     "goal's completed work - weigh them): "
+                     + "; ".join(mv["effectiveness"]))
     return "\n".join(lines)
 
 
@@ -1484,6 +1545,463 @@ def step_context_packet(cur, s):
         f"CONTINUATION: prior harness touches: {pr}")
 
 
+# --------------------------------- Brian's additions (2026-11-23 19:05)
+# ADDITION 1 - DECOMPOSITION ASSIST for weaker seats. Penny /
+# Morpheus / Chuck-class seats cannot freehand breakdowns the
+# way Einstein can, and Paperclip's failure #3307 is what
+# unassisted freehand decomposition produces. So a weaker seat
+# never freehands: it works inside a scaffold (the standing
+# brief as MANDATORY input - no brief, no breakdown; the plan
+# template; the restraint doctrine; depth cap 2 / fan-out cap
+# 25), with Einstein's collected plans as few-shot exemplars.
+# Its output is a DRAFT until Einstein reviews it against the
+# brief + Brian's four tests; an approved draft materializes
+# exactly once (deterministic step keys + the plan fingerprint
+# rule); a draft that fails review twice escalates to a full
+# Einstein look. Author seat + review outcome are recorded on
+# every draft - that data feeds Addition 2's rollup.
+#
+# ADDITION 2 - EFFECTIVENESS FOLLOW-UP. Completion is not the
+# end. Every harness-era completed step carries an INTENDED
+# EFFECT (from its plan); beat (a) at completion is the
+# MetaGPT gate already in the claim loop; beat (b) is this
+# follow-up: after an interval suited to the kind, the harness
+# checks whether the intended effect actually happened and
+# records EFFECTIVE / INEFFECTIVE / TOO-EARLY / UNCHECKABLE
+# with evidence. Verdicts land on the goal's harness note,
+# feed Einstein's next look through the movement block, and
+# aggregate in effectiveness_rollup (per seat, per kind).
+
+BRIEF_SLICE = 6000  # brief chars in a scaffold packet
+
+SCAFFOLD_TEMPLATE = """You are {seat}, a planning seat in a solo operator's goal system, drafting a task breakdown for ONE goal. You are not working freehand - work inside this scaffold exactly.
+THE GOAL'S STANDING BRIEF (mandatory input - everything known about this goal; judge only from it, say UNKNOWN where it is silent):
+{brief}
+EXEMPLARS - two breakdowns the senior planner (Einstein) wrote for other goals. Match their shape and restraint:
+{exemplars}
+YOUR DRAFT - reply as ONE single unbroken block of text, NO blank lines, with EXACTLY these sections inline, in this order: MOVEMENT: <what has already moved on this goal, from the brief; 'first breakdown' if nothing> WORTH: <grade the goal against the operator's four tests: (1) makes sense for the ecosystem? (2) better than what we are currently doing? (3) how easy or hard to add? (4) more lucrative? - weighed against the operator's own time, the scarcest resource; end with STRONG, SOUND, WEAK, or FAILING> VERIFIED STATE: <what the brief proves today, at most 60 words> CLAIMED vs VERIFIED: <where the goal's claimed state disagrees with the brief, or 'none'> BLOCKERS: <what is actually stopping progress, or 'none proven'> PLAN: <numbered steps 1. 2. 3. - at most 4> RESEARCH NEEDS: <items shaped NEED: <question> | WHY: <why> | WHERE: <where the answer lives> - at most 2, or 'none'> FOR BRIAN: <only what the operator himself must decide, or 'none'>
+RESTRAINT DOCTRINE (binding): a plan's steps do not each need to be a task - split only where the owner changes, work can run in parallel, a prerequisite boundary falls, or a review gate sits; merge micro-actions into the step that owns them. At most 4 plan steps and 2 research items. Each step is ONE executable action, at most 25 words. If this breakdown is beyond you, say so plainly in FOR BRIAN ('ESCALATE: beyond this seat') instead of guessing."""
+
+REVIEW_TEMPLATE = """You are Einstein, reviewing a task breakdown drafted by a weaker seat ({seat}) for one goal. Judge the draft against the goal's standing brief and the operator's rules. Reply as ONE single unbroken block of text, NO blank lines. Shape: VERDICT: <APPROVE, REVISE, or ESCALATE> EFFECT: <one line: what should be different in the world or the goal when this plan's work succeeds> NOTES: <what is wrong or missing, concrete, at most 60 words; 'none' if approving clean>
+Approve only if: the draft matches the brief (no invented facts, dates, or intents), its WORTH grade applies the four tests honestly (ecosystem fit; better than current; ease of adding; more lucrative - weighed against the operator's own time), the steps obey the restraint doctrine (split only at owner/parallel/prerequisite/review boundaries; at most 4 steps + 2 research), and nothing in it asks for an outward act (sending, publishing, buying, contacting) as a worker step. REVISE for fixable defects; ESCALATE when the goal itself needs your full look (thin or contradictory brief, judgment the draft cannot carry).
+GOAL: {slug}
+BRIEF (first part): {brief}
+DRAFT: {draft}"""
+
+
+def get_brief_md(cur, slug):
+    cur.execute("SELECT brief_md FROM successbrian_os.goal_briefs "
+                "WHERE goal_slug = %s", [slug])
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def exemplar_plans(cur, exclude_slug, n=2):
+    cur.execute(
+        "SELECT goal_slug, plan_text FROM "
+        "successbrian_os.einstein_passes WHERE status = "
+        "'collected' AND plan_text IS NOT NULL AND "
+        "length(plan_text) > 200 AND goal_slug <> %s "
+        "ORDER BY id DESC LIMIT %s", [exclude_slug, n])
+    out = []
+    for slug, text in cur.fetchall():
+        out.append(f"--- exemplar (goal {slug}):\n{text[:1100]}")
+    return "\n".join(out) if out else "(no exemplars on record)"
+
+
+def draft_breakdown(cur, slug, seat="morpheus"):
+    """Start an assisted breakdown: scaffold packet -> the
+    weaker seat's engine queue. No brief, no breakdown."""
+    brief = get_brief_md(cur, slug)
+    if not brief:
+        meta = ep.ensure_brief(cur, slug)
+        brief = get_brief_md(cur, slug) if meta else None
+    if not brief:
+        print(f"  assist: {slug}: NO BRIEF - breakdown refused "
+              f"(the brief is mandatory input)")
+        return None
+    packet = SCAFFOLD_TEMPLATE.format(
+        seat=seat, brief=brief[:BRIEF_SLICE],
+        exemplars=exemplar_plans(cur, slug))
+    cur.execute(
+        "INSERT INTO successbrian_os.breakdown_drafts "
+        "(goal_slug, author_seat, status, brief_fingerprint) "
+        "VALUES (%s, %s, 'drafting', %s) RETURNING id",
+        [slug, seat,
+         hashlib.sha256(brief.encode("utf-8")).hexdigest()[:16]])
+    draft_id = cur.fetchone()[0]
+    job_id = sbos_common.engine_job_enqueue(
+        seat, "goal-harness", "chat",
+        f"assisted breakdown: {slug}",
+        payload={"prompt": packet, "draft_id": draft_id,
+                 "goal_slug": slug},
+        source_ref=f"decomp-assist:{draft_id}", priority=100)
+    cur.execute(
+        "UPDATE successbrian_os.breakdown_drafts SET "
+        "engine_job_id = %s, updated_at = now() WHERE id = %s",
+        [job_id, draft_id])
+    print(f"  assist: draft #{draft_id} for {slug} -> {seat} "
+          f"job {job_id} (scaffold + brief + exemplars)")
+    return draft_id
+
+
+def collect_drafts(cur):
+    """Settle drafting jobs; a finished draft goes straight to
+    Einstein review (it is a DRAFT until checked)."""
+    n = 0
+    cur.execute(
+        "SELECT id, goal_slug, author_seat, engine_job_id FROM "
+        "successbrian_os.breakdown_drafts WHERE status = "
+        "'drafting' ORDER BY id")
+    for draft_id, slug, seat, job_id in cur.fetchall():
+        table = sbos_common.ENGINE_JOB_TABLES.get(seat)
+        if not table or not job_id:
+            continue
+        cur.execute(f"SELECT status, result FROM {table} "
+                    f"WHERE id = %s", [job_id])
+        jrow = cur.fetchone()
+        if not jrow:
+            continue
+        if jrow[0] == "failed":
+            cur.execute(
+                "UPDATE successbrian_os.breakdown_drafts SET "
+                "status = 'draft-failed', updated_at = now() "
+                "WHERE id = %s", [draft_id])
+            n += 1
+            continue
+        if jrow[0] != "done":
+            continue
+        res = jrow[1]
+        text = ""
+        if isinstance(res, str):
+            try:
+                text = json.loads(res).get("text", "") or ""
+            except Exception:
+                text = res
+        if not text:
+            cur.execute(
+                "UPDATE successbrian_os.breakdown_drafts SET "
+                "status = 'draft-failed', review_notes = 'seat "
+                "returned empty text', updated_at = now() "
+                "WHERE id = %s", [draft_id])
+            n += 1
+            continue
+        brief = get_brief_md(cur, slug) or ""
+        prompt = REVIEW_TEMPLATE.format(
+            seat=seat, slug=slug, brief=brief[:2500],
+            draft=text[:3500])
+        probe_id = f"assist-review-{draft_id}"
+        packet = sbos_common.build_reap_packet(
+            prompt, source=SOURCE, probe_id=probe_id,
+            item_ref=slug, max_tokens=MAX_TOKENS, thinking=False)
+        event_id = sbos_common.dispatch_reap_packet(
+            packet, source=SOURCE, priority=BUS_PRIORITY)
+        cur.execute(
+            "UPDATE successbrian_os.breakdown_drafts SET "
+            "status = 'reviewing', draft_text = %s, "
+            "review_event_id = %s, updated_at = now() "
+            "WHERE id = %s", [text, event_id, draft_id])
+        print(f"  assist: draft #{draft_id} ({slug}, by {seat}) "
+              f"drafted -> Einstein review (bus event {event_id})")
+        n += 1
+    return n
+
+
+def parse_review(text):
+    """(verdict, effect, notes) from an Einstein review reply."""
+    if not text:
+        return None, "", ""
+    flat = " ".join(str(text).split())
+    vm = re.search(r"VERDICT\s*:\s*(APPROVE|REVISE|ESCALATE)",
+                   flat, re.IGNORECASE)
+    if not vm:
+        return None, "", flat[:300]
+    em = re.search(r"EFFECT\s*:\s*(.*?)\s*NOTES\s*:", flat,
+                   re.IGNORECASE)
+    nm = re.search(r"NOTES\s*:\s*(.*)$", flat, re.IGNORECASE)
+    return (vm.group(1).upper(),
+            em.group(1).strip()[:400] if em else "",
+            nm.group(1).strip()[:600] if nm else "")
+
+
+def escalate_draft(cur, draft_id, slug, why):
+    cur.execute(
+        "UPDATE successbrian_os.breakdown_drafts SET status = "
+        "'escalated', review_notes = %s, updated_at = now() "
+        "WHERE id = %s", [why[:600], draft_id])
+    try:
+        cur.execute("SAVEPOINT esc")
+        eid, _p = dispatch_harness_look(cur, slug, force=True)
+        cur.execute("RELEASE SAVEPOINT esc")
+        print(f"  assist: draft #{draft_id} escalated -> full "
+              f"Einstein look for {slug} (bus event {eid})")
+    except Exception as e:
+        cur.execute("ROLLBACK TO SAVEPOINT esc")
+        print(f"  assist: draft #{draft_id} escalation dispatch "
+              f"failed: {e}")
+
+
+def materialize_draft(cur, draft_id, slug, seat, draft_text,
+                      effect):
+    """An approved draft materializes exactly once: its steps
+    file under deterministic keys (add_step is ON CONFLICT DO
+    NOTHING) and the draft records the plan fingerprint + the
+    step set, same rule as Einstein's own plans."""
+    parsed = ep.parse_plan(draft_text)
+    source = f"decomp_assist:{draft_id}"
+    keys = []
+    for i, st in enumerate(parsed["plan_steps"], 1):
+        key = f"assist-{draft_id}-step-{i}"
+        pm_core.add_step(
+            cur, key, st[:200], kind="task", source=source,
+            payload={"goal_slug": slug, "author_seat": seat,
+                     "intended_effect": effect})
+        keys.append(key)
+    for i, r in enumerate(parsed["research"], 1):
+        key = f"assist-{draft_id}-research-{i}"
+        pm_core.add_step(
+            cur, key, f"{r['question']}", kind="research",
+            source=source,
+            payload={"goal_slug": slug, "author_seat": seat,
+                     "question": r["question"], "why": r["why"],
+                     "where_answer_lives": r["where"],
+                     "intended_effect": effect})
+        keys.append(key)
+    fp = hashlib.sha256(
+        draft_text.encode("utf-8")).hexdigest()[:16]
+    cur.execute(
+        "UPDATE successbrian_os.breakdown_drafts SET status = "
+        "'materialized', fingerprint = %s, "
+        "materialized_step_keys = %s::jsonb, updated_at = now() "
+        "WHERE id = %s", [fp, json.dumps(keys), draft_id])
+    print(f"  assist: draft #{draft_id} APPROVED -> materialized "
+          f"{len(keys)} step(s) for {slug} (fingerprint {fp})")
+    return keys
+
+
+def collect_reviews(cur):
+    n = 0
+    cur.execute(
+        "SELECT id, goal_slug, author_seat, draft_text, "
+        "review_event_id, review_count FROM "
+        "successbrian_os.breakdown_drafts WHERE status = "
+        "'reviewing' ORDER BY id")
+    for (draft_id, slug, seat, draft_text, event_id,
+         rcount) in cur.fetchall():
+        env = ep._result_for_event(event_id)
+        if env is None:
+            continue
+        res = env.get("result") or {}
+        text = res.get("text") if isinstance(res, dict) else None
+        verdict, effect, notes = parse_review(text or "")
+        if verdict is None:
+            verdict, notes = "REVISE", ("review unparseable: "
+                                        + notes)[:600]
+        rcount += 1
+        if verdict == "APPROVE":
+            cur.execute(
+                "UPDATE successbrian_os.breakdown_drafts SET "
+                "review_count = %s, review_verdict = 'APPROVE', "
+                "review_notes = %s, intended_effect = %s, "
+                "updated_at = now() WHERE id = %s",
+                [rcount, notes, effect, draft_id])
+            materialize_draft(cur, draft_id, slug, seat,
+                              draft_text, effect)
+        elif verdict == "ESCALATE" or rcount >= 2:
+            cur.execute(
+                "UPDATE successbrian_os.breakdown_drafts SET "
+                "review_count = %s, review_verdict = %s, "
+                "review_notes = %s, intended_effect = %s "
+                "WHERE id = %s",
+                [rcount, verdict, notes, effect, draft_id])
+            escalate_draft(
+                cur, draft_id, slug,
+                f"{verdict} after {rcount} review(s): {notes}")
+        else:
+            cur.execute(
+                "UPDATE successbrian_os.breakdown_drafts SET "
+                "status = 'revise-returned', review_count = %s, "
+                "review_verdict = 'REVISE', review_notes = %s, "
+                "intended_effect = %s, updated_at = now() "
+                "WHERE id = %s", [rcount, notes, effect, draft_id])
+            print(f"  assist: draft #{draft_id} REVISE (review "
+                  f"{rcount}) - returned with notes; a second "
+                  f"failure escalates")
+        n += 1
+    return n
+
+
+def followup_interval_days(kind, step_key):
+    if "dispatch" in str(step_key):
+        return 3
+    return 7 if kind == "research" else 14
+
+
+def create_followups(cur):
+    """One follow-up row per harness-era completed step that
+    lacks one: intended effect from its plan, due date by
+    kind. Harness era = finished on/after 2026-11-20."""
+    n = 0
+    cur.execute(
+        "SELECT s.id, s.step_key, s.kind, s.source, s.payload, "
+        "s.finished_at, COALESCE(gc.goal_slug, "
+        "s.payload->>'goal_slug') FROM successbrian_os.pm_steps s "
+        "LEFT JOIN successbrian_os.goal_coverage gc ON "
+        "s.source = 'goal_coverage:' || gc.id::text "
+        "WHERE s.status = 'done' AND s.finished_at >= "
+        "'2026-11-20' AND (s.source LIKE 'goal_coverage:%' OR "
+        "s.source LIKE 'decomp_assist:%') AND NOT EXISTS ("
+        "SELECT 1 FROM successbrian_os.effect_followups f "
+        "WHERE f.step_id = s.id) ORDER BY s.finished_at LIMIT 50")
+    for (sid, skey, kind, source, payload, fin, slug) \
+            in cur.fetchall():
+        payload = payload or {}
+        seat = "einstein"
+        effect = payload.get("intended_effect") or ""
+        if source.startswith("decomp_assist:"):
+            did = source.split(":", 1)[1]
+            cur.execute(
+                "SELECT author_seat, intended_effect FROM "
+                "successbrian_os.breakdown_drafts WHERE id = %s",
+                [int(did)])
+            drow = cur.fetchone()
+            if drow:
+                seat, effect = drow[0], effect or (drow[1] or "")
+        elif "dispatch" in skey:
+            effect = effect or ("the deep look this step "
+                                "dispatches happens and writes "
+                                "back a plan with follow-up steps")
+        if not effect and source.startswith("goal_coverage:"):
+            look_id = source.split(":", 1)[1]
+            cur.execute(
+                "SELECT plan_text FROM "
+                "successbrian_os.einstein_passes WHERE look_id "
+                "= %s AND plan_text IS NOT NULL ORDER BY id DESC "
+                "LIMIT 1", [int(look_id)])
+            prow = cur.fetchone()
+            if prow:
+                effect = ep.parse_plan(
+                    prow[0])["verified"][:300]
+        days = followup_interval_days(kind, skey)
+        cur.execute(
+            "INSERT INTO successbrian_os.effect_followups "
+            "(step_id, step_key, goal_slug, kind, author_seat, "
+            "intended_effect, completed_at, due_at) VALUES "
+            "(%s, %s, %s, %s, %s, %s, %s, %s + (%s || ' days')"
+            "::interval) ON CONFLICT (step_id) DO NOTHING",
+            [sid, skey, slug, kind, seat, effect[:400], fin,
+             fin, days])
+        n += 1
+    return n
+
+
+def _append_harness_note(cur, slug, line):
+    node_key = gn.node_key_for_slug(slug)
+    cur.execute("SELECT readme_md FROM atlas.nodes WHERE "
+                "node_key = %s", [node_key])
+    row = cur.fetchone()
+    readme = (row[0] if row else None) or ""
+    span = ep._section_span(readme, HARNESS_BEGIN, HARNESS_END)
+    body = ""
+    if span:
+        body = readme[span[0] + len(HARNESS_BEGIN):
+                      span[1] - len(HARNESS_END)].strip()
+    _set_harness_note(cur, slug,
+                      (body + "\n" + line).strip() if body else line)
+
+
+def run_followups(cur, limit=5):
+    """Beat (b): for due follow-ups, judge from the record
+    whether the intended effect happened. Deterministic
+    evidence first - a verdict names what it rests on."""
+    n = 0
+    cur.execute(
+        "SELECT id, step_id, step_key, goal_slug, kind, "
+        "intended_effect, completed_at FROM "
+        "successbrian_os.effect_followups WHERE status = "
+        "'pending' AND due_at <= now() ORDER BY due_at LIMIT %s",
+        [limit])
+    for (fid, sid, skey, slug, kind, effect, fin) \
+            in cur.fetchall():
+        verdict, evidence = "UNCHECKABLE", ""
+        if "dispatch" in skey:
+            m = re.search(r"goal-look-(\d+)-dispatch", skey)
+            look_id = int(m.group(1)) if m else None
+            cur.execute(
+                "SELECT count(*) FROM successbrian_os.pm_steps "
+                "WHERE source = %s",
+                [f"goal_coverage:{look_id}"])
+            filed = cur.fetchone()[0]
+            cur.execute(
+                "SELECT id FROM successbrian_os.einstein_passes "
+                "WHERE look_id = %s AND plan_text IS NOT NULL "
+                "ORDER BY id DESC LIMIT 1", [look_id])
+            prow = cur.fetchone()
+            if prow or filed > 1:
+                verdict = "EFFECTIVE"
+                evidence = (f"look {look_id} produced "
+                            f"{filed} filed step(s)"
+                            + (f"; einstein pass {prow[0]} "
+                               f"wrote a plan" if prow else ""))
+            else:
+                verdict = "INEFFECTIVE"
+                evidence = (f"look {look_id} filed no follow-up "
+                            f"steps and no einstein plan exists")
+        elif kind == "research":
+            cur.execute(
+                "SELECT id FROM successbrian_os.einstein_passes "
+                "WHERE goal_slug = %s AND status = 'collected' "
+                "AND collected_at > %s ORDER BY id LIMIT 1",
+                [slug, fin])
+            crow = cur.fetchone()
+            if crow:
+                verdict = "EFFECTIVE"
+                evidence = (f"a later collected look (pass "
+                            f"{crow[0]}) consumed the goal's "
+                            f"record after this answer landed")
+            elif (datetime.now(timezone.utc) - fin).days < 30:
+                verdict = "TOO-EARLY"
+                evidence = ("no consuming look yet; under 30 "
+                            "days since completion")
+            else:
+                evidence = ("no consuming look on record 30+ "
+                            "days after completion")
+        else:
+            cur.execute(
+                "SELECT s.step_key FROM successbrian_os.pm_steps s "
+                "LEFT JOIN successbrian_os.goal_coverage gc ON "
+                "s.source = 'goal_coverage:' || gc.id::text "
+                "WHERE s.status = 'done' AND s.finished_at > %s "
+                "AND s.id <> %s AND COALESCE(gc.goal_slug, "
+                "s.payload->>'goal_slug') = %s LIMIT 1",
+                [fin, sid, slug or ""])
+            grow = cur.fetchone()
+            if grow:
+                verdict = "EFFECTIVE"
+                evidence = (f"follow-on work for the goal "
+                            f"completed afterwards ({grow[0]})")
+            elif (datetime.now(timezone.utc) - fin).days < 28:
+                verdict = "TOO-EARLY"
+                evidence = "no follow-on completion yet; early"
+            else:
+                evidence = ("no follow-on completion on record "
+                            "28+ days after completion")
+        cur.execute(
+            "UPDATE successbrian_os.effect_followups SET "
+            "status = 'done', verdict = %s, evidence = %s, "
+            "checked_at = now() WHERE id = %s",
+            [verdict, evidence[:500], fid])
+        if slug:
+            _append_harness_note(
+                cur, slug,
+                f"EFFECTIVENESS {verdict}: step {skey} - "
+                f"intended: {(effect or '')[:160]} | evidence: "
+                f"{evidence[:220]}")
+        print(f"  followup: {skey} -> {verdict} ({evidence[:80]})")
+        n += 1
+    return n
+
+
 def claim_cycle(cur, limit=CLAIM_PER_CYCLE):
     """One claim pass in harness order: consolidated/shared steps
     first, then research, then goal tier. Safe classes only -
@@ -1749,6 +2267,12 @@ def cycle(limit=DISPATCH_PER_CYCLE):
         nex = exact_title_pass(cur)
         conn.commit()
         cur.execute("BEGIN")
+        ndr = collect_drafts(cur)
+        nrv = collect_reviews(cur)
+        nfu = create_followups(cur)
+        nfv = run_followups(cur)
+        conn.commit()
+        cur.execute("BEGIN")
         nev = scan_capture_events(cur, slugs)
         conn.commit()
         cur.execute("BEGIN")
@@ -1793,6 +2317,9 @@ def cycle(limit=DISPATCH_PER_CYCLE):
         print(f"cycle: paperclip passes: decompositions +{ndec}, "
               f"blocked-named {nblk}, wakes {nwak}, disposition "
               f"flags {ndsp}, exact-title groups {nex}")
+        print(f"cycle: assist drafts settled {ndr}, reviews "
+              f"settled {nrv}, followups created {nfu}, "
+              f"followup verdicts {nfv}")
         return 0
     finally:
         conn.close()
@@ -1922,6 +2449,20 @@ def selftest():
     check("verify_research_answer rejects empty output",
           not verify_research_answer("")[0]
           and not verify_research_answer("ANSWER: x")[0])
+    rv = parse_review("VERDICT: APPROVE EFFECT: Signup counting "
+                      "exists and is read weekly. NOTES: none")
+    check("parse_review reads an approval + effect",
+          rv[0] == "APPROVE"
+          and rv[1].startswith("Signup counting"))
+    check("parse_review reads an escalation",
+          parse_review("VERDICT: ESCALATE EFFECT: x NOTES: thin "
+                       "brief")[0] == "ESCALATE")
+    check("parse_review: garbage -> no verdict",
+          parse_review("some prose without structure")[0] is None)
+    check("followup intervals: dispatch 3d, research 7d, task 14d",
+          followup_interval_days("task", "goal-look-9-dispatch") == 3
+          and followup_interval_days("research", "r-1") == 7
+          and followup_interval_days("build", "b-1") == 14)
 
     class FakeStep(dict):
         pass
@@ -1974,9 +2515,50 @@ def main():
                     help="record a blocker edge: STEP_KEY cannot "
                          "proceed until --blocked-by is done")
     ap.add_argument("--blocked-by", metavar="STEP_KEY")
+    ap.add_argument("--draft", metavar="SLUG",
+                    help="start an assisted breakdown for a goal "
+                         "by a weaker seat (see --seat)")
+    ap.add_argument("--seat", default="morpheus",
+                    help="drafting seat for --draft "
+                         "(morpheus/penny)")
+    ap.add_argument("--effectiveness", action="store_true",
+                    help="print follow-up verdicts + the per-seat "
+                         "rollup")
     ap.add_argument("--reason", default="",
                     help="with --add-blocker: why the edge exists")
     args = ap.parse_args()
+    if args.draft or args.effectiveness:
+        conn = sbos_common.connect()
+        try:
+            cur = conn.cursor()
+            ensure_schema(cur)
+            conn.commit()
+            if args.draft:
+                cur.execute("BEGIN")
+                did = draft_breakdown(cur, args.draft,
+                                      seat=args.seat)
+                conn.commit()
+                return 0 if did else 1
+            cur.execute(
+                "SELECT verdict, count(*) FROM "
+                "successbrian_os.effect_followups WHERE verdict "
+                "IS NOT NULL GROUP BY 1 ORDER BY 1")
+            print("follow-up verdicts:",
+                  dict(cur.fetchall()) or "none yet")
+            cur.execute(
+                "SELECT author_seat, kind, verdict, n FROM "
+                "successbrian_os.effectiveness_rollup ORDER BY "
+                "1, 2, 3")
+            for r in cur.fetchall():
+                print(f"  seat {r[0]} / {r[1]}: {r[2]} x{r[3]}")
+            cur.execute(
+                "SELECT status, count(*) FROM "
+                "successbrian_os.breakdown_drafts GROUP BY 1")
+            print("breakdown drafts:", dict(cur.fetchall())
+                  or "none yet")
+            return 0
+        finally:
+            conn.close()
     if args.add_blocker:
         if not args.blocked_by:
             print("--add-blocker needs --blocked-by STEP_KEY")

@@ -31,8 +31,10 @@
 
 Current population (Brian, 2026-11-24): 2x DL380p Gen8 (Proxmox, 2U each),
 2x Gertoli (decider heartbeats), 2x Aoostar, bravo (GMKtec K11) — the minis
-on rack shelves. Later per the roadmap: Node Echo (2U) and
-Mantis-3/4 (4U each). (The roadmap Frame A sketch also showed a Dell
+on rack shelves. Later per the roadmap: Node Echo (2U — ownership NOT
+confirmed: it sits in owned_hardware, but roadmap 0.2 frames it as a
+purchase; under Brians ownership rule below it is not planned on
+until he says we own it) and Mantis-3/4 (4U each). (The roadmap Frame A sketch also showed a Dell
 R630 at 1U — a pending purchase from Aaron, roadmap item 0.1, NOT owned
 hardware; it is not part of this plan base. See the correction
 appended 2026-11-24.)
@@ -157,3 +159,12 @@ as if the machine exists. Corrected in place above: every landing zone
 is now the two owned DL380p boxes (plus the minis where a workload fits
 them). If the R630 purchase ever closes, it joins the base as added
 capacity. Nothing in this plan depends on it.
+
+## Standing rule recorded 2026-11-24 (Brian)
+
+Brian: "you cannot plan that we own anything UNTIL I tell you we own
+it." Ownership, for planning purposes, is established only by Brians
+own statement. Table rows, roadmap entries, and inventory records are
+claims to check with him — never ownership facts. This plans base is
+only what Brian has attested: the two DL380ps, the two Gertolis, the
+two Aoostars, and bravo (his rack-population statement, 2026-11-24).

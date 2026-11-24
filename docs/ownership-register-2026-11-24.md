@@ -179,3 +179,25 @@ reported as residue). First live run, 2026-11-24: selftest 11/11,
 audit 0 violations, 19 unattested claims — exactly section B/C above.
 When Brian rules on a residue item, the ruling lands as a registry
 edit in that module, with this doc updated to match.
+
+## Second axis coded 2026-11-24 (Brian: intent is not ownership)
+
+Brian: “I can feel strongly about a buy and tell the system I’m
+ready to make the buy. But the buy is not owned until I specifically
+state the item is owned... owned is owned.” ownership_guard.py now
+tracks decision level (watching / interested / planning /
+ready_to_buy / parts_ordered / ordered) as an axis that never touches
+ownership: is_owned() never consults it, no registry entry may carry
+both a decision level and an attested verdict (selftest-enforced),
+and attest() — the only sanctioned crossing — refuses to run
+without Brian’s own statement quoted. The audit prints a STRONG
+INTENT — STILL NOT OWNED section; its first run names exactly one
+item: the Precision 3620 (parts ordered, still not owned). The code
+sweep behind this found no live writer that mints ownership:
+nothing in the repo or the home tree inserts into the inventory
+tables, and DealsDesk’s trend_engine already speaks correctly (a
+fired trigger flips a build to buy_now and notes Brian still makes
+every purchase decision). One vocabulary hazard surfaced by the
+audit: dealsdesk build ‘DDR4 fleet deployment (Oct 2026)’ carries
+status ‘active’ — a plan wearing an existence word, now flagged in
+every audit run.

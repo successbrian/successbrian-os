@@ -14,6 +14,22 @@ because a roadmap line named it as one. This module exists so that
 can never happen silently again: Brian will forget what he attested,
 and the code must not.
 
+THE SECOND AXIS (Brian 2026-11-24, later): "I can feel strongly
+about a buy and tell the system I'm ready to make the buy. But the
+buy is not owned until I specifically state the item is owned...
+you can add levels of decision, but ownership is a clear change.
+owned is owned." So this module tracks TWO axes that never touch:
+DECISION LEVEL (watching -> interested -> planning -> ready_to_buy
+-> parts_ordered -> ordered) records how strong the intent is, and
+OWNERSHIP (the verdict) records whether Brian has stated the item
+is owned. No decision level, however strong — not 'ready_to_buy',
+not parts ordered, not money spent — moves the ownership axis one
+millimetre. The only crossing is Brian's explicit statement, which
+is why attest() below refuses to run without his words. DealsDesk
+already speaks this way (trend_engine.py: a fired buy_trigger flips
+a build to buy_timing='buy_now' and notes 'Brian still makes every
+purchase decision'); this module makes the separation universal.
+
 THE REGISTRY BELOW is the enforceable source of truth for ownership.
 An item is PLANNING-ELIGIBLE only if it appears here as
 attested_owned, on the strength of Brian's own statement (quoted or
@@ -54,6 +70,15 @@ ATTESTED = "attested_owned"
 UNCONFIRMED = "unconfirmed"
 PLANNED = "planned_not_owned"
 UNKNOWN = "unknown"
+
+# Decision levels: the INTENT axis, weakest to strongest. This axis
+# is real and worth recording — and it is not the ownership axis.
+# An entry may carry a decision level OR an attested verdict, never
+# both: when Brian attests ownership, the decision field comes off
+# in the same edit (selftest enforces this).
+DECISION_LEVELS = ["watching", "interested", "planning",
+                   "ready_to_buy", "parts_ordered", "ordered"]
+HIGH_INTENT = {"ready_to_buy", "parts_ordered", "ordered"}
 
 # --- The registry -------------------------------------------------------------
 # Each entry: id, verdict, names (every spelling the item carries in any
@@ -153,17 +178,17 @@ REGISTRY = [
      "names": ["x79-04", "X79 Build-04"],
      "source": "ai_inventory 'maintenance' — a build SPEC",
      "note": "Register D4."},
-    {"id": "node_echo", "verdict": UNCONFIRMED,
+    {"id": "node_echo", "verdict": UNCONFIRMED, "decision": "planning",
      "names": ["Node Echo", "node-echo"],
      "source": "Split records: owned_hardware 'planned' vs ai_inventory 'active' (set to 'unconfirmed' 2026-11-24); roadmap 0.2 frames it as a purchase",
      "note": "Residue R8. NOT owned until Brian says so — register D1."},
 
     # -- Planned / paper: the records themselves agree these are not owned ----
-    {"id": "k11_zeus", "verdict": PLANNED,
+    {"id": "k11_zeus", "verdict": PLANNED, "decision": "planning",
      "names": ["K11-Zeus"],
      "source": "owned_hardware status 'planned', location 'planned'",
      "note": "A paper EPYC/MI50 design in a table named owned_hardware — the trap this guard exists for."},
-    {"id": "precision_3620", "verdict": PLANNED,
+    {"id": "precision_3620", "verdict": PLANNED, "decision": "parts_ordered",
      "names": ["Precision 3620"],
      "source": "owned_hardware status 'planned'",
      "note": "Residue R9. DealsDesk is assigned to it in its workload_profile — an assignment to a planned machine (register D5)."},
@@ -183,15 +208,15 @@ REGISTRY = [
      "names": ["smc-4u-e5v2-04", "Supermicro 4U E5-2650v2-04"],
      "source": "ai_inventory source 'planned', details 'PENDING BUILD'",
      "note": ""},
-    {"id": "smc_2027tr_1", "verdict": PLANNED,
+    {"id": "smc_2027tr_1", "verdict": PLANNED, "decision": "watching",
      "names": ["smc-2027tr-01", "Supermicro 2027TR-01 (4-Node)"],
      "source": "ai_inventory source 'ebay', details 'PENDING_PURCHASE'",
      "note": ""},
-    {"id": "smc_2027tr_2", "verdict": PLANNED,
+    {"id": "smc_2027tr_2", "verdict": PLANNED, "decision": "watching",
      "names": ["smc-2027tr-02", "Supermicro 2027TR-02 (4-Node)"],
      "source": "ai_inventory source 'ebay', details 'PENDING_PURCHASE'",
      "note": ""},
-    {"id": "dell_r630", "verdict": PLANNED,
+    {"id": "dell_r630", "verdict": PLANNED, "decision": "planning",
      "names": ["Dell R630", "R630", "PowerEdge R630"],
      "source": "fleet-roadmap 0.1 only: an unclosed purchase from Aaron; no table row anywhere",
      "note": "The 2026-11-24 specimen: planned on as a landing zone before this guard existed."},
@@ -231,6 +256,42 @@ def planning_eligible(name):
     return verdict(name)[0] == ATTESTED
 
 
+def is_owned(name):
+    """Ownership, full stop. Decision level is never consulted here:
+    feeling strongly about a buy, planning it, ordering parts, and
+    spending the money are all intent. Owned is owned (Brian,
+    2026-11-24) — and owned means Brian stated it."""
+    return verdict(name)[0] == ATTESTED
+
+
+def decision_level(name):
+    """The INTENT axis: how strong the decision is, or None. Reading
+    this can never substitute for is_owned() — the axes do not touch."""
+    _, entry = verdict(name)
+    if entry is None:
+        return None
+    return entry.get("decision")
+
+
+def attest(item_id, names, statement, note=""):
+    """The ONLY sanctioned crossing from intent to ownership.
+
+    Brian's rule makes ownership a clear change that happens when he
+    specifically states the item is owned — so this function refuses
+    to build an attested entry without his statement, verbatim, to
+    cite as the source. It returns the registry entry to commit; the
+    human or agent making the edit still makes it deliberately, in
+    the open, with the statement attached.
+    """
+    if not statement or "brian" not in statement.lower():
+        raise ValueError(
+            "attest() requires Brian's own statement that the item is "
+            "owned, quoted or cited. Intent, however strong, is not "
+            "ownership, and no other evidence crosses this line.")
+    return {"id": item_id, "verdict": ATTESTED, "names": list(names),
+            "source": statement, "note": note}
+
+
 class OwnershipError(Exception):
     pass
 
@@ -253,7 +314,7 @@ EXISTENCE_STATUSES_AI = {"active", "standby", "idle", "maintenance"}
 
 
 def audit(conn):
-    """Scan the live tables. Returns (violations, claims, notes).
+    """Scan the live tables. Returns (violations, claims, notes, intent).
 
     Violations = planning or an existence claim resting on an
     unattested machine, or the two tables contradicting each other
@@ -320,13 +381,27 @@ def audit(conn):
                              for r in cur.fetchall())
     notes.append(f"dealsdesk.builds are plans, never machines "
                  f"({build_counts})")
+    cur.execute("SELECT name FROM dealsdesk.builds WHERE status = 'active'")
+    for r in cur.fetchall():
+        notes.append(f"dealsdesk.builds: '{r['name']}' carries status "
+                     f"'active' — a plan wearing an existence word; it "
+                     f"is still a plan, not a machine")
+
+    intent = []
+    for entry in REGISTRY:
+        if entry.get("decision") in HIGH_INTENT:
+            intent.append(
+                f"{entry['id']}: decision={entry['decision']} (strong "
+                f"intent) — verdict={entry['verdict']}. Intent is not "
+                f"ownership; this changes only when Brian states the "
+                f"item is owned")
 
     recorded = set(oh_by_entry) | set(ai_by_entry)
     for entry in REGISTRY:
         if entry["verdict"] == ATTESTED and entry["id"] not in recorded:
             notes.append(f"attested but in no table: {entry['id']} "
                          f"({entry['note']})")
-    return violations, claims, notes
+    return violations, claims, notes, intent
 
 
 def _connect():
@@ -373,6 +448,29 @@ def selftest():
        (len(att), len(unc), len(pln)) == (10, 13, 9))
     ok("every attested entry cites Brian's statement",
        all("Brian" in e["source"] for e in att))
+    ok("decision axis: 3620 is parts_ordered AND still not owned",
+       decision_level("Precision 3620") == "parts_ordered"
+       and not is_owned("Precision 3620")
+       and not planning_eligible("Precision 3620"))
+    ok("no entry carries both a decision level and an attested verdict",
+       all(not (e.get("decision") and e["verdict"] == ATTESTED)
+           for e in REGISTRY))
+    ok("every decision level is a known level",
+       all(e.get("decision") in DECISION_LEVELS
+           for e in REGISTRY if e.get("decision")))
+    try:
+        attest("x", ["X"], "")
+        ok("attest() refuses without Brian's statement", False)
+    except ValueError:
+        ok("attest() refuses without Brian's statement", True)
+    try:
+        attest("x", ["X"], "the price dropped and we feel ready")
+        ok("attest() refuses on intent dressed as a statement", False)
+    except ValueError:
+        ok("attest() refuses on intent dressed as a statement", True)
+    ok("attest() builds an attested entry from Brian's statement",
+       attest("x", ["X"], "Brian, 2026-11-24: 'we own X'")["verdict"]
+       == ATTESTED)
     ok("no normalized name maps to two entries", len(_INDEX) ==
        len({k for k in _INDEX}))
     failed = [label for label, passed in checks if not passed]
@@ -398,12 +496,14 @@ def main(argv=None):
         return selftest()
     if args.list:
         for e in REGISTRY:
+            dec = f"  [decision: {e['decision']}]" if e.get("decision") \
+                else ""
             print(f"{e['verdict']:18s} {e['id']:20s} "
-                  f"{', '.join(e['names'])}")
+                  f"{', '.join(e['names'])}{dec}")
         return 0
     if args.audit:
         conn = _connect()
-        violations, claims, notes = audit(conn)
+        violations, claims, notes, intent = audit(conn)
         conn.close()
         print(f"VIOLATIONS ({len(violations)}):")
         for v in violations:
@@ -411,6 +511,9 @@ def main(argv=None):
         print(f"UNATTESTED CLAIMS ({len(claims)}) — residue, not failures:")
         for c in claims:
             print(f"  ? {c}")
+        print(f"STRONG INTENT — STILL NOT OWNED ({len(intent)}):")
+        for i in intent:
+            print(f"  > {i}")
         print(f"NOTES ({len(notes)}):")
         for n in notes:
             print(f"  - {n}")
@@ -420,7 +523,9 @@ def main(argv=None):
         for name in args.names:
             v, entry = verdict(name)
             src = entry["source"] if entry else "not in the registry"
-            print(f"{name}: {v} — {src}")
+            dec = decision_level(name)
+            dec_txt = f" [decision: {dec}]" if dec else ""
+            print(f"{name}: {v}{dec_txt} — {src}")
             if v != ATTESTED:
                 worst = 1
         return worst

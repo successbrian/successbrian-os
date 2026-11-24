@@ -127,26 +127,39 @@ def fmt(v):
 
 # ---------------------------------------------------------------- panels
 def panel_needs_brian():
+    # Brian's ONE inbox: successbrian_os.pending_questions, status
+    # 'open' - the store behind the unified Inbox page
+    # (build_unified_inbox.py renders it as "Inbox / Needs your
+    # call") and the dash-actions answer API. Brian, 2026-11-23:
+    # "needs brian - we do already have an inbox for brian." This
+    # panel reads THAT store and keeps no dashboard-side list.
+    # brian_inbox_route.py sweeps the scattered Brian-bound items
+    # (Einstein FOR BRIAN sections, held_brian pm_steps, the review
+    # passes' waiting decisions) into the same inbox, so this count
+    # is the one count of what needs Brian.
     rows = pg_rows(
-        "SELECT id, item, first_surfaced FROM successbrian_os.review_decisions "
-        "WHERE state='waiting' ORDER BY first_surfaced ASC")
+        "SELECT id, question, priority, created_at FROM "
+        "successbrian_os.pending_questions WHERE status='open' "
+        "ORDER BY priority DESC, created_at DESC")
     items = []
     oldest = None
+    oldest_date = None
     ref = now_utc()
-    for rid, item, fs in rows:
-        # first_surfaced is a date; age in whole days from that date
-        d = datetime(fs.year, fs.month, fs.day, tzinfo=timezone.utc)
-        a = age_days(d, ref)
+    for qid, question, _prio, created in rows:
+        a = age_days(created, ref)
         if oldest is None or a > oldest:
             oldest = a
-        items.append({"id": rid, "item": item,
-                      "first_surfaced": fs.isoformat(), "age_days": a})
+            oldest_date = created.date().isoformat()
+        items.append({"id": qid, "item": question,
+                      "first_surfaced": created.date().isoformat(),
+                      "age_days": a})
     n = len(items)
-    sowhat = ("%d decisions waiting; oldest is %dd old." % (n, oldest)
-              if n else "No decisions waiting on Brian.")
+    sowhat = ("%d questions in Brian's inbox; oldest is %dd old."
+              % (n, oldest) if n else "Brian's inbox is clear.")
     status = "bad" if n and oldest and oldest >= 14 else (
         "warn" if n else "ok")
     return {"count": n, "oldest_age_days": oldest,
+            "oldest_date": oldest_date,
             "top5": items[:5], "sowhat": sowhat, "status": status}
 
 

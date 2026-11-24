@@ -335,7 +335,18 @@ def fetch_evidence_rich(urls):
 
 # ------------------------------------------------------------ dig
 
-PROMPT_TEMPLATE = """Competitive research dig for SuccessBrian OS (Brian Lathe's ecosystem). QUESTION: {question} This question feeds: {feeds} EVIDENCE (primary sources fetched {today} - the subject's own pages and measured data; a source that failed to load could not be read and must be reported as unread, never guessed about): {evidence} Write a competitive assessment with EXACTLY these three sections, in this order, plain text, no preamble, no closing remarks. CRITICAL FORMAT RULE: write the ENTIRE assessment as one single unbroken block of text - NO blank lines anywhere, NO paragraph breaks, NO markdown, NO title. The channel that carries your answer back keeps only the first block, so a blank line ends your answer and the rest is lost. Start immediately with "FINDINGS:" and run each section's header inline, like this: FINDINGS: <text> CANNOT VERIFY: <text> OUTPUTS: <lines> FINDINGS: what the evidence proves, in plain words, every number tied to its source. At most 130 words. CANNOT VERIFY: what the evidence could not settle. At most 40 words. OUTPUTS: the work this study should create, at most 5 outputs, one per line, each in the form KIND| short title | why it matters - KIND is one of TASK (a doable work step), RESEARCH (a follow-up question worth a dig), ARTICLE (a blog article proposal), DECISION (a choice only Brian can make), DESIGN (an input for an active build - name the build in the title). Propose only outputs the findings actually support; omit a kind entirely rather than inventing one. Never state a price, feature, or fact that is not in the evidence; if the evidence is thin, say so in FINDINGS and propose a RESEARCH output to thicken it."""
+PROMPT_TEMPLATE = """You are Einstein, the deep-research engine in a solo operator's competitive research system. Below this contract you will find one competitive QUESTION, what it feeds, and the EVIDENCE - primary sources fetched today from the subject's own pages and measured data. Judge ONLY from this evidence. A source that failed to load could not be read - report it as unread, never guess about it. Where the evidence is silent, say UNKNOWN - never invent a price, a feature, or a fact.
+
+Write a competitive assessment with EXACTLY these three sections, in this order, plain text, no preamble, no closing remarks. CRITICAL FORMAT RULE: write the ENTIRE assessment as one single unbroken block of text - NO blank lines anywhere, NO paragraph breaks, NO markdown, NO title. The channel that carries your answer back keeps only the first block, so a blank line ends your answer and the rest is lost. Start immediately with "FINDINGS:" and run each section's header inline, like this: FINDINGS: <text> CANNOT VERIFY: <text> OUTPUTS: <lines>
+
+FINDINGS: What the evidence proves, in plain words, every number tied to its source. At most 130 words.
+CANNOT VERIFY: What the evidence could not settle. At most 40 words.
+OUTPUTS: The work this study should create, at most 5 outputs, one per line, each in the form KIND| short title | why it matters - KIND is one of TASK (a doable work step), RESEARCH (a follow-up question worth a dig), ARTICLE (a blog article proposal), DECISION (a choice only Brian can make), DESIGN (an input for an active build - name the build in the title). Propose only outputs the findings actually support; omit a kind entirely rather than inventing one. If the evidence is thin, say so in FINDINGS and propose a RESEARCH output to thicken it.
+
+QUESTION: {question}
+THIS QUESTION FEEDS: {feeds}
+EVIDENCE (fetched {today}):
+{evidence}"""
 
 
 def build_prompt(qrow, evidence_text):

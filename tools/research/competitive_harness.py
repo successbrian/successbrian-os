@@ -335,7 +335,7 @@ def fetch_evidence_rich(urls):
 
 # ------------------------------------------------------------ dig
 
-PROMPT_TEMPLATE = """You are the deep-research seat (Einstein, DeepSeek V4 Flash REAP 150B) for the competitive research harness of SuccessBrian OS, Brian Lathe's ecosystem. QUESTION: {question} This question feeds: {feeds} EVIDENCE (primary sources fetched {today} - the subject's own pages and measured data; a source marked failed could not be read and must be reported as unread, never guessed about): {evidence} Reply as ONE unbroken block of plain text with these inline headers in this exact order: FINDINGS: what the evidence proves, in plain words, with every number tied to its source. CANNOT VERIFY: what the evidence could not settle. OUTPUTS: the work this study should create, one output per line, each line in the form KIND| short title | why it matters - KIND is one of TASK (a doable work step), RESEARCH (a follow-up question worth a dig), ARTICLE (a blog article proposal), DECISION (a choice only Brian can make), DESIGN (an input for an active build - name the build in the title). Propose only outputs the findings actually support; omit a kind entirely rather than inventing one. Rules: never state a price, feature, or fact that is not in the evidence; if the evidence is thin, say so in FINDINGS and propose a RESEARCH output to thicken it."""
+PROMPT_TEMPLATE = """You are the deep-research seat (Einstein, DeepSeek V4 Flash REAP 150B) for the competitive research harness of SuccessBrian OS, Brian Lathe's ecosystem. QUESTION: {question} This question feeds: {feeds} EVIDENCE (primary sources fetched {today} - the subject's own pages and measured data; a source marked failed could not be read and must be reported as unread, never guessed about): {evidence} Reply as ONE single unbroken block of plain text. Begin your reply with the characters FINDINGS: - no title, no heading, no markdown, no preamble, nothing before it (the return channel keeps only the first block, so anything before FINDINGS: destroys the study). Use these inline headers in this exact order: FINDINGS: what the evidence proves, in plain words, with every number tied to its source. CANNOT VERIFY: what the evidence could not settle. OUTPUTS: the work this study should create, one output per line, each line in the form KIND| short title | why it matters - KIND is one of TASK (a doable work step), RESEARCH (a follow-up question worth a dig), ARTICLE (a blog article proposal), DECISION (a choice only Brian can make), DESIGN (an input for an active build - name the build in the title). Propose only outputs the findings actually support; omit a kind entirely rather than inventing one. Rules: never state a price, feature, or fact that is not in the evidence; if the evidence is thin, say so in FINDINGS and propose a RESEARCH output to thicken it."""
 
 
 def build_prompt(qrow, evidence_text):
@@ -369,7 +369,8 @@ def dispatch(qid=None):
         sbos_common.pg_exec(
             "UPDATE successbrian_os.research_questions SET "
             "evidence=%s::jsonb WHERE id=%s",
-            (json.dumps(meta), qid))
+            (json.dumps({"fetches": meta, "failed_attempts": 0}),
+             qid))
         print(f"dispatch: question #{qid} - every source failed; "
               f"left queued for a later cycle")
         return None
@@ -379,11 +380,21 @@ def dispatch(qid=None):
         probe_id=probe_id, max_tokens=MAX_TOKENS, thinking=False)
     event_id = sbos_common.dispatch_reap_packet(
         packet, source=SOURCE, priority=REAP_PRIORITY)
+    prior = sbos_common.pg_one(
+        "SELECT evidence FROM successbrian_os.research_questions "
+        "WHERE id=%s", (qid,))
+    attempts = 0
+    if isinstance(prior, dict):
+        attempts = int(prior.get("failed_attempts") or 0)
+    elif isinstance(prior, list):
+        attempts = 0
     sbos_common.pg_exec(
         "UPDATE successbrian_os.research_questions SET "
         "status='dispatched', bus_event_id=%s, probe_id=%s, "
         "evidence=%s::jsonb, dispatched_at=now() WHERE id=%s",
-        (event_id, probe_id, json.dumps(meta), qid))
+        (event_id, probe_id,
+         json.dumps({"fetches": meta, "failed_attempts": attempts}),
+         qid))
     print(f"dispatch: question #{qid} ({row[2]}) -> bus event "
           f"{event_id} at priority {REAP_PRIORITY}; "
           f"{len(fetched_ok)}/{len(urls)} sources fetched")
@@ -539,8 +550,47 @@ def collect():
             continue
         parsed = parse_study(text)
         date = f"{datetime.now(timezone.utc):%Y-%m-%d}"
-        filename = f"competitive-study-{qrow[2]}-{date}.md"
-        ev_meta = qrow[8] or []
+        filename = f"competitive-study-{qrow[2]}.md"
+        ev_raw = qrow[8] or []
+        if isinstance(ev_raw, dict):
+            ev_meta = ev_raw.get("fetches") or []
+            ev_attempts = int(ev_raw.get("failed_attempts") or 0)
+        else:
+            ev_meta, ev_attempts = ev_raw, 0
+        if not parsed["findings"]:
+            # The return leg delivered an unparseable first block
+            # (a title/preamble block eats the whole study). One
+            # automatic retry under the strict contract; a second
+            # failure files as an honestly-marked FAILED DIG with
+            # a repair task - never a hollow study.
+            attempts = ev_attempts + 1
+            if attempts < 2:
+                sbos_common.pg_exec(
+                    "UPDATE successbrian_os.research_questions "
+                    "SET status='queued', bus_event_id=NULL, "
+                    "evidence=%s::jsonb WHERE id=%s",
+                    (json.dumps({"fetches": ev_meta,
+                                 "failed_attempts": attempts}),
+                     qrow[0]))
+                print(f"collect: question #{qrow[0]} dig came "
+                      f"back unparseable (attempt {attempts}); "
+                      f"re-queued for one strict-contract retry")
+                continue
+            parsed = {
+                "findings": "FAILED DIG (2 attempts): the REAP "
+                    "return leg delivered an unparseable first "
+                    "block both times, so no usable synthesis "
+                    "landed. Raw returned text: " + text[:300],
+                "cannot_verify": "everything - no synthesis "
+                    "landed",
+                "outputs": [{
+                    "kind": "RESEARCH",
+                    "title": "Repair the competitive dig output "
+                             "contract",
+                    "why": "Two consecutive digs returned "
+                           "unparseable first blocks; the harness "
+                           "cannot route findings it cannot "
+                           "parse."}]}
         ev_lines = "\n".join(
             f"- {m.get('url')} -> {m.get('final_url', 'FAILED')} "
             f"({m.get('status', m.get('error', '?'))})"

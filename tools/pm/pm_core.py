@@ -120,7 +120,7 @@ def add_step(cur, key, title, kind="task", source=None, origin="ecosystem",
 
 
 def claim(cur, actor, limit=1, location=None, kinds=None, tier=None,
-          exclude_tier=None):
+          exclude_tier=None, key_like=None):
     """Hand out ready steps: queued, all deps done, highest effective
     priority first. Effective priority = priority + age boost (+5 per day
     queued, capped at +25) — the starvation guard, so low-priority work
@@ -129,7 +129,10 @@ def claim(cur, actor, limit=1, location=None, kinds=None, tier=None,
     FOR. tier=X claims only steps FOR X; exclude_tier=X claims
     everything EXCEPT steps for X (a NULL tier counts as unassigned,
     so legacy steps stay claimable by the default worker). Without
-    either, behavior is unchanged."""
+    either, behavior is unchanged.
+    key_like scopes claims to step_keys matching a LIKE pattern
+    (selftest hermeticity: the selftest claims only its own probe
+    steps, never a live higher-priority step)."""
     cur.execute(
         """SELECT s.id, s.step_key, s.title, s.kind, s.priority, s.origin
              FROM successbrian_os.pm_steps s
@@ -139,6 +142,7 @@ def claim(cur, actor, limit=1, location=None, kinds=None, tier=None,
                    OR s.payload->>'engine_tier' = %s)
               AND (%s::text IS NULL
                    OR s.payload->>'engine_tier' IS DISTINCT FROM %s)
+              AND (%s::text IS NULL OR s.step_key LIKE %s)
               AND NOT EXISTS (
                     SELECT 1 FROM successbrian_os.pm_step_deps d
                       JOIN successbrian_os.pm_steps dep ON dep.id = d.depends_on_id
@@ -147,7 +151,8 @@ def claim(cur, actor, limit=1, location=None, kinds=None, tier=None,
                         / 86400)::int * 5)) DESC, s.created_at ASC
             LIMIT %s
             FOR UPDATE OF s SKIP LOCKED""",
-        (kinds, kinds, tier, tier, exclude_tier, exclude_tier, limit))
+        (kinds, kinds, tier, tier, exclude_tier, exclude_tier,
+         key_like, key_like, limit))
     raw = cur.fetchall()
     def v(r, i, k):
         return r[k] if isinstance(r, dict) else r[i]
@@ -202,25 +207,27 @@ def selftest():
     add_step(cur, f"{tag}-b", "selftest B", priority=99, depends_on=(f"{tag}-a",))
     add_step(cur, f"{tag}-c", "selftest C", priority=50)
     c.commit()
-    got1 = claim(cur, "selftest", limit=1)
-    c.commit()
-    assert got1 and got1[0][1] == f"{tag}-a", f"claim1 should be A, got {got1}"
-    print("PASS claim skips blocked B (dep unmet), takes highest ready A")
-    finish(cur, f"{tag}-a", "done", {"ok": True})
-    c.commit()
-    got2 = claim(cur, "selftest", limit=1)
-    c.commit()
-    assert got2 and got2[0][1] == f"{tag}-b", f"claim2 should be B after A done, got {got2}"
-    print("PASS dependency releases B; priority 99 beats C's 50")
-    did = decide(cur, "selftest", "selftest decision", step_key=f"{tag}-b",
-                 certainty=0.95, why=tag)
-    c.commit()
-    cur.execute("SELECT count(*) FROM successbrian_os.pm_decisions WHERE rationale=%s", (tag,))
-    assert cur.fetchone()[0] == 1, "decision stream write failed"
-    print(f"PASS decision stream write (id {did})")
-    cur.execute("DELETE FROM successbrian_os.pm_decisions WHERE rationale=%s", (tag,))
-    cur.execute("DELETE FROM successbrian_os.pm_steps WHERE step_key LIKE %s", (tag + "-%",))
-    c.commit()
+    try:
+        got1 = claim(cur, "selftest", limit=1, key_like=tag + "-%")
+        c.commit()
+        assert got1 and got1[0][1] == f"{tag}-a", f"claim1 should be A, got {got1}"
+        print("PASS claim skips blocked B (dep unmet), takes highest ready A")
+        finish(cur, f"{tag}-a", "done", {"ok": True})
+        c.commit()
+        got2 = claim(cur, "selftest", limit=1, key_like=tag + "-%")
+        c.commit()
+        assert got2 and got2[0][1] == f"{tag}-b", f"claim2 should be B after A done, got {got2}"
+        print("PASS dependency releases B; priority 99 beats C's 50")
+        did = decide(cur, "selftest", "selftest decision", step_key=f"{tag}-b",
+                     certainty=0.95, why=tag)
+        c.commit()
+        cur.execute("SELECT count(*) FROM successbrian_os.pm_decisions WHERE rationale=%s", (tag,))
+        assert cur.fetchone()[0] == 1, "decision stream write failed"
+        print(f"PASS decision stream write (id {did})")
+    finally:
+        cur.execute("DELETE FROM successbrian_os.pm_decisions WHERE rationale=%s", (tag,))
+        cur.execute("DELETE FROM successbrian_os.pm_steps WHERE step_key LIKE %s", (tag + "-%",))
+        c.commit()
     cur.execute("SELECT count(*) FROM successbrian_os.pm_steps WHERE step_key LIKE %s", (tag + "-%",))
     assert cur.fetchone()[0] == 0, "selftest cleanup failed"
     c.close()

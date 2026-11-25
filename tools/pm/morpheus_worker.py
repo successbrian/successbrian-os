@@ -84,6 +84,12 @@ def _normalize_verdict(parsed):
     reply carries no recognizable verdict. Dialects seen in the wild:
     {verdict: ...} (house), {status: PASS/FAIL, reasons: [...]},
     {result: PASS/FAIL, ...} and {pass: true/false, reason: ...}.
+    {conditions_held: [...], conditions_not_held: [...]} (a checklist
+    verdict: pass iff nothing is not held), and a verdict object nested
+    one level down under a wrapper key (e.g. {"report": {"result":
+    "PASS", ...}} — the wrapper itself carries no verdict key).
+    Extended 2026-11-25 (review pass, check 637): the two shapes that
+    failed as 'missing output keys' on pm_steps 11960/12095.
     A judge that rendered a verdict must not be executed for dialect:
     until 2026-11-13 the worker failed those steps as 'missing output
     keys' and 29 QA checks recorded machinery failures instead of the
@@ -96,6 +102,7 @@ def _normalize_verdict(parsed):
     if not isinstance(parsed, dict):
         return None
     verdict = None
+    conditions_evidence = None
     if "verdict" in parsed:
         v = parsed["verdict"]
         verdict = ("pass" if (v is True or str(v).strip().lower()
@@ -120,12 +127,38 @@ def _normalize_verdict(parsed):
             s = str(p).strip().lower()
             if s:
                 verdict = "pass" if s in _PASS_WORDS else "fail"
+    elif "conditions_held" in parsed or "conditions_not_held" in parsed:
+        held = parsed.get("conditions_held")
+        not_held = parsed.get("conditions_not_held")
+        if isinstance(held, list) and isinstance(not_held, list):
+            verdict = "pass" if not not_held else "fail"
+            conditions_evidence = (
+                "held: " + ", ".join(str(x) for x in held)
+                + "; not held: " + ", ".join(str(x) for x in not_held))
     if verdict is None:
+        # One level down: the verdict object nested under a wrapper key.
+        # Only the unambiguous keys ("verdict"/"result") count here —
+        # "status"/"pass" are too generic to trust nested (a queue
+        # snapshot's {"status": "pending"} is not a verdict). Exactly
+        # one nested verdict-bearing object must exist; otherwise the
+        # reply stays unrecognized rather than guessed.
+        nested = [v for v in parsed.values()
+                  if isinstance(v, dict)
+                  and ("verdict" in v or "result" in v)]
+        if len(nested) == 1:
+            inner = _normalize_verdict(nested[0])
+            if inner is not None:
+                out = dict(parsed)
+                out["verdict"] = inner["verdict"]
+                if "evidence" not in out:
+                    out["evidence"] = inner.get("evidence", "")
+                return out
         return None
     out = dict(parsed)
     out["verdict"] = verdict
     if "evidence" not in out:
-        ev = out.get("reasons") or out.get("reason")
+        ev = (conditions_evidence or out.get("reasons")
+              or out.get("reason"))
         if ev is None:
             det = out.get("details")
             if isinstance(det, str):
@@ -233,6 +266,18 @@ def dialect_test():
         ({"status": "FAIL", "stage": "factcheck",
           "details": "factcheck output does not exist"}, "fail"),
         ({"verdict": "pass", "evidence": "on record"}, "pass"),
+        # 2026-11-25 (review pass, check 637): the conditions checklist
+        # shape from pm_steps 11960, and a verdict nested one level
+        # down under a wrapper key (pm_steps 12095).
+        ({"conditions_held": ["body_text_serif"],
+          "conditions_not_held": []}, "pass"),
+        ({"conditions_held": ["body_text_serif"],
+          "conditions_not_held": ["comfortable_reading_size",
+                                  "clear_blank_space_between_paragraphs"]},
+         "fail"),
+        ({"report": {"result": "PASS", "confidence": 0.9}}, "pass"),
+        ({"report": {"result": "FAIL", "reason": "queue stuck"}},
+         "fail"),
     ]
     for raw_in, want in dialect_cases:
         got = _normalize_verdict(raw_in)
@@ -242,6 +287,14 @@ def dialect_test():
     assert ev["evidence"] == "factcheck output missing", ev
     assert _normalize_verdict(
         {"improvement": "Introduce a quiet-pain detector"}) is None
+    # Ambiguous or verdict-free nested shapes stay unrecognized.
+    assert _normalize_verdict(
+        {"a": {"result": "PASS"}, "b": {"result": "FAIL"}}) is None
+    assert _normalize_verdict(
+        {"snapshot": {"status_counts": {"pending": 1}}}) is None
+    ev2 = _normalize_verdict(
+        {"conditions_held": ["a"], "conditions_not_held": ["b"]})
+    assert ev2["evidence"] == "held: a; not held: b", ev2
     print(f"DIALECT_OK ({len(dialect_cases)} cases; no-verdict reply "
           "still unrecognized)")
     return 0

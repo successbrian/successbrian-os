@@ -54,7 +54,14 @@ def check_qa_failing(params):
     n = 0 if ids == "" else len(ids.split(","))
     finding = None
     if n > 0:
-        finding = (f"qa_failing:{ids}", f"{n} QA checks failing",
+        # Stable dedup key on purpose (review-pass-pm-2026-11-16, friction
+        # #35): the failing SET churns every cycle as checks flip
+        # fail/queued/pass, and keying on the id list filed a new capture
+        # per churn — 20 in the 2026-11-16 owner-absent window, 272 open
+        # finding rows. The live id list still rides in detail, refreshed
+        # on the open row each cycle; re-filing is gated on a material
+        # count move (see the filing loop).
+        finding = ("qa_failing:count", f"{n} QA checks failing",
                    f"failing_check_ids={ids}")
     return n, finding
 
@@ -94,6 +101,23 @@ CHECKS = {
     "price_expired": check_price_expired,
     "issues_open": check_issues_open,
 }
+
+
+def qa_refile_allowed(cur_title: str, baseline_title: str | None) -> bool:
+    """QA-count re-file gate (friction #35/#38, check 740 2026-11-26).
+
+    cur_title is the finding title, e.g. "130 QA checks failing";
+    baseline_title is the latest QA-count capture title filed by ANY
+    agent, e.g. "[agent-cycle:altair] 131 QA checks failing", or None.
+    Re-file only on a material move (>=5) from the shared baseline;
+    unparseable/missing baseline fails open to filing.
+    """
+    try:
+        cur_n = int(cur_title.split()[0])
+        filed_n = int((baseline_title or "").split()[1])
+    except (ValueError, IndexError):
+        return True
+    return abs(cur_n - filed_n) >= 5
 
 
 def file_bridge(agent: str, title: str, detail: str) -> str:
@@ -144,6 +168,36 @@ def main() -> int:
         full_key = f"{agent}:{dedup}"
         existing = q(f"""select id from successbrian_os.agent_findings
           where dedup_key = {sql_str(full_key)} and status = 'open'""")
+        if existing and ck == "qa_failing":
+            # Re-file only on a material move (>=5) from the last filed
+            # count; routine churn just refreshes the open row's detail.
+            # (Friction #35: the count band 127-132 moves within +/-3 of
+            # the filed count, so no filing; a genuine +/-5 move files
+            # once and resets the baseline.)
+            # (Friction #38, review-pass-pm-2026-11-17: the baseline never
+            # moved — the upsert refreshed detail but not title, so the
+            # row kept its first-filed count (130) and every run with
+            # count >=135 re-filed: 36 captures in the 2026-11-17 window.
+            # title = excluded.title keeps the baseline on the last
+            # filed count, so the gate works as designed.)
+            # (Check 740, spencer cycle #1046 2026-11-26: the gate above
+            # compared against THIS agent's own row, so a genuine >=5
+            # move filed TWICE — once per agent (altair :07/:37, ceo
+            # :22/:52) — 10 QA-count captures in 6h vs the <=4 cap.
+            # The baseline is now SHARED: the latest QA-count capture
+            # filed by ANY agent (same title pattern check 740 counts),
+            # so one move files once. First agent past the move files
+            # and closes its own row; the other sees the new baseline
+            # and only refreshes its detail. Unparseable/missing
+            # baseline fails open to filing, as before.)
+            row = q("""select title from atlas.scattered_captures
+              where title like '[agent-cycle:%] % QA checks failing'
+              order by created_at desc limit 1""")
+            if qa_refile_allowed(title, row or None):
+                q(f"""update successbrian_os.agent_findings
+                  set status = 'closed'
+                  where dedup_key = {sql_str(full_key)}""")
+                existing = ""
         if existing:
             q(f"""update successbrian_os.agent_findings
               set last_seen = now(), times_seen = times_seen + 1,
@@ -156,7 +210,7 @@ def main() -> int:
                       {sql_str(ck)}, {sql_str(title)}, {sql_str(detail)})
               on conflict (dedup_key) do update
               set last_seen = now(), times_seen = agent_findings.times_seen + 1,
-                  status = 'open', detail = excluded.detail""")
+                  status = 'open', title = excluded.title, detail = excluded.detail""")
             new_count += 1
             if not args.no_file:
                 print(f"  filed: {file_bridge(agent, title, detail)}")

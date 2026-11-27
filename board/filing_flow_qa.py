@@ -13,6 +13,10 @@ when the repaired state still holds:
   raw-age    no capture has sat status='raw' for over 26
              hours (hourly sweep + daily triage bound, a
              machinery choice from the 2026-11-09 repair)
+  drainage   the unsorted tray is actually draining: every
+             document past the clerk-tray age threshold is
+             escalated, a true duplicate, or freshly examined
+             (2026-11-27 successor gauge, friction #47)
 """
 
 import json
@@ -103,10 +107,95 @@ def mode_raw_age():
     return 0
 
 
+
+
+def mode_drainage():
+    """The tray's DRAINAGE gauge (2026-11-27, successor to the
+    held-list accounting of mode 'unsorted' — friction #47:
+    check 532's green only ever meant 'nothing unaccounted',
+    and it went green on a full tray). Drainage asks whether
+    the tray is actually being worked down: every document
+    past the clerk-tray age threshold (7 days) must be
+    accounted as escalated (an open clerk-tray question in
+    Brian's inbox covers its cluster), a true duplicate, or
+    not yet examined by a loop run. Anything else — legacy
+    holds, failed moves, strays — is unaccounted backlog and
+    this check FAILS, which is the tray's true state until
+    the loop and Brian's rulings drain it. The printed line
+    always carries the tray count and median age so the level
+    is visible even when the check passes."""
+    import re as _re
+    from datetime import datetime, timezone
+    sys.path.insert(0, os.path.expanduser(
+        "~/successbrian-os/tools"))
+    import sbos_common
+    db = sqlite3.connect("file:%s?mode=ro" % ALLM_DB, uri=True)
+    rows = db.execute(
+        "SELECT wd.filename, wd.createdAt FROM "
+        "workspace_documents wd JOIN workspaces w "
+        "ON w.id = wd.workspaceId WHERE w.slug = 'unsorted'"
+    ).fetchall()
+    db.close()
+    held = {}
+    if os.path.exists(HELD):
+        for h in json.load(open(HELD)):
+            held[h["filename"]] = h.get("why", "")
+    conn = sbos_common.connect(user="postgres")
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT context FROM successbrian_os.pending_questions "
+        "WHERE status = 'open' AND asked_by = 'clerk-tray'")
+    open_clusters = set()
+    for (ctx,) in cur.fetchall():
+        m = _re.search(r"\[clerk-tray cluster: ([^\]]+)\]",
+                       ctx or "")
+        if m:
+            open_clusters.add(m.group(1))
+    conn.close()
+    now = datetime.now(timezone.utc)
+    ages = []
+    unaccounted = 0
+    aged = 0
+    for fn, created in rows:
+        ts = created
+        if isinstance(ts, (int, float)):
+            ts = ts / 1000.0 if ts > 1e11 else ts
+            dt = datetime.fromtimestamp(ts, timezone.utc)
+        else:
+            dt = datetime.fromisoformat(
+                str(ts).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+        age = (now - dt).days
+        ages.append(age)
+        if age < 7:
+            continue
+        aged += 1
+        why = held.get(fn, "")
+        m = _re.match(r"clerk-tray: (.+)$", why or "")
+        cluster = m.group(1) if m else None
+        if cluster == "true-duplicate":
+            continue
+        if cluster and cluster in open_clusters:
+            continue
+        unaccounted += 1
+    ages.sort()
+    median = ages[len(ages) // 2] if ages else 0
+    print("TRAY_DRAINAGE tray=%d median_age_days=%d aged=%d "
+          "unaccounted=%d" % (len(rows), median, aged,
+                              unaccounted))
+    if unaccounted:
+        return 1
+    print("TRAY_DRAINAGE_OK tray=%d median_age_days=%d"
+          % (len(rows), median))
+    return 0
+
+
 if __name__ == "__main__":
     modes = {"unsorted": mode_unsorted,
              "unindexed": mode_unindexed,
-             "raw-age": mode_raw_age}
+             "raw-age": mode_raw_age,
+             "drainage": mode_drainage}
     if len(sys.argv) != 2 or sys.argv[1] not in modes:
         print("usage: filing_flow_qa.py {%s}"
               % "|".join(modes))

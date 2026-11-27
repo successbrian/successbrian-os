@@ -348,6 +348,45 @@ def missing_investigation_sections(note: str | None) -> list[str]:
             if not any(line.startswith(s + ":") for line in lines)]
 
 
+# Degenerate REAP returns (B27-3, 2026-11-27): gamma sometimes returns
+# prompt echo instead of section content — the bare prompt header
+# ("DEEP INVESTIGATION — ..."), a preamble ("Based on the flags ..."),
+# or a reasoning preamble ("We need to write only ...", "Hmm, the user
+# is asking ..."). The collector used to prepend the section header to
+# ANY returned text, so a 58-char header echo landed as a real EVIDENCE
+# section (bus event 2490, probe item 187) and the chain would have
+# called itself 3/4. A section must carry real content to land. A real
+# section is 3-5 dense sentences (probe 187: WHAT 1872 chars, TRIED
+# 2169 chars); anything under the floor is echo or preamble.
+DEGENERATE_SECTION_MIN_CHARS = 100
+DEGENERATE_SECTION_PREFIXES = (
+    "DEEP INVESTIGATION",
+    "BASED ON THE FLAGS",
+    "BASED ON THE PROVIDED",
+    "WE NEED TO WRITE ONLY",
+    "HMM, THE USER IS ASKING",
+    "**VERDICT:**",
+)
+# A degenerate return is retried in place, bounded: after this many
+# dispatches of the same section the chain resets (landed sections kept)
+# instead of burning 500-token REAP runs forever.
+MAX_SECTION_RETRIES = 3
+
+
+def is_degenerate_section_text(text: str | None, section: str) -> bool:
+    """True when gamma's returned section text carries no real content
+    for `section`: too short after stripping an optional "SECTION:"
+    header, or starting with a known echo/preamble prefix. Prefixes are
+    matched at the START only — real prose may mention these phrases
+    mid-text without being echo."""
+    body = (text or "").strip()
+    if body.upper().startswith(section.upper() + ":"):
+        body = body[len(section) + 1:].strip()
+    if len(body) < DEGENERATE_SECTION_MIN_CHARS:
+        return True
+    return body.upper().startswith(DEGENERATE_SECTION_PREFIXES)
+
+
 def _dispatch_investigation_section(item_id: int, title: str,
                                     detail: str | None, op: str,
                                     creator: str, section: str,
@@ -590,6 +629,42 @@ def collect_investigation_sections(dry: bool = False) -> dict:
             out["completed"] += 1
             print(f"commons item #{item_id}: event #{eid} finished, "
                   f"note already complete — marked done")
+            continue
+        if is_degenerate_section_text(sec_text, section):
+            # Gamma returned echo, not content: never land it — the
+            # header-prepend below would manufacture a "SECTION:" line
+            # from echo and the chain would call a hollow section done.
+            # Retry the same section in place (note untouched); after
+            # MAX_SECTION_RETRIES degenerate returns the chain resets
+            # with the reason logged, landed sections kept.
+            attempts = pg_one(
+                "select count(*) from bus.events "
+                "where event_type = 'reap_infer' "
+                "and payload->>'commons_item_id' = %s "
+                "and payload->>'section' = %s",
+                (str(item_id), section))
+            if dry:
+                out["dispatched"] += 1
+                print(f"commons item #{item_id}: degenerate {section} "
+                      f"return (bus event #{eid}) — would retry "
+                      f"(attempt {attempts + 1} of {MAX_SECTION_RETRIES})")
+                continue
+            if attempts >= MAX_SECTION_RETRIES:
+                _reset_investigation(
+                    item_id, who,
+                    f"150B investigation: {section} returned degenerate "
+                    f"echo {attempts} times (bus event #{eid}) — "
+                    "investigation reset; re-flag or reinvestigate to retry.")
+                out["reset"] += 1
+                print(f"commons item #{item_id}: degenerate {section} "
+                      f"return {attempts}x — reset")
+                continue
+            _dispatch_investigation_section(
+                item_id, title, detail, op, creator, section, prior=note)
+            out["dispatched"] += 1
+            print(f"commons item #{item_id}: degenerate {section} return "
+                  f"(bus event #{eid}) — retrying same section "
+                  f"(attempt {attempts + 1} of {MAX_SECTION_RETRIES})")
             continue
         sec = sec_text.strip()
         if not sec.upper().startswith(section + ":"):
@@ -1003,6 +1078,21 @@ def selftest() -> int:
             "WHAT: The fix did not resolve it. Concrete evidence: the "
             "clusters are live, not stale.") == ["EVIDENCE", "TRIED", "FIXES"], \
             "prose mentioning a section name mid-sentence does not count as landed (B27-3)"
+        assert is_degenerate_section_text(
+            "# DEEP INVESTIGATION — Agent Commons flag (SuccessBrian OS)",
+            "EVIDENCE"), \
+            "bare prompt-header echo is degenerate (B27-3, bus event 2490)"
+        assert is_degenerate_section_text(
+            "We need to write only the FIXES section. The user says: "
+            "\"Write ONLY the FIXES section.\" " + "x " * 60, "FIXES"), \
+            "reasoning-preamble echo is degenerate even at length"
+        assert is_degenerate_section_text(
+            "Based on the flags provided, here's my assessment:", "WHAT"), \
+            "preamble-only return is degenerate"
+        assert not is_degenerate_section_text(
+            "EVIDENCE: " + "The logs show the fault on every run. " * 8,
+            "EVIDENCE"), \
+            "a real multi-sentence section is not degenerate"
         assert REAP_MAX_TOKENS == 500, "sizing law: 500-token cap"
         assert INVESTIGATION_THINKING is False, \
             "investigation dispatch sends thinking=false (REAP contract)"
@@ -1061,6 +1151,8 @@ def selftest() -> int:
                          investigate="dry")
         issue2 = fl2["item_id"]
         fake_ev = fake_ev2 = None
+        fake_ev3 = None
+        degenerate_priors: list = []
         try:
             fake_ev = pg_one(
                 "insert into bus.events (event_type, source, target, "
@@ -1076,7 +1168,7 @@ def selftest() -> int:
                 "message_type, subject, body) values ('gamma', "
                 "'inference_result', %s, %s)",
                 (f"gamma: event {fake_ev} done (reap_infer)",
-                 json.dumps({"result": {"text": "EVIDENCE: seen in logs"}})))
+                 json.dumps({"result": {"text": "EVIDENCE: the fault reproduces on every run against the live tables, the logs show the same three assertion IDs failing in the same order, and a clean checkout with the fix reverted fails identically."}})))
             pg_exec(
                 f"""update {SCHEMA}.agent_work_items
                        set investigation_status = 'queued',
@@ -1117,7 +1209,7 @@ def selftest() -> int:
                 "message_type, subject, body) values ('gamma', "
                 "'inference_result', %s, %s)",
                 (f"gamma: event {fake_ev2} done (reap_infer)",
-                 json.dumps({"result": {"text": "FIXES: do the thing first"}})))
+                 json.dumps({"result": {"text": "FIXES: regenerate the state-machine code from the source table first, then re-run the goal-engine suite; if the five transitions still fail, clear the build cache and rebuild before touching the transition table."}})))
             pg_exec(
                 f"""update {SCHEMA}.agent_work_items
                        set investigation_status = 'queued',
@@ -1138,7 +1230,7 @@ def selftest() -> int:
                 (issue2,))[0]
             assert row2[0] == "done" and row2[1] is None, \
                 "4/4 note marks the investigation done, ref cleared"
-            assert "FIXES: do the thing first" in (row2[2] or ""), \
+            assert "FIXES: regenerate the state-machine code" in (row2[2] or ""), \
                 "landed FIXES section is on the note"
             n_ev = pg_one(
                 "select count(*) from bus.events where "
@@ -1147,8 +1239,77 @@ def selftest() -> int:
                 "completing at 4/4 dispatches no further bus event"
             steps.append("collector live landing (FIXES lands, 4/4 done, "
                          "no further dispatch)")
+
+            # Degenerate return: gamma echoes the prompt header instead
+            # of section content (B27-3, bus event 2490 on probe 187).
+            # The collector must NOT land it — the header-prepend would
+            # manufacture a real "EVIDENCE:" line from echo. After
+            # MAX_SECTION_RETRIES degenerate returns the chain resets
+            # (landed sections kept on the note); the retry itself is
+            # proven live on probe 187 after deploy, not here — a live
+            # retry would queue a real REAP job for a disposable issue.
+            fl3 = raise_flag(op, a, "SELFTEST flag 3: degenerate return",
+                             detail="disposable degenerate proof",
+                             investigate="dry")
+            issue3 = fl3["item_id"]
+            fake_ev3 = pg_one(
+                "insert into bus.events (event_type, source, target, "
+                "priority, payload, status) values ('reap_infer', %s, "
+                "'gamma', %s, %s, 'done') returning id",
+                (a, INVESTIGATION_PRIORITY,
+                 Json({"probe_id": INVESTIGATION_PROBE_ID,
+                       "commons_item_id": issue3, "section": "EVIDENCE",
+                       "thinking": INVESTIGATION_THINKING,
+                       "max_tokens": REAP_MAX_TOKENS})))
+            pg_exec(
+                "insert into successbrian_os.outbox (source_agent, "
+                "message_type, subject, body) values ('gamma', "
+                "'inference_result', %s, %s)",
+                (f"gamma: event {fake_ev3} done (reap_infer)",
+                 json.dumps({"result": {"text":
+                    "# DEEP INVESTIGATION — Agent Commons flag "
+                    "(SuccessBrian OS)"}})))
+            # Prior dispatches of the same section, so this degenerate
+            # return trips the retry bound and resets.
+            for _ in range(MAX_SECTION_RETRIES):
+                prior = pg_one(
+                    "insert into bus.events (event_type, source, target, "
+                    "priority, payload, status) values ('reap_infer', %s, "
+                    "'gamma', %s, %s, 'done') returning id",
+                    (a, INVESTIGATION_PRIORITY,
+                     Json({"probe_id": INVESTIGATION_PROBE_ID,
+                           "commons_item_id": issue3, "section": "EVIDENCE",
+                           "thinking": INVESTIGATION_THINKING,
+                           "max_tokens": REAP_MAX_TOKENS})))
+                degenerate_priors.append(prior)
+            pg_exec(
+                f"""update {SCHEMA}.agent_work_items
+                       set investigation_status = 'queued',
+                           investigation_job_ref = %s,
+                           investigation_result_note = %s,
+                           updated_at = now()
+                     where id = %s""",
+                (f"bus.events:{fake_ev3}",
+                 "WHAT: the fault reproduces on every run against the "
+                 "live tables, and the logs show the same three assertion "
+                 "IDs failing in the same order on each run.", issue3))
+            reset_coll = collect_investigation_sections()
+            assert reset_coll["reset"] >= 1, \
+                "degenerate return past the retry bound resets the chain"
+            row3 = pg_rows(
+                f"""select investigation_status, investigation_job_ref,
+                           investigation_result_note
+                      from {SCHEMA}.agent_work_items where id = %s""",
+                (issue3,))[0]
+            assert row3[0] == "none" and row3[1] is None, \
+                "reset clears the ref and parks the investigation"
+            assert row3[2].startswith("WHAT: ") \
+                and "EVIDENCE:" not in (row3[2] or ""), \
+                "reset keeps landed sections; the echo never lands"
+            steps.append("collector degenerate-return guard (echo not "
+                         "landed, chain reset at the retry bound)")
         finally:
-            for ev in (fake_ev, fake_ev2):
+            for ev in [fake_ev, fake_ev2, fake_ev3] + degenerate_priors:
                 if ev:
                     pg_exec("delete from bus.events where id = %s", (ev,))
                     pg_exec(

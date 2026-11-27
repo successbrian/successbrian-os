@@ -157,10 +157,21 @@ def find_blocking_ruling(item_text):
     altair.brian_decisions, or None. Blocking = the decision's answer
     carries block language about the item. This is the Q4 citizen: the
     ruling lives in data; code only reads it."""
-    for d in decisions_for(item_text):
-        if _BLOCK_RX.search(d.get("answer") or ""):
-            return d
-    return None
+    blockers = [d for d in decisions_for(item_text)
+                if _BLOCK_RX.search(d.get("answer") or "")]
+    if not blockers:
+        return None
+    # Rank by how directly the decision's QUESTION addresses the item
+    # (count of item tokens hitting the question), recency as tiebreak.
+    # 2026-11-27 triage: pure recency returned bridge-cap-2043 (the P40
+    # flip-logic ruling) ahead of d261025-p40block (the fleet purchase
+    # block) -- right outcome, wrong provenance.
+    toks = _item_tokens(item_text)
+    def q_hits(d):
+        q = " " + (d.get("question") or "").lower() + " "
+        return sum(1 for t in toks if re.search(r"\b%s\b" % re.escape(t), q))
+    blockers.sort(key=q_hits, reverse=True)
+    return blockers[0]
 
 
 # ---------------------------------------------------------------------------

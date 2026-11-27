@@ -112,8 +112,14 @@ def lyra_desk_step(cur, step):
                        {"why": f"signal {sid} not found"})
         return f"lyra: desk step {step['step_key']} signal missing — failed"
     if payload.get("packet") and payload.get("position"):
+        # 2026-11-27 checks-pass triage: this branch neither finished
+        # nor released the claim, stranding the step in 'running'
+        # forever (QA 801 zombies). Release it back to the queue --
+        # the state its own message always claimed -- where it waits
+        # for the gate routine (QA 63) instead of posing as live work.
+        release(cur, step["step_key"])
         return (f"lyra: desk signal {sid} already packeted, gate "
-                f"undetermined — left queued for judgment "
+                f"undetermined — released to queue for judgment "
                 f"(no re-assembly)")
     packet = {"signal_id": sid, "kind": sig["kind"], "title": sig["title"],
               "body": (sig["body"] or "")[:1500]}

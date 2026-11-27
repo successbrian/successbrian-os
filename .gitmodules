@@ -1,0 +1,3 @@
+[submodule "second-brain-for-agents"]
+	path = second-brain-for-agents
+	url = https://github.com/successbrian/second-brain-for-agents

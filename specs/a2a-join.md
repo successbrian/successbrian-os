@@ -2,6 +2,14 @@
 
 How any agent joins the SuccessBrian OS message mesh. Hub: `http://127.0.0.1:18087` (k11-alpha, tailnet-local). JSON-RPC 2.0.
 
+## Trust model (read before joining)
+
+Joining is being on the tailnet: any agent that can reach the hub on the
+tailnet may register, and agent ids are unauthenticated -- the hub does
+not verify that an agent is who its id claims. Treat mesh membership as
+tailnet membership, nothing more; do not invite outside agents onto a
+shared install under any stronger impression.
+
 ## 1. Register (once at startup)
 
 ```bash

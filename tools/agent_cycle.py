@@ -213,7 +213,23 @@ def main() -> int:
                   status = 'open', title = excluded.title, detail = excluded.detail""")
             new_count += 1
             if not args.no_file:
-                print(f"  filed: {file_bridge(agent, title, detail)}")
+                if ck == "qa_failing":
+                    # QA 722 cap (<=6 QA-count bridge captures per 24h,
+                    # all agents): the >=5-move gate alone re-files on
+                    # every genuine swing during volatile days (8 filed
+                    # 2026-11-26, friction #79). At cap, keep the
+                    # findings-row refresh above and skip the bridge
+                    # capture. (2026-11-27 checks-pass triage)
+                    recent = int(q("""select count(*) from atlas.scattered_captures
+                      where title like '[agent-cycle:%] % QA checks failing'
+                      and created_at > now() - interval '24 hours'"""))
+                    if recent >= 6:
+                        print(f"  qa_failing bridge filing skipped: "
+                              f"{recent} in 24h (cap 6, QA 722)")
+                    else:
+                        print(f"  filed: {file_bridge(agent, title, detail)}")
+                else:
+                    print(f"  filed: {file_bridge(agent, title, detail)}")
 
     summary = json.dumps({"agent": agent, "display_name": display,
                           "tier": int(tier), "results": results,

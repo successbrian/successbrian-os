@@ -289,6 +289,13 @@ def raise_flag(operator: str, agent_key: str, title: str,
 INVESTIGATION_PROBE_ID = "agent-commons-investigation"
 INVESTIGATION_PRIORITY = 5
 REAP_MAX_TOKENS = 500
+# REAP contract (verified live 2026-11-23, probe events 1722/1728;
+# einstein_planner.py): thinking MUST be False — with thinking=true
+# gamma returns a fragment of the model's reasoning, not the answer.
+# Probe item 183 (events 2443/2450/2461/2467) proved it again: all
+# four sections came back as reasoning preamble narrating the
+# section instruction. The runner is clean; the flag was the defect.
+INVESTIGATION_THINKING = False
 INVESTIGATION_SECTIONS = ("WHAT", "EVIDENCE", "TRIED", "FIXES")
 INVESTIGATION_SECTION_TASKS = {
     "WHAT": "what is actually wrong — the fault, in concrete terms",
@@ -366,7 +373,7 @@ def _dispatch_investigation_section(item_id: int, title: str,
                            prior=prior)
     payload = {"prompt": brief, "probe_id": INVESTIGATION_PROBE_ID,
                "commons_item_id": item_id, "section": section,
-               "thinking": True, "max_tokens": REAP_MAX_TOKENS}
+               "thinking": INVESTIGATION_THINKING, "max_tokens": REAP_MAX_TOKENS}
     ev = pg_one(
         "insert into bus.events (event_type, source, target, priority, payload) "
         "values ('reap_infer', %s, 'gamma', %s, %s) returning id",
@@ -985,6 +992,8 @@ def selftest() -> int:
         assert missing_investigation_sections("WHAT: x\n\nEVIDENCE: y") == ["TRIED", "FIXES"], \
             "landed sections drop out of the missing list"
         assert REAP_MAX_TOKENS == 500, "sizing law: 500-token cap"
+        assert INVESTIGATION_THINKING is False, \
+            "investigation dispatch sends thinking=false (REAP contract)"
         for sec in INVESTIGATION_SECTIONS:
             brief = _section_brief(issue_id, "t", "d", op, a, sec)
             assert f"Write ONLY the {sec} section" in brief, \
@@ -1048,7 +1057,7 @@ def selftest() -> int:
                 (a, INVESTIGATION_PRIORITY,
                  Json({"probe_id": INVESTIGATION_PROBE_ID,
                        "commons_item_id": issue2, "section": "EVIDENCE",
-                       "thinking": True,
+                       "thinking": INVESTIGATION_THINKING,
                        "max_tokens": REAP_MAX_TOKENS})))
             pg_exec(
                 "insert into successbrian_os.outbox (source_agent, "
@@ -1089,7 +1098,7 @@ def selftest() -> int:
                 (a, INVESTIGATION_PRIORITY,
                  Json({"probe_id": INVESTIGATION_PROBE_ID,
                        "commons_item_id": issue2, "section": "FIXES",
-                       "thinking": True,
+                       "thinking": INVESTIGATION_THINKING,
                        "max_tokens": REAP_MAX_TOKENS})))
             pg_exec(
                 "insert into successbrian_os.outbox (source_agent, "

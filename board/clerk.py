@@ -841,6 +841,23 @@ def _standing_rules(title):
     return hits
 
 
+def _session_today(tag):
+    """The session's own date from its tag (board-YYYYMMDD), or
+    today when the tag carries none. Deepen judges a packet's
+    year-less dates against when the board sat, not when the
+    clerk happens to run — otherwise an October packet deepened
+    in November rolls every due hint a year forward (stage-2
+    selftest caught this 2026-11-27)."""
+    m = re.search(r"(20\d\d)(\d\d)(\d\d)", tag or "")
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)),
+                        int(m.group(3)))
+        except ValueError:
+            pass
+    return date.today()
+
+
 def _date_mentions(text, today=None):
     """Every date/deadline phrase in text, deterministically parsed:
     ISO dates, month-name dates, 'by <weekday>', a bare 'deadline'."""
@@ -1055,7 +1072,8 @@ def job_deepen(args=None):
             n_dup += 1
 
         mentions = _date_mentions(item["title"] + " " +
-                                  " ".join(merged_questions))
+                                  " ".join(merged_questions),
+                                  today=_session_today(tag))
         deepened.append({
             "item_key": item["item_key"],
             "title": item["title"],
@@ -1282,6 +1300,302 @@ def job_jobs(_args=None):
         print(f"  {name:8s} {lines[0] if lines else ''}")
 
 
+
+def job_lookup(args=None):
+    """Ecosystem sweep of one thing (Brian's design, 2026-11-08):
+    grep PostgreSQL / AnythingLLM / second brain / registries for the
+    term, find scatter / broken / stale records, and file cleanup
+    orders back into the scatter for the next sweep (deduped, 14d).
+    The tool is tools/ecosystem_intel/ecosystem_lookup.py; the clerk
+    runs it locally on alpha. usage: clerk.py lookup <term words...>
+    [--no-file]"""
+    import subprocess as _sp
+    words = [a for a in (args or []) if a != "--no-file"]
+    if not words:
+        print("usage: clerk.py lookup <term words...> [--no-file]")
+        return
+    term = " ".join(words)
+    cmd = ["python3",
+           os.path.join(os.path.dirname(os.path.dirname(
+               os.path.abspath(__file__))),
+               "tools", "ecosystem_intel", "ecosystem_lookup.py"),
+           term]
+    if "--no-file" in (args or []):
+        cmd.append("--no-file")
+    env = dict(os.environ)
+    env["ECOSYSTEM_LOOKUP_LOCAL"] = "1"
+    p = _sp.run(cmd, capture_output=True, text=True, timeout=560, env=env)
+    out = (p.stdout or "") + (p.stderr or "")
+    keep = [ln for ln in out.splitlines()
+            if ln.startswith(("SUMMARY", "FINDINGS", "CLEANUP", "VERDICT"))
+            or ln.startswith(("  1.", "  2.", "  3.", "  4.", "  5."))]
+    print(f"lookup '{term}':")
+    for ln in keep:
+        print("  " + ln)
+    if p.returncode != 0:
+        print(f"lookup: tool exited {p.returncode}")
+
+
+
+def job_calcheck(args=None):
+    """Calendar pile watch (2026-11-08): run the carry-forward report;
+    when the missed-and-open pile is >= 10, or a hard date was missed
+    in the last 7 days, file ONE digest capture of cleanup orders for
+    the next sweep (deduped 7 days). Detect + order only — carrying
+    and closing stay gated on the engine modes and Brian's ruling on
+    --apply. usage: clerk.py calcheck"""
+    import base64 as _b64
+    import datetime as _dt
+    import subprocess as _sp
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    engine = os.path.join(root, "tools", "calendar", "carry_forward.py")
+    p = _sp.run(["python3", engine, "--report"],
+                capture_output=True, text=True, timeout=300)
+    out = p.stdout or ""
+    total = None
+    hard_recent = []
+    today = _dt.date.today()
+    for ln in out.splitlines():
+        if ln.startswith("Currently missed & open:"):
+            try:
+                total = int(ln.rsplit(":", 1)[1].strip())
+            except ValueError:
+                pass
+        if "HARD DATE" in ln and "[" in ln:
+            try:
+                d = _dt.date.fromisoformat(ln.split("[", 1)[1].split("]", 1)[0])
+                if (today - d).days <= 7:
+                    hard_recent.append(ln.strip())
+            except ValueError:
+                pass
+    print(f"calcheck: missed & open = {total}; "
+          f"hard-date misses in last 7d = {len(hard_recent)}")
+    if total is None:
+        print("calcheck: could not parse the engine report — no filing")
+        return
+    if total < 10 and not hard_recent:
+        print("calcheck: pile below threshold — no orders filed")
+        return
+
+    def b64sql(s):
+        return ("convert_from(decode('%s','base64'),'UTF8')"
+                % _b64.b64encode(s.encode()).decode())
+
+    def psql(sql):
+        r = _sp.run(["psql", "-d", "ecosystem_central", "-t", "-A",
+                     "-c", sql], capture_output=True, text=True, timeout=60)
+        return (r.stdout or "").strip()
+
+    existing = psql(
+        "select id from atlas.scattered_captures "
+        "where title ilike '%CALENDAR PILE WATCH%' "
+        "and created_at > now() - interval '7 days' "
+        "and status <> 'discarded' order by id desc limit 1")
+    if existing.isdigit():
+        print(f"calcheck: digest already on file as capture "
+              f"#{existing} (dedup — not re-filed)")
+        return
+    title = "CALENDAR PILE WATCH — cleanup orders from the clerk"
+    raw = (f"Calendar carry-forward pile watch (clerk calcheck, "
+           f"{today.isoformat()}): {total} missed & open items in "
+           f"successbrian_os.life_calendar; {len(hard_recent)} hard-date "
+           f"miss(es) in the last 7 days. The daily engine runs in "
+           f"REPORT mode only — the pile grows until Brian rules on "
+           f"--apply. Orders: (1) rule on flipping the carry-forward "
+           f"cron to --apply with --close-superseded first (18 stale "
+           f"instances are superseded fossils; ~20 are live checklist "
+           f"items that should carry as open questions; hard dates "
+           f"stay flag-only). (2) Until then, treat the pile count as "
+           f"a standing agenda item, not background noise. Recent "
+           f"hard-date misses: " + ("; ".join(hard_recent) or "none"))
+    context = ("Filed by clerk job calcheck (Brian's calendar "
+               "carry-forward law: missed items never vanish and are "
+               "never counted as handled; issues surface through the "
+               "clerk/chat, not a silent log).")
+    new_id = psql(
+        "insert into atlas.scattered_captures "
+        "(title, raw_text, context, status) values "
+        f"({b64sql(title)}, {b64sql(raw)}, {b64sql(context)}, 'raw') "
+        "returning id")
+    print(f"calcheck: filed cleanup-orders capture #{new_id}")
+
+
+
+
+def job_blogpipe(args=None):
+    """Blog pipeline (2026-11-08, Brian's order): engine production
+    line for calendar-derived blog articles — Penny extracts, Sonic
+    synthesizes intel, Shakespeare (when available) or Morpheus
+    drafts, Penny + Morpheus QA, REAP deep jobs enqueued; drafts
+    park in campaignsdesk/drafts for Brian's review. Nothing is
+    planned or published by the pipeline.
+    usage: clerk.py blogpipe [status|run|finish]"""
+    import subprocess as _sp
+
+    mode = (args or ["status"])[0]
+    cmd = ["python3",
+           "/home/successbrian/campaignsdesk/code/blog_pipeline.py"]
+    if mode == "run":
+        cmd += ["run", "--max", "2"]
+    elif mode == "finish":
+        cmd += ["finish"]
+    else:
+        cmd += ["status"]
+    p = _sp.run(cmd, capture_output=True, text=True, timeout=300)
+    print((p.stdout or "").strip() or "(no output)")
+    if p.returncode != 0:
+        print("blogpipe error:", (p.stderr or "")[-400:])
+
+
+
+
+def job_blogscan(args=None):
+    """Hourly blog-pipeline scan (2026-11-08, Brian's wiring):
+    (1) finish — attach any REAP verdicts that landed;
+    (2) intel-scan — Penny/Sonic initial intel on upcoming
+    calendar-derived articles (window +/-4 days), REAP deep-intel
+    jobs enqueued; (3) if new intel landed, file ONE deduped
+    digest capture for the sweep. Stuck-run watching is LYRA's
+    job, not the clerk's (Brian, 2026-11-08). Quiet otherwise.
+    usage: clerk.py blogscan"""
+    import subprocess as _sp
+
+    pipe = "/home/successbrian/campaignsdesk/code/blog_pipeline.py"
+
+    def run_pipe(*a, timeout=1500):
+        p = _sp.run(["python3", pipe] + list(a),
+                    capture_output=True, text=True, timeout=timeout)
+        return (p.stdout or "").strip()
+
+    try:
+        fin = run_pipe("finish", timeout=300)
+    except Exception as e:
+        fin = f"finish failed: {e}"
+    print("blogscan finish:", fin)
+    try:
+        scan = run_pipe("intel-scan", "--max", "2")
+    except Exception as e:
+        scan = f"intel-scan failed: {e}"
+    print("blogscan intel-scan:", scan.replace("\n", " | ")[:400])
+    import base64 as _b64
+    import datetime as _dt
+
+    def b64sql(s):
+        return ("convert_from(decode('%s','base64'),'UTF8')"
+                % _b64.b64encode(s.encode()).decode())
+
+    def psql(sql):
+        r = _sp.run(["psql", "-d", "ecosystem_central", "-t", "-A",
+                     "-c", sql], capture_output=True, text=True,
+                    timeout=60)
+        return (r.stdout or "").strip()
+
+    scanned = "intel_ready" in scan
+    if not scanned:
+        print("blogscan: nothing to file")
+        return
+    today = _dt.date.today().isoformat()
+    title = f"BLOG PIPELINE SCAN {today} — intel/progress digest"
+    existing = psql(
+        "select id from atlas.scattered_captures where title = "
+        f"{b64sql(title)} and status <> 'discarded' limit 1")
+    if existing.isdigit():
+        print(f"blogscan: digest already filed as #{existing}")
+        return
+    raw = (f"Hourly clerk blogscan digest {today}. "
+           f"finish: {fin}. intel-scan: {scan}. "
+           "Drafts park in ~/campaignsdesk/drafts for Brian's "
+           "review; nothing is planned or published by the pipeline.")
+    context = ("Filed by clerk job blogscan (Brian's order "
+               "2026-11-08: hourly clerk checks blog pipeline "
+               "progress and runs initial intel scans on upcoming "
+               "calendar-derived articles).")
+    new_id = psql(
+        "insert into atlas.scattered_captures "
+        "(title, raw_text, context, status) values "
+        f"({b64sql(title)}, {b64sql(raw)}, {b64sql(context)}, 'raw') "
+        "returning id")
+    print(f"blogscan: filed digest capture #{new_id}")
+
+
+
+
+def job_prio(args=None):
+    """Priority pass / hourly resort (Brian's rulings 2026-11-08:
+    proposal ranker first, then the REAL system at 09:17 — hourly
+    obligations first each hour, then highest priority; uncompleted
+    items re-sorted at the start of each new hour). Default mode
+    'resort' runs the hourly cycle: stamps, re-score, Sonic
+    bounded adjustments, the order written to
+    successbrian_os.priority_order, engine-queue priorities
+    written back from the order (logged, originals kept). Brian's
+    task labels and calendar are never mutated.
+    usage: clerk.py prio [resort|stamp|rank|run]"""
+    import subprocess as _sp
+
+    mode = (args or ["resort"])[0]
+    cmd = ["python3",
+           "/home/successbrian/successbrian-os/tools/priority_pass.py"]
+    if mode in ("stamp", "rank", "run", "resort"):
+        cmd.append(mode)
+    p = _sp.run(cmd, capture_output=True, text=True, timeout=1800)
+    out = (p.stdout or "").strip()
+    print(out[-1500:] if out else "(no output)")
+    if p.returncode != 0:
+        print("prio error:", (p.stderr or "")[-400:])
+
+
+
+
+def job_passup(args=None):
+    """Decider pass-up lane (Brian, 2026-11-08): captures the
+    clerk sorted as reasoning-grade (promote-candidate / refine
+    — the board-packet stream, i.e. anything needing reasoning
+    at a Sonic-or-higher level) become decider packages for the
+    Altair/Meghan loop. Forward-only: captures triaged in the
+    last 3 days; decider_lib dedupes by capture id, so re-runs
+    are harmless. usage: clerk.py passup"""
+    sys.path.insert(0, "/home/successbrian/successbrian-os/tools")
+    import decider_lib
+    import sbos_common
+    rows = sbos_common.pg_rows(
+        "SELECT id, title, COALESCE(context,''), "
+        "COALESCE(raw_text,'') FROM atlas.scattered_captures "
+        "WHERE status = 'triaged' AND recommendation IN "
+        "('promote-candidate','refine') "
+        "AND triaged_at > now() - interval '3 days' "
+        "ORDER BY id DESC LIMIT 20")
+    made = 0
+    for cid, title, context, raw in rows:
+        before = sbos_common.pg_one(
+            "SELECT count(*) FROM successbrian_os.decider_packages "
+            "WHERE source_kind = 'clerk_capture' AND source_ref = %s",
+            (str(cid),))
+        pid = decider_lib.create_package(
+            "clerk_capture", str(cid), title,
+            (context + "\n\n" + raw)[:8000])
+        if not before:
+            made += 1
+            print("passup: capture #%s -> package #%s (%s)"
+                  % (cid, pid, (title or "")[:60]))
+    print("passup: %d new package(s) from %d candidate capture(s)"
+          % (made, len(rows)))
+
+
+def job_next(args=None):
+    """Show the current hour's priority order (the resort's list).
+    usage: clerk.py next"""
+    import subprocess as _sp
+
+    p = _sp.run(["python3",
+                 "/home/successbrian/successbrian-os/tools/"
+                 "priority_pass.py", "next"],
+                capture_output=True, text=True, timeout=120)
+    print((p.stdout or "").strip() or "(no output)")
+
+
+
 JOBS = {
     "sweep": job_sweep,
     "file": job_file,
@@ -1295,6 +1609,13 @@ JOBS = {
     "bible": job_bible,
     "biblecheck": job_biblecheck,
     "package": job_package,
+    "lookup": job_lookup,
+    "calcheck": job_calcheck,
+    "blogpipe": job_blogpipe,
+    "blogscan": job_blogscan,
+    "prio": job_prio,
+    "next": job_next,
+    "passup": job_passup,
 }
 
 

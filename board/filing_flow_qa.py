@@ -16,7 +16,11 @@ when the repaired state still holds:
   drainage   the unsorted tray is actually draining: every
              document past the clerk-tray age threshold is
              escalated, a true duplicate, or freshly examined
-             (2026-11-27 successor gauge, friction #47)
+             (2026-11-27 successor gauge, friction #47). True
+             duplicates deleted under Brian's 2026-11-27 ruling
+             leave the tray entirely and are reported on the
+             line as resolved_deleted (from the clerk's audit
+             table), distinct from filed documents.
 """
 
 import json
@@ -151,6 +155,17 @@ def mode_drainage():
                        ctx or "")
         if m:
             open_clusters.add(m.group(1))
+    # True duplicates deleted under Brian's 2026-11-27 ruling
+    # are resolved-by-deletion: gone from the tray (so absent
+    # from the rows above) and counted here from the clerk's
+    # audit table, distinct from filed documents.
+    resolved_deleted = 0
+    cur.execute(
+        "SELECT to_regclass('atlas.clerk_tray_deletions')")
+    if cur.fetchone()[0]:
+        cur.execute(
+            "SELECT count(*) FROM atlas.clerk_tray_deletions")
+        resolved_deleted = cur.fetchone()[0]
     conn.close()
     now = datetime.now(timezone.utc)
     ages = []
@@ -182,12 +197,14 @@ def mode_drainage():
     ages.sort()
     median = ages[len(ages) // 2] if ages else 0
     print("TRAY_DRAINAGE tray=%d median_age_days=%d aged=%d "
-          "unaccounted=%d" % (len(rows), median, aged,
-                              unaccounted))
+          "unaccounted=%d resolved_deleted=%d"
+          % (len(rows), median, aged, unaccounted,
+             resolved_deleted))
     if unaccounted:
         return 1
-    print("TRAY_DRAINAGE_OK tray=%d median_age_days=%d"
-          % (len(rows), median))
+    print("TRAY_DRAINAGE_OK tray=%d median_age_days=%d "
+          "resolved_deleted=%d" % (len(rows), median,
+                                   resolved_deleted))
     return 0
 
 

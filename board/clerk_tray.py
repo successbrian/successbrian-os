@@ -25,15 +25,29 @@ This loop is the clerk examining its own held tray, on a schedule:
      on a dominant home (>=60% of >=5 filed exemplars) or a
      single exact-name home, and only when the tray copy's
      content is not already there word-for-word (a word-identical
-     copy is a true duplicate and stays held, accounted);
+     copy is a true duplicate — see DELETE below);
   5. LEARN      persist the mined rules to
      atlas.clerk_learned_routes — filename-family rules for this
      loop, subject-regex rules that allm_workspaces.route_subject
      also consults, so the standing filing path learns too;
-  6. FILE       move what the mined/learned rules cover (moves,
-     never deletes; add to the new home first, then remove from
-     unsorted, verified — the resort machinery);
-  7. ESCALATE   only the no-precedent residue, as questions into
+  6. FILE       move what the mined/learned rules cover (add to
+     the new home first, then remove from unsorted, verified —
+     the resort machinery);
+  7. DELETE     true duplicates only, under Brian's ruling
+     (2026-11-27): "true duplicate content can be deleted." When
+     the content guard finds the tray copy word-identical to a
+     copy in the destination the router/precedent assigned, the
+     TRAY copy is deleted (the filed copy is never touched) —
+     and only after re-reading the destination copy in the same
+     run and confirming it is still there and still identical;
+     if it is missing or differs, the tray copy stays held and
+     accounted, exactly as before the ruling. Every deletion is
+     written to the run log and to atlas.clerk_tray_deletions
+     (filename, docpath, destination, content hash, timestamp).
+     Near-duplicates, different editions, and same-name /
+     different-content documents are NEVER deleted — they follow
+     the FILE or hold paths above;
+  8. ESCALATE   only the no-precedent residue, as questions into
      Brian's inbox (successbrian_os.pending_questions,
      asked_by='clerk-tray'), one per cluster, each carrying the
      cluster's size, age range, examples, and a recommended
@@ -41,13 +55,20 @@ This loop is the clerk examining its own held tray, on a schedule:
      surfaces (Brian, 2026-11-15). Re-runs never re-ask a cluster
      that already has an open question (marker in the context).
 
-Nothing is force-fit and nothing is deleted: a document the loop
-cannot place on precedent stays held and accounted on the held
-list (~/backups/clerk-filing-repair-20261109/held-list.json,
-which QA check 532 reads as the tray's accounting).
+Nothing is force-fit: a document the loop cannot place on
+precedent stays held and accounted on the held list
+(~/backups/clerk-filing-repair-20261109/held-list.json, which
+QA check 532 reads as the tray's accounting). The single
+exception to "moves, never deletes" is the true-duplicate
+deletion of step 7, under Brian's 2026-11-27 ruling, with its
+verify-before-delete and audit rails.
 
 Usage:
-    python3 clerk_tray.py [--dry-run] [--age-days N]
+    python3 clerk_tray.py [--dry-run] [--age-days N] [--selftest]
+--dry-run reports WOULD FILE / WOULD DELETE lines and deletes
+nothing; --selftest exercises the duplicate identity test on
+synthetic documents and the deletions-table DDL, touching no
+tray state.
 Cron (weekly, flock): see crontab — Mondays 06:41, log
 ~/logs/clerk-tray.log. Registered in program_registry as
 clerk-tray-loop; drainage is measured by QA check
@@ -274,6 +295,68 @@ def learned_rules(conn):
     return fam, subj
 
 
+def ensure_deletions_table(conn):
+    """Audit store for true-duplicate deletions (Brian's ruling,
+    2026-11-27) — beside atlas.clerk_learned_routes, one row per
+    deletion, written only after the deletion verifies."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS atlas.clerk_tray_deletions (
+                id serial PRIMARY KEY,
+                filename text NOT NULL,
+                docpath text NOT NULL,
+                tray_document_id int,
+                destination_workspace text NOT NULL,
+                destination_docpath text NOT NULL,
+                content_hash text NOT NULL,
+                capture_id int,
+                route_how text,
+                deleted_at timestamptz NOT NULL DEFAULT now()
+            )
+            """)
+    conn.commit()
+
+
+def record_deletion(conn, d, target, dest_docpath, h, route_how):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO atlas.clerk_tray_deletions
+                (filename, docpath, tray_document_id,
+                 destination_workspace, destination_docpath,
+                 content_hash, capture_id, route_how)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """, (d["filename"], d["docpath"], d["id"], target,
+                  dest_docpath, h, _cap_id(d["filename"]),
+                  route_how))
+        row_id = cur.fetchone()[0]
+    conn.commit()
+    return row_id
+
+
+def remove_from_tray(key, docpath):
+    """Delete a document from the unsorted tray ONLY — the
+    remove leg of resort.move with no add anywhere. The stored
+    file is untouched; only the tray's embedding goes."""
+    allm_embed._post("/api/v1/workspace/unsorted/update-embeddings",
+                     {"adds": [], "deletes": [docpath]}, key)
+
+
+def workspaces_of(docpath):
+    """Workspace slugs currently holding this docpath."""
+    db = sqlite3.connect("file:%s?mode=ro" % ALLM_DB, uri=True)
+    try:
+        rows = db.execute(
+            "SELECT w.slug FROM workspace_documents wd JOIN "
+            "workspaces w ON w.id = wd.workspaceId "
+            "WHERE wd.docpath = ?", (docpath,)).fetchall()
+    finally:
+        db.close()
+    return [r[0] for r in rows]
+
+
 def mine_series_rules(by_family):
     """filename family -> (workspace, n, share) on dominant home."""
     rules = {}
@@ -317,13 +400,70 @@ def escalate(conn, cluster_key, question, context, options):
     return qid
 
 
+def selftest():
+    """Exercise the duplicate identity test on synthetic
+    documents and the deletions-table DDL. Touches no tray
+    state: synthetic docs live in a temp dir prepended to the
+    document roots for this process only."""
+    import tempfile
+    failures = []
+
+    def check(name, cond):
+        print("selftest %-28s %s" % (name,
+                                     "ok" if cond else "FAIL"))
+        if not cond:
+            failures.append(name)
+
+    tmp = tempfile.mkdtemp(prefix="clerk-tray-selftest-")
+    os.makedirs(os.path.join(tmp, "selftest"))
+    body = "The quick brown fox.\nSecond line, unchanged."
+    for name, content in (("doc-a", body), ("doc-b", body),
+                          ("doc-c", body + "\nOne word differs.")):
+        with open(os.path.join(tmp, "selftest",
+                               name + ".json"), "w") as f:
+            json.dump({"title": name, "pageContent": content}, f)
+    resort.DOC_ROOTS.insert(0, tmp)
+    try:
+        ha = content_hash("selftest/doc-a.json")
+        hb = content_hash("selftest/doc-b.json")
+        hc = content_hash("selftest/doc-c.json")
+    finally:
+        resort.DOC_ROOTS.remove(tmp)
+    check("hash computed", bool(ha))
+    check("identical content -> identical hash", ha == hb)
+    check("edited content -> different hash",
+          bool(hc) and hc != ha)
+    check("missing doc -> no hash",
+          content_hash("selftest/nope.json") is None)
+    check("bogus docpath in no workspace",
+          workspaces_of("selftest/nope.json") == [])
+    conn = pg_conn()
+    ensure_deletions_table(conn)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'atlas' AND table_name = "
+            "'clerk_tray_deletions'")
+        cols = {r[0] for r in cur.fetchall()}
+    conn.close()
+    check("deletions table columns",
+          {"filename", "docpath", "destination_workspace",
+           "destination_docpath", "content_hash",
+           "deleted_at"} <= cols)
+    print("SELFTEST_%s" % ("FAIL" if failures else "OK"))
+    return 1 if failures else 0
+
+
 def main():
+    if "--selftest" in sys.argv:
+        return selftest()
     dry = "--dry-run" in sys.argv
     age_days = AGE_DAYS_DEFAULT
     if "--age-days" in sys.argv:
         age_days = int(sys.argv[sys.argv.index("--age-days") + 1])
     conn = pg_conn()
     ensure_learned_table(conn)
+    ensure_deletions_table(conn)
     live = allm.live_workspaces()
     docs = tray_docs()
     examined = [d for d in docs if d["age_days"] >= age_days]
@@ -351,7 +491,7 @@ def main():
                        "carry the filename token '%s'; %.2f of "
                        "them sit in %s." % (n, tok, share, slug))
     key = None if dry else allm_embed._key()
-    moves, held = [], []
+    moves, held, deletions = [], [], []
     held_by_cluster = defaultdict(list)
     for d in examined:
         verdict, subject, cid = resort.route_for(conn, d["filename"],
@@ -411,19 +551,85 @@ def main():
             held_by_cluster[d["cluster"]].append(d)
             continue
         # content guard: a word-identical copy already in the
-        # target is a true duplicate — held, accounted.
+        # target is a true duplicate. Brian (2026-11-27): "true
+        # duplicate content can be deleted" — the tray copy is
+        # deleted under the rails in the module docstring
+        # (verify-before-delete, audit row); if verification
+        # fails at deletion time it stays held, accounted,
+        # exactly as before the ruling.
         h = content_hash(d["docpath"])
-        dup = False
+        dup_home = None
         if h:
             for dp2 in by_base.get(base, {}).get(target, []):
                 if content_hash(dp2) == h:
-                    dup = True
+                    dup_home = dp2
                     break
-        if dup:
-            d["cluster"] = "true-duplicate"
-            d["subject"] = subject
-            held.append(d)
-            held_by_cluster["true-duplicate"].append(d)
+        if dup_home:
+            rec = {"filename": d["filename"], "from": "unsorted",
+                   "to": target, "subject": (subject or "")[:160],
+                   "capture_id": cid, "how": route_how,
+                   "content_hash": h,
+                   "destination_docpath": dup_home}
+            if dry:
+                deletions.append(rec)
+                print("WOULD DELETE: %s (true duplicate — "
+                      "word-identical copy filed in %s)"
+                      % (d["filename"][:56], target))
+                continue
+            # VERIFY BEFORE DELETE: re-read both copies now.
+            # The tray copy must still hash to h and the
+            # destination copy must still be present in the
+            # target and still word-identical; anything else
+            # and the tray copy is held, never deleted.
+            h_now = content_hash(d["docpath"])
+            home_now = None
+            if h_now and h_now == h:
+                for dp2 in by_base.get(base, {}).get(target, []):
+                    if content_hash(dp2) == h_now \
+                            and target in workspaces_of(dp2):
+                        home_now = dp2
+                        break
+            if not home_now:
+                d["cluster"] = "true-duplicate"
+                d["subject"] = subject
+                held.append(d)
+                held_by_cluster["true-duplicate"].append(d)
+                continue
+            try:
+                remove_from_tray(key, d["docpath"])
+                gone = "unsorted" not in workspaces_of(
+                    d["docpath"])
+                if not gone:
+                    # the document table can lag the embeddings
+                    # call by a beat (same lag the move path
+                    # re-checks against)
+                    import time as _time
+                    _time.sleep(3)
+                    gone = "unsorted" not in workspaces_of(
+                        d["docpath"])
+                if not gone:
+                    rec["error"] = ("post-delete verification "
+                                    "failed — still in tray")
+                    d["cluster"] = "delete-failed"
+                    d["subject"] = subject
+                    held.append(d)
+                    held_by_cluster["delete-failed"].append(d)
+                    continue
+                rec["destination_verified_after"] = (
+                    target in workspaces_of(home_now))
+                rec["audit_id"] = record_deletion(
+                    conn, d, target, home_now, h_now, route_how)
+                deletions.append(rec)
+                print("DELETED: %s (true duplicate — identical "
+                      "copy verified in %s, audit #%d)"
+                      % (d["filename"][:56], target,
+                         rec["audit_id"]))
+            except Exception as e:
+                rec["error"] = "%s: %s" % (type(e).__name__, e)
+                d["cluster"] = "delete-failed"
+                d["subject"] = subject
+                held.append(d)
+                held_by_cluster["delete-failed"].append(d)
             continue
         rec = {"filename": d["filename"], "from": "unsorted",
                "to": target, "subject": (subject or "")[:160],
@@ -502,7 +708,8 @@ def main():
             e["members"].extend(members)
 
         for cluster, members in sorted(held_by_cluster.items()):
-            if cluster in ("true-duplicate", "move-failed"):
+            if cluster in ("true-duplicate", "move-failed",
+                           "delete-failed"):
                 continue
             if cluster == "double-rendered-captures":
                 put(cluster, "double", members)
@@ -542,6 +749,8 @@ def main():
             m["esc_cluster"] = "true-duplicate"
         for m in held_by_cluster.get("move-failed", []):
             m["esc_cluster"] = "move-failed"
+        for m in held_by_cluster.get("delete-failed", []):
+            m["esc_cluster"] = "delete-failed"
         for cluster, e in sorted(esc.items()):
             members = e["members"]
             n = len(members)
@@ -767,18 +976,22 @@ def main():
         "dry_run": dry, "tray_before": len(docs),
         "examined": len(examined), "deferred_young": len(young),
         "filed": len(moves), "held_after": len(remaining),
+        "deleted": 0 if dry else len(deletions),
+        "would_delete": len(deletions) if dry else 0,
         "clusters": {k: len(v) for k, v in
                      sorted(held_by_cluster.items())},
         "escalated": escalated,
         "moves": moves,
+        "deletions": deletions,
     }
     if not dry:
         with open(RUN_LOG, "a") as f:
             f.write(json.dumps(summary) + "\n")
     print("TRAY_LOOP_%s examined=%d filed=%d held=%d escalated=%d "
-          "young=%d" % ("DRYRUN" if dry else "OK", len(examined),
-                        len(moves), len(remaining),
-                        len(escalated), len(young)))
+          "young=%d deleted=%d" % ("DRYRUN" if dry else "OK",
+                        len(examined), len(moves), len(remaining),
+                        len(escalated), len(young),
+                        len(deletions)))
     for k, v in sorted(summary["clusters"].items()):
         print("  cluster %-44s %d" % (k, v))
     conn.close()

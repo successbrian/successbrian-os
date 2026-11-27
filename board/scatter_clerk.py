@@ -69,6 +69,14 @@ import allm_workspaces as allm  # noqa: E402
 ATLAS_PY = os.path.expanduser("~/successbrian-os/tools/atlas/atlas.py")
 STATE = os.path.expanduser("~/successbrian-os/board/state/scatter_clerk.json")
 
+# Held list for the unsorted intake tray (B26, check 532):
+# resort_unsorted.py rewrites this snapshot wholesale on each
+# run, so a filing into unsorted must hold-list itself here at
+# filing time — otherwise the tray holds an unaccounted doc
+# until the next resort run and check 532 fails on it.
+HELD_LIST = os.path.expanduser(
+    "~/backups/clerk-filing-repair-20261109/held-list.json")
+
 # THE CLERK SORTS (Brian, 2026-10-25: "things should be sorted by
 # the clerk"). Every capture is classified BY THE CLERK — the
 # role's one-sentence definition ("the clerk looks at a mess and
@@ -1935,6 +1943,98 @@ def file_price_intel(cap, kind, checked, valid_until,
             "valid_until": valid_until.date().isoformat()}
 
 
+def hold_list_unsorted(stored_filename, subject, capture_id,
+                       candidates, why, held_path=HELD_LIST):
+    """Append one held-list entry for a document just filed
+    into the unsorted intake tray (B26: check 532 must see a
+    filing as accounted the moment it lands, not only after
+    the next resort run rewrites the snapshot). The entry
+    matches resort_unsorted.py's held shape exactly; resort's
+    wholesale rewrite re-derives it, so an entry here is never
+    authoritative — it only closes the staleness window. The
+    write is atomic (temp file + os.replace) and idempotent
+    (a filename already listed is not duplicated). Returns
+    True when the entry is present afterwards, False on any
+    error — a hold-list failure must never fail the filing
+    itself, which already succeeded."""
+    entry = {"filename": stored_filename,
+             "subject": (subject or "")[:160],
+             "capture_id": capture_id,
+             "candidates": list(candidates or []),
+             "why": (why or "")[:200]}
+    try:
+        try:
+            with open(held_path) as f:
+                held = json.load(f)
+            if not isinstance(held, list):
+                held = []
+        except (FileNotFoundError, ValueError):
+            held = []
+        if any(h.get("filename") == stored_filename for h in held):
+            return True
+        held.append(entry)
+        tmp = held_path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(held, f, indent=1)
+        os.replace(tmp, held_path)
+        return True
+    except Exception as e:
+        print(f"[held-list] could not hold-list "
+              f"{stored_filename}: {type(e).__name__}: {e}")
+        return False
+
+
+def held_list_selftest():
+    """B26 selftest: the filing-time held-list append, run
+    against a disposable path — never the live held list.
+    Proves append, idempotency, corrupt-file recovery, and
+    the resort-shaped entry. Prints HELD_LIST_SELFTEST_OK
+    when all probes pass."""
+    import tempfile
+    failures = []
+
+    def _check(name, ok):
+        print(("PASS " if ok else "FAIL ") + name)
+        if not ok:
+            failures.append(name)
+
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "held-list.json")
+        fn = ("intel-capture-999999.md-aaaaaaa-1111-2222-"
+              "3333-444444444444.json")
+        ok = hold_list_unsorted(fn, "Probe subject", 999999,
+                                ["probe-workspace"], "router held it",
+                                held_path=path)
+        _check("append-creates-list", ok)
+        held = json.load(open(path))
+        _check("one-entry", len(held) == 1)
+        _check("entry-shape", held[0].get("filename") == fn
+               and held[0].get("capture_id") == 999999
+               and held[0].get("subject") == "Probe subject"
+               and held[0].get("candidates") == ["probe-workspace"]
+               and "router held it" in held[0].get("why", ""))
+        ok = hold_list_unsorted(fn, "Probe subject", 999999,
+                                ["probe-workspace"], "router held it",
+                                held_path=path)
+        _check("idempotent-reappend",
+               ok and len(json.load(open(path))) == 1)
+        fn2 = ("intel-capture-999998.md-bbbbbbb-1111-2222-"
+               "3333-444444444444.json")
+        ok = hold_list_unsorted(fn2, "Second probe", 999998, [], "",
+                                held_path=path)
+        _check("second-entry-appends",
+               ok and len(json.load(open(path))) == 2)
+        with open(path, "w") as f:
+            f.write("{not json")
+        ok = hold_list_unsorted(fn, "Probe subject", 999999,
+                                ["probe-workspace"], "router held it",
+                                held_path=path)
+        _check("corrupt-file-recovers",
+               ok and len(json.load(open(path))) == 1)
+    print("HELD_LIST_SELFTEST_" + ("FAILED" if failures else "OK"))
+    return 1 if failures else 0
+
+
 def file_wf3(cap, dry_run=False, sort_info=None):
     """File one intel capture into its knowledge home (WF3).
 
@@ -2072,6 +2172,16 @@ def file_wf3(cap, dry_run=False, sort_info=None):
         _wf3_kick(cap, reason, dry_run=dry_run)
         return {"id": cap["id"], "outcome": "kicked",
                 "workspace": slug, "detail": reason}
+    if slug == "unsorted" and loc:
+        # B26: a filing into the unsorted intake tray is
+        # accounted the moment it lands — hold-list it here so
+        # check 532 never flags a just-filed capture as stray
+        # while the resort snapshot is stale. A hold-list
+        # failure is logged, never fatal: the filing already
+        # succeeded, and the next resort run re-derives it.
+        hold_list_unsorted(os.path.basename(loc), subject,
+                           cap["id"], d.get("candidates"),
+                           d.get("why"))
     _kindex_register(cap, kind, slug=slug, filename=filename,
                      doc_text=text)
     _wf3_mark(cap["id"], "wf3-kept", slug=slug)
@@ -2400,6 +2510,8 @@ def main(argv=None):
         return price_body_selftest()
     if "--ai-thinking-selftest" in argv:
         return ai_thinking_selftest()
+    if "--held-list-selftest" in argv:
+        return held_list_selftest()
     if "--ai-thinking-backfill" in argv:
         limit = 200
         if "--limit" in argv:

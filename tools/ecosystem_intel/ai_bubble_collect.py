@@ -52,7 +52,7 @@ Bridge capture #3595):
 - New daily-capable price sources, all filing under the Scarcity
   node as data-pull observations: videocardprices.com GPU price
   index (consumer street vs MSRP), rackbites.com/gpu used-GPU
-  eBay ask medians (RTX 3090 / V100 32GB / A100 40GB — the
+  eBay ask medians (V100 32GB / A100 40GB — the
   server-pull watch), DRAMeXchange spot session averages
   (DDR5 16Gb / DDR4 16Gb).
 - A JPR shipments sweep joins the weekly sweeps (Jon Peddie
@@ -334,13 +334,11 @@ def parse_videocardprices(html):
 
 def parse_rackbites(html):
     """Used-GPU eBay ASKING prices. Stripped-text rows read:
-    'RTX 3090 24GB 360 $1,825 $2,200 ...' = name, VRAM, listing
+    'Tesla V100 32GB ... $1,250 ...' = name, VRAM, listing
     count, low, median. Watch metrics file the MEDIAN."""
     txt = _strip(html)
     out = []
     for name_re, metric, label in (
-            (r"RTX 3090 \d+GB", "used_rtx3090_ask_median",
-             "RTX 3090"),
             (r"Tesla V100 32GB", "used_v100_32gb_ask_median",
              "Tesla V100 32GB"),
             (r"A100 40GB", "used_a100_40gb_ask_median",

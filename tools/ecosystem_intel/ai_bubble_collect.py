@@ -49,14 +49,22 @@ Cron (alpha, America/Chicago): 41 9 * * 1
 DAILY PRICE PULL + EFFICIENCY PASS (2026-11-27, Brian's order —
 sources discovered by the consumer/prosumer pricing dig, Intel
 Bridge capture #3595):
+- AI-COMPUTE-ONLY RULE (Brian, 2026-11-27: "factor out gaming
+  volume and do our best to only consider AI compute volume"):
+  every volume/price signal here must be an AI-compute signal --
+  datacenter shipments, AI accelerator cards, server memory,
+  GPU rental rates. Consumer/gaming signals are OUT: the
+  videocardprices consumer GPU index and the RTX 3090 pull were
+  removed under this rule (2026-11-27), and the JPR sweep keys
+  on the datacenter line only, never add-in-board or client.
 - New daily-capable price sources, all filing under the Scarcity
-  node as data-pull observations: videocardprices.com GPU price
-  index (consumer street vs MSRP), rackbites.com/gpu used-GPU
+  node as data-pull observations: rackbites.com/gpu used-GPU
   eBay ask medians (V100 32GB / A100 40GB — the
   server-pull watch), DRAMeXchange spot session averages
   (DDR5 16Gb / DDR4 16Gb).
 - A JPR shipments sweep joins the weekly sweeps (Jon Peddie
-  Research quarterly unit numbers are the volume indicator).
+  Research quarterly DATACENTER unit numbers are the volume
+  indicator -- the client/AIB lines are gaming volume, excluded).
 - Efficiency: all page fetches and sweeps run in PARALLEL
   (ThreadPoolExecutor); each fetch retries once; a content-hash
   state file skips re-parsing pages that did not change; price
@@ -135,9 +143,9 @@ SWEEPS = [
       "halted", "lenders scrutinize"],
      ["data center", "data centre", "datacenter"]),
     ("bubble:the-scarcity-stack", "jpr_shipments_sweep",
-     "Jon Peddie Research GPU shipments datacenter add-in board",
+     "Jon Peddie Research datacenter GPU shipments",
      ["gpu", "shipments", "datacenter", "data center",
-      "add-in", "jon peddie"],
+      "jon peddie"],
      ["jon peddie", "jpr", "datacenter gpu", "data center gpu"],
      ["gpu"]),
 ]
@@ -146,9 +154,6 @@ SWEEPS = [
 # (page_key, url, parser_name). Parsers return a list of
 # (metric, value_num, notes) filed under the Scarcity node.
 PRICE_PAGES = [
-    ("videocardprices",
-     "https://www.videocardprices.com/gpu-price-index/",
-     "parse_videocardprices"),
     ("rackbites",
      "https://rackbites.com/gpu",
      "parse_rackbites"),
@@ -158,8 +163,6 @@ PRICE_PAGES = [
 ]
 PRICE_NODE = "bubble:the-scarcity-stack"
 PRICE_SOURCE_LABEL = {
-    "videocardprices": "videocardprices.com GPU price index "
-                        "(alpha ai_bubble_collect.py)",
     "rackbites": "rackbites.com/gpu eBay asking prices "
                  "(alpha ai_bubble_collect.py)",
     "dramexchange": "DRAMeXchange spot prices "
@@ -314,22 +317,6 @@ def _strip(html):
 
 def _usd(s):
     return float(s.replace(",", ""))
-
-
-def parse_videocardprices(html):
-    """Index value + premium live in the page's meta summary:
-    'Index is 168.4 as of November 27, 2026: ... are 68.4% above
-    launch MSRP on average.'"""
-    m = re.search(
-        r"Index is ([0-9.]+) as of ([A-Za-z]+ \d+, \d{4})"
-        r".{0,200}?([0-9.]+)% above launch MSRP", html, re.S)
-    if not m:
-        return []
-    return [("gpu_price_index", float(m.group(1)),
-             "videocardprices index as of %s: 22 tracked GPUs "
-             "average %s%% above launch MSRP (new prices). "
-             "Data-pull only; consumer-pricing interpretation "
-             "is Spencer residue." % (m.group(2), m.group(3)))]
 
 
 def parse_rackbites(html):

@@ -71,6 +71,8 @@ CREATE TABLE IF NOT EXISTS successbrian_os.capture_ingest_state (
 );
 ALTER TABLE successbrian_os.capture_ingest
     ADD COLUMN IF NOT EXISTS recovery_count INT NOT NULL DEFAULT 0;
+ALTER TABLE successbrian_os.capture_ingest
+    ADD COLUMN IF NOT EXISTS last_recovery_at TIMESTAMPTZ;
 """
 
 
@@ -103,32 +105,54 @@ def enqueue_batch(ids):
         source_ref="intel-bridge", priority=90)
     sbos_common.pg_exec(
         "UPDATE successbrian_os.capture_ingest "
-        "SET job_id = %s, queue = %s WHERE capture_id = ANY(%s)",
+        "SET job_id = %s, queue = %s, enqueued_at = now() "
+        "WHERE capture_id = ANY(%s)",
         (job_id, QUEUE, list(ids)))
     return job_id
 
 
-RECOVERY_CAP = 1  # a capture is recovered at most once; a second
-# failure strands it visibly for review, never re-loops it.
+RECOVERY_CAP = 1  # a capture is recovered at most once on the fast
+# path; a second failure strands it visibly for review, never
+# re-loops it.
+RECOVERY_HARD_CAP = 4  # lifetime ceiling, all classes combined.
+RECOVERY_RETRY_AFTER_H = 72  # a TIMEOUT failure is environmental
+# (seat/bus saturation), not a property of the capture: once the
+# failed job has been dead this long, one more recovery is allowed,
+# at most one per window, up to the hard cap. Added 2026-11-27
+# (ingestion-completeness pass): the Nov 15-22 saturation window
+# timeout-failed 20 jobs / 125 captures, every one burned its single
+# fast-path recovery into the same saturated window and stranded
+# permanently behind a cap written for poison captures.
 
 
 def find_recoverable(limit=400, only=None):
-    """Marker rows stranded behind FAILED penny jobs, one recovery left.
+    """Marker rows stranded behind FAILED penny jobs.
 
-    2026-11-22 (row 51 verdict did_not_work): the capped retry fails
-    loudly after 3 attempts, but nothing re-enqueues the failed job's
-    captures -- 140 sat unprocessed with no path back. The EXISTS guard
-    skips phantom markers whose capture was deleted after enqueue
-    (job 535: 7 enqueued, 6 deleted by a bridge discard path).
+    Class 1 (fast path): recovery_count < RECOVERY_CAP.
+    Class 2 (aged timeout): the current job failed by timeout, has
+    been finished for > RECOVERY_RETRY_AFTER_H hours, the last
+    recovery (if any) is older than the same window, and the
+    lifetime count is under RECOVERY_HARD_CAP.
+
+    The EXISTS guard skips phantom markers whose capture was
+    deleted after enqueue (job 535: 7 enqueued, 6 deleted by a
+    bridge discard path); clean_phantoms() removes those markers.
     """
     sql = (
         "SELECT m.capture_id FROM successbrian_os.capture_ingest m "
         "JOIN successbrian_os.penny_queue q ON q.id = m.job_id "
         "WHERE m.processed_at IS NULL AND q.status = 'failed' "
-        "AND COALESCE(m.recovery_count, 0) < %s "
         "AND EXISTS (SELECT 1 FROM atlas.scattered_captures c "
-        "            WHERE c.id = m.capture_id) ")
-    params = [RECOVERY_CAP]
+        "            WHERE c.id = m.capture_id) "
+        "AND (COALESCE(m.recovery_count, 0) < %s "
+        "     OR (COALESCE(m.recovery_count, 0) < %s "
+        "         AND q.result::text ILIKE '%%timed out%%' "
+        "         AND q.finished_at < now() - interval '%s hours' "
+        "         AND (m.last_recovery_at IS NULL "
+        "              OR m.last_recovery_at < "
+        "                  now() - interval '%s hours'))) ")
+    params = [RECOVERY_CAP, RECOVERY_HARD_CAP,
+              RECOVERY_RETRY_AFTER_H, RECOVERY_RETRY_AFTER_H]
     if only is not None:
         sql += "AND m.capture_id = ANY(%s) "
         params.append(list(only))
@@ -138,13 +162,41 @@ def find_recoverable(limit=400, only=None):
     return [int(r[0]) for r in rows]
 
 
+def clean_phantoms():
+    """Delete unprocessed markers whose capture no longer exists.
+
+    A marker for a deleted capture can never be processed; leaving
+    it inflates the unprocessed count forever (job 535's 6). Only
+    unprocessed markers are removed -- processed markers are the
+    leg's history. Returns the number removed.
+    """
+    rows = sbos_common.pg_rows(
+        "SELECT capture_id FROM successbrian_os.capture_ingest m "
+        "WHERE m.processed_at IS NULL AND NOT EXISTS "
+        "(SELECT 1 FROM atlas.scattered_captures c "
+        " WHERE c.id = m.capture_id)") or []
+    ids = [int(r[0]) for r in rows]
+    if ids:
+        sbos_common.pg_exec(
+            "DELETE FROM successbrian_os.capture_ingest "
+            "WHERE capture_id = ANY(%s) AND processed_at IS NULL",
+            (ids,))
+        print(f"ingest-producer: removed {len(ids)} phantom "
+              f"marker(s) for deleted captures: {ids}")
+    return len(ids)
+
+
 def recover_failed(dry_run=False, limit=400, only=None):
     """Re-enqueue stranded captures as fresh jobs, batches of <=BATCH.
 
-    Returns (recovered_captures, jobs_made). Each capture is recovered
-    at most RECOVERY_CAP times; a recovery job that also fails leaves
-    the capture stranded and visible for review, never re-looped.
+    Returns (recovered_captures, jobs_made). Fast-path recoveries
+    are capped at RECOVERY_CAP per capture; aged TIMEOUT failures
+    earn further recoveries under RECOVERY_HARD_CAP (see
+    find_recoverable). A non-timeout failure past the fast-path cap
+    still strands visibly and is never re-looped. Phantom markers
+    (capture deleted) are cleaned first so counts stay true.
     """
+    clean_phantoms()
     ids = find_recoverable(limit=limit, only=only)
     if dry_run:
         print(f"ingest-producer [recover dry-run]: {len(ids)} "
@@ -156,7 +208,8 @@ def recover_failed(dry_run=False, limit=400, only=None):
         job_id = enqueue_batch(chunk)
         sbos_common.pg_exec(
             "UPDATE successbrian_os.capture_ingest "
-            "SET recovery_count = COALESCE(recovery_count, 0) + 1 "
+            "SET recovery_count = COALESCE(recovery_count, 0) + 1, "
+            "last_recovery_at = now() "
             "WHERE capture_id = ANY(%s)", (chunk,))
         made += 1
         print(f"ingest-producer: recovered job {job_id} -> "
@@ -279,7 +332,8 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--recover-failed", action="store_true",
                     help="re-enqueue captures stranded behind failed "
-                         "jobs (once per capture, see RECOVERY_CAP)")
+                         "jobs (fast-path cap RECOVERY_CAP; aged "
+                         "timeout failures retry under the hard cap)")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     ensure_schema()

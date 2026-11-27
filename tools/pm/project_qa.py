@@ -231,6 +231,68 @@ def _judgment_verdict(result):
             in ("pass", "passed", "ok", "true", "yes") else "fail")
 
 
+def _row_vals(r):
+    return list(r.values()) if isinstance(r, dict) else list(r)
+
+
+def gather_evidence(spec):
+    """Live evidence for a judgment packet (gap C8, 2026-11-27).
+
+    Judgment steps judge from instruction + a static context
+    string, so a check asserting database facts forced its judge
+    to guess — and judges occasionally asserted false premises
+    (check 497: 'fewer than 10 terminal jobs since deploy' against
+    tables holding 2,105). A spec may now carry ONE live-evidence
+    source, gathered by the runner at dispatch time and appended
+    to the packet as ground truth:
+      evidence_cmd — argv list (same trust posture as command
+                     checks); stdout+stderr, capped at 6000 chars.
+      evidence_sql — a single SELECT/WITH query, run read-only on
+                     a fresh connection; up to 50 rows.
+    Failure to gather is stated IN the packet (UNAVAILABLE), never
+    silently omitted — a judge that knows it has no evidence can
+    say so instead of inventing a premise.
+    """
+    cmd = spec.get("evidence_cmd")
+    sql = spec.get("evidence_sql")
+    if not cmd and not sql:
+        return ""
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S %Z")
+    try:
+        if cmd:
+            out = subprocess.run(
+                cmd, capture_output=True, text=True,
+                timeout=int(spec.get("evidence_timeout_s", 60)))
+            body = (out.stdout or "") + (out.stderr or "")
+        else:
+            q = sql.strip().rstrip(";")
+            if not q.lower().startswith(("select", "with")):
+                return ("LIVE EVIDENCE: UNAVAILABLE (evidence_sql "
+                        "is not a SELECT/WITH query; refused)")
+            c2 = dict_conn()
+            cur2 = c2.cursor()
+            cur2.execute("SET TRANSACTION READ ONLY")
+            cur2.execute(q)
+            cols = [d[0] for d in cur2.description]
+            rows = cur2.fetchmany(50)
+            lines = [" | ".join(str(x) for x in _row_vals(r))
+                     for r in rows]
+            body = " | ".join(cols) + "\n" + "\n".join(lines)
+            c2.rollback()
+            c2.close()
+    except Exception as exc:  # gathering must never kill dispatch
+        return (f"LIVE EVIDENCE: UNAVAILABLE ({type(exc).__name__}: "
+                f"{exc}) — judge only what the instruction and "
+                "context prove; if the claim needs this evidence, "
+                "FAIL with evidence stating it was unavailable.")
+    body = body.strip()
+    if len(body) > 6000:
+        body = body[:6000] + "\n[truncated at 6000 chars]"
+    return (f"LIVE EVIDENCE (gathered {stamp} by the QA runner at "
+            f"dispatch; ground truth over any stale context):\n"
+            f"{body}")
+
+
 def run_judgment_check(check, spec):
     """Judgment checks manage their own short-lived connection and
     persist their own outcome; returns (status, detail) where status
@@ -306,12 +368,16 @@ def run_judgment_check(check, spec):
                    or spec.get("prompt") or "")
     output_keys = spec.get("output_keys") or ["verdict", "evidence"]
     step_key = f"qa-{check['project_key']}-{check['check_key']}-{int(time.time())}"
+    context = spec.get("context", "")
+    evidence = gather_evidence(spec)
+    if evidence:
+        context = (context + "\n\n" + evidence).strip()
     pm_core.add_step(
         cur, step_key,
         f"QA judgment: {check['project_key']}/{check['check_key']} — "
         f"{check['title']}", kind="judgment", origin="system", priority=45,
         payload={"instruction": instruction,
-                 "context": spec.get("context", ""),
+                 "context": context,
                  "output_keys": output_keys,
                  "max_tokens": int(spec.get("max_tokens", 800))})
     record_run(cur, check["id"], "queued", {"filed_step": step_key},
@@ -408,6 +474,15 @@ def selftest():
         (f"qa-fail-{tag}-bad-cmd",))
     assert cur.fetchone() is not None, "repair step not filed on QA failure"
     print("PASS QA failure filed a repair step in the PM")
+    ev = gather_evidence({"evidence_cmd":
+                          ["python3", "-c", "print('ev-ok')"]})
+    assert "ev-ok" in ev and "LIVE EVIDENCE" in ev, ev
+    ev = gather_evidence({"evidence_sql": "select 42 as answer"})
+    assert "42" in ev, ev
+    ev = gather_evidence({"evidence_sql": "delete from x"})
+    assert "UNAVAILABLE" in ev, ev
+    assert gather_evidence({}) == ""
+    print("PASS live-evidence gathering (cmd, sql, refusal, absent)")
     cur.execute(
         """DELETE FROM successbrian_os.pm_project_qa_runs
             WHERE check_id IN (SELECT id FROM

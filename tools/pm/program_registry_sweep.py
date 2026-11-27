@@ -187,6 +187,12 @@ def file_capture(lines, today):
          "2026-11-19.md."))
 
 
+def filing_decision(key_set, filed_keys):
+    """Pure: file only when an exception key has not been filed yet
+    today. Oscillation of already-filed keys never re-files."""
+    return any(k not in filed_keys for k in key_set)
+
+
 def sweep(dry=False):
     rows = load_rows()
     now = datetime.now(timezone.utc)
@@ -215,10 +221,15 @@ def sweep(dry=False):
                 "updated_at = now() WHERE id = %s",
                 (status, proof, row["id"]))
     today = date.today()
-    # Hash the exception KEYS, not the text: stale ages tick every
-    # run, so hashing the lines would re-file a capture every 30 min
-    # for the same standing exceptions (the census sweep's lines are
-    # age-free; ours are not).
+    # File on NEW exception keys, not on set change. The exception
+    # set oscillates run to run (a program sitting on its cadence
+    # boundary flips STALE<->ok; a probe flickers), and the old
+    # last-hash gate re-filed a capture on every flip -- 18 captures
+    # on 2026-11-27 for one standing set of ~10 exceptions, each
+    # re-entering clerk triage. Keys are age-free (split before the
+    # em dash), so track which keys have already been filed TODAY:
+    # the day's first filing carries the standing set, and only a
+    # genuinely new exception key files again that day.
     key_set = sorted(ln.split("—")[0].strip() for ln in lines)
     digest = hashlib.sha256("\n".join(key_set).encode()).hexdigest()
     state = {}
@@ -227,10 +238,15 @@ def sweep(dry=False):
             state = json.load(open(STATE_FILE))
         except Exception:
             state = {}
+    if state.get("filed_keys_date") != today.isoformat():
+        state["filed_keys"] = []
+        state["filed_keys_date"] = today.isoformat()
+    filed_keys = set(state.get("filed_keys") or [])
     filed = False
-    if lines and state.get("hash") != digest and not dry:
+    if lines and filing_decision(key_set, filed_keys) and not dry:
         file_capture(lines, today)
         filed = True
+        filed_keys |= set(key_set)
     watched = sum(1 for r in rows if r["watch_state"] == "watched")
     summary = (f"{len(rows)} registry rows ({watched} watched), "
                f"{len(lines)} exceptions"
@@ -238,6 +254,7 @@ def sweep(dry=False):
     if not dry:
         heartbeat(summary)
         state["hash"] = digest if lines else None
+        state["filed_keys"] = sorted(filed_keys)
         state["last_run"] = now.isoformat()
         os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
         json.dump(state, open(STATE_FILE, "w"), indent=1)
@@ -272,6 +289,10 @@ def selftest():
     st, exc = evaluate(dict(base, probe_kind="qa_check", probe_ref="1"),
                        now, "pass", now)
     chk("green QA check ok", st == "ok")
+    chk("gate: new key files", filing_decision(["A", "B"], {"A"}))
+    chk("gate: known keys do not re-file",
+        not filing_decision(["A", "B"], {"A", "B"}))
+    chk("gate: empty set never files", not filing_decision([], set()))
     failed = [n for n, ok in checks if not ok]
     for n, ok in checks:
         print(("  ok  " if ok else "  FAIL") + " " + n)

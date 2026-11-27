@@ -45,12 +45,40 @@ ai_bubble_assessments / node axes, whether a headline is a
 demand-driven cut vs a supply trim, and resolving the CoreWeave
 unknown. RESEARCH ONLY — never trade, contact, or publish.
 Cron (alpha, America/Chicago): 41 9 * * 1
+
+DAILY PRICE PULL + EFFICIENCY PASS (2026-11-27, Brian's order —
+sources discovered by the consumer/prosumer pricing dig, Intel
+Bridge capture #3595):
+- New daily-capable price sources, all filing under the Scarcity
+  node as data-pull observations: videocardprices.com GPU price
+  index (consumer street vs MSRP), rackbites.com/gpu used-GPU
+  eBay ask medians (RTX 3090 / V100 32GB / A100 40GB — the
+  server-pull watch), DRAMeXchange spot session averages
+  (DDR5 16Gb / DDR4 16Gb).
+- A JPR shipments sweep joins the weekly sweeps (Jon Peddie
+  Research quarterly unit numbers are the volume indicator).
+- Efficiency: all page fetches and sweeps run in PARALLEL
+  (ThreadPoolExecutor); each fetch retries once; a content-hash
+  state file skips re-parsing pages that did not change; price
+  metrics file CHANGE-ONLY (a row is filed when the value moved,
+  or as a 7-day heartbeat so the series never goes stale);
+  identical (metric, value, source_date) rows are never
+  duplicated; all inserts are batched into one executemany.
+- Modes: default run = full on Mondays, price-pull-only other
+  days (cron fires daily; the script picks). --full / --daily
+  force a mode. A price-only run files its Intel Bridge capture
+  ONLY when something changed or failed (quiet days stay quiet);
+  the full weekly run always captures, as before.
 """
+import hashlib
 import json
+import os
 import re
 import sys
+import time
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 
 import psycopg2
@@ -106,7 +134,40 @@ SWEEPS = [
      ["cancelled", "canceled", "cancellation", "scrapped",
       "halted", "lenders scrutinize"],
      ["data center", "data centre", "datacenter"]),
+    ("bubble:the-scarcity-stack", "jpr_shipments_sweep",
+     "Jon Peddie Research GPU shipments datacenter add-in board",
+     ["gpu", "shipments", "datacenter", "data center",
+      "add-in", "jon peddie"],
+     ["jon peddie", "jpr", "datacenter gpu", "data center gpu"],
+     ["gpu"]),
 ]
+
+# Daily price sources (2026-11-27, capture #3595). Each entry:
+# (page_key, url, parser_name). Parsers return a list of
+# (metric, value_num, notes) filed under the Scarcity node.
+PRICE_PAGES = [
+    ("videocardprices",
+     "https://www.videocardprices.com/gpu-price-index/",
+     "parse_videocardprices"),
+    ("rackbites",
+     "https://rackbites.com/gpu",
+     "parse_rackbites"),
+    ("dramexchange",
+     "https://dramexchange.com/",
+     "parse_dramexchange"),
+]
+PRICE_NODE = "bubble:the-scarcity-stack"
+PRICE_SOURCE_LABEL = {
+    "videocardprices": "videocardprices.com GPU price index "
+                        "(alpha ai_bubble_collect.py)",
+    "rackbites": "rackbites.com/gpu eBay asking prices "
+                 "(alpha ai_bubble_collect.py)",
+    "dramexchange": "DRAMeXchange spot prices "
+                    "(alpha ai_bubble_collect.py)",
+}
+STATE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "state",
+    "ai_bubble_collect_http.json")
 
 # Domains that are never sweep intel (encyclopedias, video/social
 # aggregators, government data portals, kids' sites, cert mills).
@@ -123,10 +184,50 @@ SIGNAL_RE = re.compile(
     r"|missed payment|cancel|scrapped|bankrupt)", re.I)
 
 
-def fetch(url, timeout=35):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read().decode("utf-8", "ignore")
+def fetch(url, timeout=35, retries=1):
+    """GET with one retry on transient failure (2026-11-27: a
+    single timeout used to dark a source for a whole week)."""
+    last = None
+    for attempt in range(retries + 1):
+        try:
+            req = urllib.request.Request(url,
+                                         headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read().decode("utf-8", "ignore")
+        except Exception as e:
+            last = e
+            if attempt < retries:
+                time.sleep(2)
+    raise last
+
+
+def load_state():
+    try:
+        with open(STATE_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_state(state):
+    try:
+        os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
+        with open(STATE_PATH, "w") as f:
+            json.dump(state, f)
+    except Exception:
+        pass  # state is an optimization, never a hard dependency
+
+
+def fetch_unchanged(url, state):
+    """Fetch a page; return None when its content hash matches
+    the last run's (page unchanged -> nothing new to file)."""
+    html = fetch(url)
+    h = hashlib.sha256(html.encode("utf-8", "ignore")).hexdigest()
+    if state.get(url, {}).get("sha256") == h:
+        return None
+    state[url] = {"sha256": h,
+                  "seen": datetime.now(CT).isoformat()}
+    return html
 
 
 def searx_news(q, n=25):
@@ -206,117 +307,331 @@ def parse_index_value(html, kind):
     return None
 
 
+def _strip(html):
+    return re.sub(r"\s+", " ",
+                  re.sub(r"<[^>]+>", " ", html)).strip()
+
+
+def _usd(s):
+    return float(s.replace(",", ""))
+
+
+def parse_videocardprices(html):
+    """Index value + premium live in the page's meta summary:
+    'Index is 168.4 as of November 27, 2026: ... are 68.4% above
+    launch MSRP on average.'"""
+    m = re.search(
+        r"Index is ([0-9.]+) as of ([A-Za-z]+ \d+, \d{4})"
+        r".{0,200}?([0-9.]+)% above launch MSRP", html, re.S)
+    if not m:
+        return []
+    return [("gpu_price_index", float(m.group(1)),
+             "videocardprices index as of %s: 22 tracked GPUs "
+             "average %s%% above launch MSRP (new prices). "
+             "Data-pull only; consumer-pricing interpretation "
+             "is Spencer residue." % (m.group(2), m.group(3)))]
+
+
+def parse_rackbites(html):
+    """Used-GPU eBay ASKING prices. Stripped-text rows read:
+    'RTX 3090 24GB 360 $1,825 $2,200 ...' = name, VRAM, listing
+    count, low, median. Watch metrics file the MEDIAN."""
+    txt = _strip(html)
+    out = []
+    for name_re, metric, label in (
+            (r"RTX 3090 \d+GB", "used_rtx3090_ask_median",
+             "RTX 3090"),
+            (r"Tesla V100 32GB", "used_v100_32gb_ask_median",
+             "Tesla V100 32GB"),
+            (r"A100 40GB", "used_a100_40gb_ask_median",
+             "A100 40GB")):
+        m = re.search(name_re + r" (\d+) \$([\d,]+) \$([\d,]+)",
+                      txt)
+        if m:
+            out.append((metric, _usd(m.group(3)),
+                        "%s eBay asking MEDIAN $%s (low $%s, %s "
+                        "listings, rackbites). Asking, not sold. "
+                        "Data-pull only; server-pull "
+                        "interpretation is Spencer residue."
+                        % (label, m.group(3), m.group(2),
+                           m.group(1))))
+    return out
+
+
+def parse_dramexchange(html):
+    """DRAM spot table. Stripped-text rows read: 'DDR5 16Gb
+    (2Gx8) 4800/5600 71.45 45.00 71.40 45.00 60.333 -0.71 %' =
+    daily high/low, session high/low, SESSION AVERAGE, change.
+    Watch metrics file the session average."""
+    txt = _strip(html)
+    out = []
+    for item_re, metric, label in (
+            (r"DDR5 16Gb \(2Gx8\) 4800/5600", "ddr5_16gb_spot",
+             "DDR5 16Gb"),
+            (r"DDR4 16Gb \(2Gx8\) 3200", "ddr4_16gb_spot",
+             "DDR4 16Gb")):
+        m = re.search(item_re + r" ([-\d.]+) ([-\d.]+) "
+                      r"([-\d.]+) ([-\d.]+) ([-\d.]+) "
+                      r"([-\d.]+) %", txt)
+        if m:
+            out.append((metric, float(m.group(5)),
+                        "%s spot SESSION AVERAGE $%s, day change "
+                        "%s%% (DRAMeXchange). Data-pull only; "
+                        "memory-market interpretation is "
+                        "Spencer residue."
+                        % (label, m.group(5), m.group(6))))
+    return out
+
+
 def main():
+    argv = sys.argv[1:]
     today = datetime.now(CT).date()
+    full = ("--full" in argv) or (
+        "--daily" not in argv and today.weekday() == 0)
     conn = psycopg2.connect(dbname="ecosystem_central",
                             user="successbrian",
                             cursor_factory=RealDictCursor)
     cur = conn.cursor()
+    rows = []
 
-    def observe(node, metric, vnum, vtext, source, conf, notes=""):
+    def queue(node, metric, vnum, vtext, source, conf, notes=""):
+        rows.append((node, metric, vnum, vtext, source, today,
+                     today, conf, notes))
+
+    def last_filed(metric):
         cur.execute(
-            "INSERT INTO successbrian_os.ai_bubble_observations "
-            "(node_key, metric, value_num, value_text, source, "
-            "source_date, checked_on, confidence, notes) VALUES "
-            "(%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (node, metric, vnum, vtext, source, today, today, conf,
-             notes))
-    pulled, failed = [], []
-    sd_values = {}
-    for node, metric, url, kind in SD_PAGES:
+            "SELECT value_num, checked_on FROM "
+            "successbrian_os.ai_bubble_observations WHERE metric "
+            "= %s ORDER BY id DESC LIMIT 1", (metric,))
+        return cur.fetchone()
+
+    def queue_index(node, metric, val, source, notes):
+        """Change-only filing for numeric index/price metrics:
+        file when the value moved, or as a 7-day heartbeat so
+        the series never goes stale; never duplicate an
+        identical (metric, value, source_date) row."""
+        last = last_filed(metric)
+        if last and last["value_num"] is not None \
+                and float(last["value_num"]) == float(val) \
+                and (today - last["checked_on"]).days < 7:
+            return False
+        queue(node, metric, val, None, source, "medium", notes)
+        return True
+
+    state = load_state()
+    pulled, failed, changed = [], [], []
+
+    # --- Fetch phase (parallel; workers touch no DB) ---
+    def sd_job(spec):
+        node, metric, url, kind = spec
         try:
-            html = fetch(url)
+            html = fetch_unchanged(url, state)
+            if html is None:
+                return ("sd-skip", metric, None)
             val = parse_index_value(html, kind)
             if val is None:
                 raise ValueError("value not parseable in page")
-            sd_values[metric] = val
-            observe(node, metric, val, None,
-                    "Silicon Data page %s (alpha ai_bubble_collect.py)"
-                    % url, "medium",
-                    "Data-pull only; index methodology is Silicon "
-                    "Data's. Crunch-spread interpretation is Spencer "
-                    "residue.")
-            pulled.append("%s = %.4g" % (metric, val))
+            return ("sd", metric, (node, val, url))
         except Exception as e:
-            failed.append(metric)
-            observe(node, metric + "_unreachable", None,
-                    "SOURCE UNREACHABLE/UNPARSABLE from alpha this "
-                    "week: %s (%s)" % (url, repr(e)[:100]),
-                    "alpha ai_bubble_collect.py", "low",
-                    "Second consecutive dark week is reportable per "
-                    "the watch spec — Spencer to check the streak.")
-    flagged = []
-    for node, metric, q, keywords, strong, require_any in SWEEPS:
+            return ("sd-fail", metric, (node, url, repr(e)[:100]))
+
+    def price_job(spec):
+        key, url, parser_name = spec
         try:
-            raw = searx_news(q)
-            kept, n_raw, n_disc = filter_headlines(
-                raw, keywords, strong, require_any)
+            html = fetch_unchanged(url, state)
+            if html is None:
+                return ("price-skip", key, None)
+            items = globals()[parser_name](html)
+            if not items:
+                raise ValueError("no metrics parseable in page")
+            return ("price", key, items)
+        except Exception as e:
+            return ("price-fail", key, repr(e)[:120])
+
+    def sweep_job(spec):
+        node, metric, q, keywords, strong, require_any = spec
+        raw = searx_news(q)
+        kept, n_raw, n_disc = filter_headlines(
+            raw, keywords, strong, require_any)
+        return (node, metric, kept, n_raw, n_disc)
+
+    jobs = [("sd", s) for s in SD_PAGES]
+    jobs += [("price", p) for p in PRICE_PAGES]
+    if full:
+        jobs += [("sweep", s) for s in SWEEPS]
+    results = {}
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        futs = {}
+        for kind, spec in jobs:
+            fn = {"sd": sd_job, "price": price_job,
+                  "sweep": sweep_job}[kind]
+            futs[ex.submit(fn, spec)] = (kind, spec)
+        for fut, (kind, spec) in futs.items():
+            key = spec[1] if kind in ("sd", "sweep") else spec[0]
+            try:
+                results[(kind, key)] = fut.result()
+            except Exception as e:
+                results[(kind, key)] = ("job-fail", key,
+                                        repr(e)[:150])
+
+    # --- Silicon Data indexes ---
+    for node, metric, url, kind in SD_PAGES:
+        r = results.get(("sd", metric))
+        if r is None or r[0] == "job-fail":
+            failed.append(metric)
+            queue(node, metric + "_unreachable", None,
+                  "SOURCE UNREACHABLE/UNPARSABLE from alpha this "
+                  "run: %s" % url,
+                  "alpha ai_bubble_collect.py", "low",
+                  "Second consecutive dark run is reportable per "
+                  "the watch spec — Spencer to check the streak.")
+        elif r[0] == "sd-skip":
+            pulled.append("%s (unchanged)" % metric)
+        elif r[0] == "sd-fail":
+            failed.append(metric)
+            queue(node, metric + "_unreachable", None,
+                  "SOURCE UNREACHABLE/UNPARSABLE from alpha this "
+                  "run: %s (%s)" % (url, r[2][2]),
+                  "alpha ai_bubble_collect.py", "low",
+                  "Second consecutive dark run is reportable per "
+                  "the watch spec — Spencer to check the streak.")
+        else:
+            _, _, (n2, val, u2) = r
+            if queue_index(
+                    node, metric, val,
+                    "Silicon Data page %s (alpha "
+                    "ai_bubble_collect.py)" % u2,
+                    "Data-pull only; index methodology is "
+                    "Silicon Data's. Crunch-spread "
+                    "interpretation is Spencer residue."):
+                changed.append(metric)
+            pulled.append("%s = %.4g" % (metric, val))
+
+    # --- Daily price sources (2026-11-27) ---
+    for key, url, parser_name in PRICE_PAGES:
+        r = results.get(("price", key))
+        label = PRICE_SOURCE_LABEL[key]
+        if r is None or r[0] in ("job-fail", "price-fail"):
+            failed.append(key)
+            queue(PRICE_NODE, key + "_unreachable", None,
+                  "SOURCE UNREACHABLE/UNPARSABLE from alpha "
+                  "this run: %s (%s)"
+                  % (url, r[2] if r else "no result"),
+                  "alpha ai_bubble_collect.py", "low",
+                  "Second consecutive dark run is reportable "
+                  "per the watch spec — Spencer to check.")
+        elif r[0] == "price-skip":
+            pulled.append("%s (unchanged)" % key)
+        else:
+            for metric, val, notes in r[2]:
+                if queue_index(PRICE_NODE, metric, val, label,
+                               notes):
+                    changed.append(metric)
+                pulled.append("%s = %.4g" % (metric, val))
+
+    # --- Weekly headline sweeps (full mode only) ---
+    flagged = []
+    if full:
+        for node, metric, q, keywords, strong, require_any \
+                in SWEEPS:
+            r = results.get(("sweep", metric))
+            if r is None or (isinstance(r, tuple) and len(r)
+                             and r[0] == "job-fail"):
+                failed.append(metric)
+                queue(node, metric, None,
+                      "Sweep failed this run: %s"
+                      % (r[2] if r else "no result"),
+                      "alpha ai_bubble_collect.py", "low")
+                continue
+            _, _, kept, n_raw, n_disc = r
             top = kept[:3]
             if not top:
-                observe(node, metric, None,
-                        "Sweep ran; NO relevant headlines passed "
-                        "the filter this week (%d raw results, %d "
-                        "discarded as junk/off-topic)."
-                        % (n_raw, n_disc),
-                        "SearXNG news sweep (filtered) — alpha "
-                        "ai_bubble_collect.py", "low")
+                queue(node, metric, None,
+                      "Sweep ran; NO relevant headlines passed "
+                      "the filter this run (%d raw results, %d "
+                      "discarded as junk/off-topic)."
+                      % (n_raw, n_disc),
+                      "SearXNG news sweep (filtered) — alpha "
+                      "ai_bubble_collect.py", "low")
                 pulled.append("%s (0 relevant of %d raw)"
                               % (metric, n_raw))
                 continue
-            for _score, title, url, snippet, pub in top:
+            for _score, title, surl, snippet, pub in top:
                 sig = bool(SIGNAL_RE.search(title))
                 if sig:
                     flagged.append("%s: %s" % (metric, title))
-                text = title + " | " + url
+                text = title + " | " + surl
                 if pub:
                     text += " | published " + str(pub)[:10]
                 if snippet:
                     text += "\n" + snippet[:300]
-                observe(node, metric + "_headline", None, text,
-                        "SearXNG news sweep (filtered) — alpha "
-                        "ai_bubble_collect.py", "low",
-                        "Headline filed verbatim, NO interpretation; "
-                        "tell classification is Spencer residue."
-                        + (" SIGNAL FLAG (mechanical keyword match "
-                           "in title — $ amount / financing / "
-                           "downgrade / default / cancellation "
-                           "term): Spencer to look."
-                           if sig else ""))
-            pulled.append("%s (%d relevant of %d raw, %d discarded)"
+                queue(node, metric + "_headline", None, text,
+                      "SearXNG news sweep (filtered) — alpha "
+                      "ai_bubble_collect.py", "low",
+                      "Headline filed verbatim, NO "
+                      "interpretation; tell classification is "
+                      "Spencer residue."
+                      + (" SIGNAL FLAG (mechanical keyword "
+                         "match in title — $ amount / financing "
+                         "/ downgrade / default / cancellation "
+                         "term): Spencer to look."
+                         if sig else ""))
+            pulled.append("%s (%d relevant of %d raw, %d "
+                          "discarded)"
                           % (metric, len(top), n_raw, n_disc))
-        except Exception as e:
-            failed.append(metric)
-            observe(node, metric, None,
-                    "Sweep failed this week: %s" % repr(e)[:150],
-                    "alpha ai_bubble_collect.py", "low")
-    body = ("AI Bubble Graph weekly data pull (alpha collector, "
-            "%s). Pulled: %s. Failed/dark: %s. SIGNAL-FLAGGED "
-            "headlines (mechanical keyword match only, NOT a "
-            "judgment): %s. JUDGMENT RESIDUE for Spencer (NOT done "
-            "by this collector): tells sweep interpretation "
-            "(trigger #3 first broad rental cut, crunch-spread "
-            "4-week widening count, private-raise tell, hard "
-            "events), hysteresis/state changes, the CoreWeave "
-            "~$4.4B refinancing resolution call, and the "
-            "cancellability split on any new commitments. No state "
-            "was moved." % (today.isoformat(),
-                             "; ".join(pulled) or "nothing",
-                             "; ".join(failed) or "none",
-                             "; ".join(flagged) or "none"))
-    cur.execute(
-        "INSERT INTO atlas.scattered_captures (title, raw_text, "
-        "context) VALUES (%s, %s, %s) RETURNING id",
-        ("AI bubble weekly data pull %s (alpha collector)"
-         % today.isoformat(), body,
-         "TradesDesk/ecosystem_intel ai_bubble_collect.py on alpha "
-         "(migrated from the Muse cron ai-bubble-weekly-check "
-         "2026-11-09): data-pull half only. Judgment half is flagged "
-         "residue for Spencer in the capture body. Research only."))
-    cid = cur.fetchone()["id"]
+
+    # --- Batch insert ---
+    if rows:
+        cur.executemany(
+            "INSERT INTO successbrian_os.ai_bubble_observations "
+            "(node_key, metric, value_num, value_text, source, "
+            "source_date, checked_on, confidence, notes) VALUES "
+            "(%s, %s, %s, %s, %s, %s, %s, %s, %s)", rows)
+
+    # --- Capture: full runs always; price-only runs only when
+    # something changed or failed (quiet days stay quiet) ---
+    cid = None
+    if full or changed or failed:
+        mode = "full weekly" if full else "daily price"
+        body = ("AI Bubble Graph %s data pull (alpha collector, "
+                "%s). Pulled: %s. Changed: %s. Failed/dark: %s. "
+                "SIGNAL-FLAGGED headlines (mechanical keyword "
+                "match only, NOT a judgment): %s. JUDGMENT "
+                "RESIDUE for Spencer (NOT done by this "
+                "collector): tells sweep interpretation "
+                "(trigger #3 first broad rental cut, "
+                "crunch-spread 4-week widening count, "
+                "private-raise tell, hard events), "
+                "hysteresis/state changes, the CoreWeave ~$4.4B "
+                "refinancing resolution call, and the "
+                "cancellability split on any new commitments. "
+                "No state was moved."
+                % (mode, today.isoformat(),
+                   "; ".join(pulled) or "nothing",
+                   "; ".join(changed) or "none",
+                   "; ".join(failed) or "none",
+                   "; ".join(flagged) or "none"))
+        cur.execute(
+            "INSERT INTO atlas.scattered_captures (title, "
+            "raw_text, context) VALUES (%s, %s, %s) RETURNING id",
+            ("AI bubble %s data pull %s (alpha collector)"
+             % (mode, today.isoformat()), body,
+             "TradesDesk/ecosystem_intel ai_bubble_collect.py "
+             "on alpha (migrated from the Muse cron "
+             "ai-bubble-weekly-check 2026-11-09; daily price "
+             "sources added 2026-11-27, capture #3595): "
+             "data-pull half only. Judgment half is flagged "
+             "residue for Spencer in the capture body. "
+             "Research only."))
+        cid = cur.fetchone()["id"]
     conn.commit()
     conn.close()
-    print("ai_bubble_collect %s: pulled %d, failed %d, capture %d"
-          % (today, len(pulled), len(failed), cid))
+    save_state(state)
+    print("ai_bubble_collect %s (%s): pulled %d, changed %d, "
+          "failed %d, rows %d, capture %s"
+          % (today, "full" if full else "daily", len(pulled),
+             len(changed), len(failed), len(rows),
+             cid if cid else "none"))
     return 0
 
 

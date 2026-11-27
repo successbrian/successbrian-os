@@ -335,9 +335,17 @@ def _section_brief(item_id: int, title: str, detail: str | None,
 
 def missing_investigation_sections(note: str | None) -> list[str]:
     """Sections the investigation still owes, read off the accumulated
-    note (same shape as overdue_relevance.missing_sections)."""
-    have = (note or "").upper()
-    return [s for s in INVESTIGATION_SECTIONS if (s + ":") not in have]
+    note (same shape as overdue_relevance.missing_sections).
+
+    Headers match at line starts only: a section's prose may mention
+    another section's name mid-sentence ("Concrete evidence: ...") and
+    that must not count as the section having landed (B27-3, 2026-11-27:
+    the WHAT prose fooled the old substring match into skipping EVIDENCE,
+    so the collector dispatched TRIED next and the report would have
+    finished without its EVIDENCE section)."""
+    lines = (note or "").upper().splitlines()
+    return [s for s in INVESTIGATION_SECTIONS
+            if not any(line.startswith(s + ":") for line in lines)]
 
 
 def _dispatch_investigation_section(item_id: int, title: str,
@@ -991,6 +999,10 @@ def selftest() -> int:
             "empty note owes all four sections"
         assert missing_investigation_sections("WHAT: x\n\nEVIDENCE: y") == ["TRIED", "FIXES"], \
             "landed sections drop out of the missing list"
+        assert missing_investigation_sections(
+            "WHAT: The fix did not resolve it. Concrete evidence: the "
+            "clusters are live, not stale.") == ["EVIDENCE", "TRIED", "FIXES"], \
+            "prose mentioning a section name mid-sentence does not count as landed (B27-3)"
         assert REAP_MAX_TOKENS == 500, "sizing law: 500-token cap"
         assert INVESTIGATION_THINKING is False, \
             "investigation dispatch sends thinking=false (REAP contract)"

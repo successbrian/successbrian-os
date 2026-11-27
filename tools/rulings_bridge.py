@@ -62,6 +62,25 @@ def already_bridged(capture_id):
     return bool(d), bool(l), marker
 
 
+def starved_count(days=14):
+    """Ruling-indicating captures this bridge can never promote: they
+    carry a ruling (title/context say so) but no parseable ruling-audit
+    format in raw_text, and no bridge marker exists for them. The
+    deterministic leg reports them so the stall is a number in every
+    run's log line, not a silent freeze (friction #68: brian_decisions
+    froze 2026-11-18 while 911 captures flowed past in other formats).
+    Promotion of these is the model leg's job; counting is ours."""
+    row = _one(
+        "SELECT count(*) AS n FROM atlas.scattered_captures c "
+        "WHERE c.created_at > now() - (%s || ' days')::interval "
+        "AND (c.title ILIKE 'RULING%%' OR c.context ILIKE '%%Brian ruled%%') "
+        "AND coalesce(c.raw_text, '') NOT LIKE '%%BRIAN''S QUOTED WORDS:%%' "
+        "AND NOT EXISTS (SELECT 1 FROM altair.brian_decisions d "
+        "WHERE d.context LIKE '%%rulings_bridge:capture-' || c.id || '%%')",
+        (str(days),))
+    return int(row["n"]) if row else 0
+
+
 def bridge(limit=None, dry_run=False):
     rows = _rows("SELECT id, title, raw_text, created_at FROM "
                  "atlas.scattered_captures WHERE raw_text LIKE %s "
@@ -70,7 +89,8 @@ def bridge(limit=None, dry_run=False):
     if limit:
         rows = rows[:limit]
     stats = {"seen": len(rows), "parsed": 0, "skipped_parse": 0,
-             "already": 0, "decisions": 0, "learnings": 0}
+             "already": 0, "decisions": 0, "learnings": 0,
+             "starved_unformatted": starved_count()}
     for r in rows:
         parsed = parse_capture(r["raw_text"])
         if not parsed:

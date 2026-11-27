@@ -17,6 +17,7 @@ exists locally, and the next run retries).
 
 import json
 import os
+import re
 import sqlite3
 import sys
 import urllib.request
@@ -118,10 +119,34 @@ def register_catalog(slug, filename, title=None):
               file=sys.stderr)
         return None
 
+MIN_EMBED_WORDS = 3
+
+
+def _require_embeddable(slug, filename, text):
+    """B25 (2026-11-26): refuse blank editions BEFORE anything is
+    uploaded or deleted. AnythingLLM's update-embeddings deletes
+    the old rows FIRST, then adds the new edition; a blank /
+    whitespace-only edition fails to vectorize, so the add creates
+    no row and the workspace silently LOSES the document (rolodex
+    charter + heartbeat, 2026-11-25 06:29: blank uploads, old rows
+    deleted, no new rows; check 503 failed at its next run).
+    A refused embed raises here, the old edition stays put, and
+    the caller retries with real text. The threshold is words,
+    not characters: a real brief always has words; a blank
+    template render has none."""
+    words = re.findall(r"[A-Za-z0-9]+", text or "")
+    if len(words) < MIN_EMBED_WORDS:
+        raise ValueError(
+            "refusing blank embed: %s/%s has %d words "
+            "(minimum %d) -- old edition left in place"
+            % (slug, filename, len(words), MIN_EMBED_WORDS))
+
+
 def embed_latest(slug, filename, text):
     """Upload text as filename into slug's workspace,
     replacing any prior edition. Returns the new
     document location."""
+    _require_embeddable(slug, filename, text)
     key = _key()
     if not key:
         raise RuntimeError("no ANYTHINGLLM_API_KEY in .env")
@@ -151,10 +176,48 @@ def embed_latest(slug, filename, text):
     return loc
 
 
+def _selftest():
+    checks = []
+
+    def _check(name, ok):
+        checks.append((name, bool(ok)))
+        print(("PASS " if ok else "FAIL ") + name)
+
+    for label, text in [("empty", ""),
+                        ("whitespace", "   \n\n  \n"),
+                        ("newlines-24", "\n" * 24),
+                        ("two-words", "hello world"),
+                        ("placeholder-only-word",
+                         "HEARTBEAT_EMPTY_PLACEHOLDER")]:
+        # The placeholder is 3 words -> allowed (it vectorizes,
+        # the row survives); the rest must be refused.
+        try:
+            _require_embeddable("probe-slug", "probe.md", text)
+            allowed = True
+        except ValueError:
+            allowed = False
+        want = (label == "placeholder-only-word")
+        _check("guard %s: %s" % (
+            label, "allowed" if want else "refused"),
+            allowed == want)
+    try:
+        _require_embeddable("probe-slug", "probe.md",
+                            "# Title\nSome real content here.\n")
+        _check("guard real text: allowed", True)
+    except ValueError:
+        _check("guard real text: allowed", False)
+    ok = all(o for _, o in checks)
+    print("ALLM_EMBED_OK" if ok else "ALLM_EMBED_FAIL")
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
     import sys
+    if len(sys.argv) == 2 and sys.argv[1] == "--selftest":
+        sys.exit(_selftest())
     if len(sys.argv) == 4:
         print(embed_latest(sys.argv[1], sys.argv[2],
                            open(sys.argv[3]).read()))
     else:
         print("usage: allm_embed.py <slug> <filename> <path>")
+        print("       allm_embed.py --selftest")
